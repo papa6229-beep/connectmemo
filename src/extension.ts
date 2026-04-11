@@ -646,7 +646,7 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
   case 'restoreMessages':chat.innerHTML='';if(msg.value&&msg.value.length>0){msg.value.forEach(m=>addMsg(m.text,m.role))}break;
   case 'focusInput':input.focus();break;
   case 'injectPrompt':input.value=msg.value;input.style.height='auto';input.style.height=Math.min(input.scrollHeight,150)+'px';send();break;
-}});
-<\/script></body></html>`;
+} });
+</script></body></html>`;
     }
 }

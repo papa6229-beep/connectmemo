@@ -208,15 +208,15 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             enableScripts: true,
             localResourceRoots: [this._extensionUri],
         };
-        webviewView.webview.html = this._getHtml();
 
+        // 중요: HTML을 그리기 전에 메시지 리스너를 먼저 붙여야 Race Condition이 발생하지 않습니다!
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.type) {
-                case 'prompt':
-                    await this._handlePrompt(msg.value, msg.model);
-                    break;
                 case 'getModels':
                     await this._sendModels();
+                    break;
+                case 'prompt':
+                    await this._handlePrompt(msg.value, msg.model);
                     break;
                 case 'newChat':
                     this.resetChat();
@@ -227,6 +227,9 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     break;
             }
         });
+
+        // 리스너를 붙인 후 HTML을 렌더링합니다.
+        webviewView.webview.html = this._getHtml();
     }
 
     // --------------------------------------------------------

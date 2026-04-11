@@ -612,12 +612,12 @@ input.addEventListener('input',()=>{input.style.height='auto';input.style.height
 function getTime(){return new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}
 function esc(s){const d=document.createElement('div');d.innerText=s;return d.innerHTML}
 function fmt(t){
-  t=t.replace(/<create_file\\s+path="([^"]+)">([\\s\\S]*?)<\\/create_file>/g,(_,p,c)=>'<div class="file-badge">\ud83d\udcc1 '+esc(p)+' \u2014 \uc790\ub3d9 \uc0dd\uc131\ub428</div><div class="code-wrap"><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>');
-  t=t.replace(/<edit_file\\s+path="([^"]+)">([\\s\\S]*?)<\\/edit_file>/g,(_,p,c)=>'<div class="edit-badge">\u270f\ufe0f '+esc(p)+' \u2014 \ud3b8\uc9d1\ub428</div><div class="code-wrap"><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>');
-  t=t.replace(/<run_command>([\\s\\S]*?)<\\/run_command>/g,(_,c)=>'<div class="cmd-badge">\u25b6 '+esc(c)+'</div>');
-  t=t.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g,(_,lang,c)=>{const l=lang||'code';return '<div class="code-wrap"><span class="code-lang">'+l+'</span><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>'});
-  t=t.replace(/\`([^\`]+)\`/g,(_,c)=>'<code>'+esc(c)+'</code>');
-  t=t.replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>');
+  t=t.replace(new RegExp('<create_file\\s+path="([^"]+)">([\\s\\S]*?)<\\/create_file>', 'g'),(_,p,c)=>'<div class="file-badge">\uD83D\uDCC1 '+esc(p)+' \u2014 \uC790\uB3D9 \uC0DD\uC131\uB428</div><div class="code-wrap"><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>');
+  t=t.replace(new RegExp('<edit_file\\s+path="([^"]+)">([\\s\\S]*?)<\\/edit_file>', 'g'),(_,p,c)=>'<div class="edit-badge">\u270F\uFE0F '+esc(p)+' \u2014 \uD3B8\uC9D1\uB428</div><div class="code-wrap"><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>');
+  t=t.replace(new RegExp('<run_command>([\\s\\S]*?)<\\/run_command>', 'g'),(_,c)=>'<div class="cmd-badge">\u25B6 '+esc(c)+'</div>');
+  t=t.replace(new RegExp('\\x60\\x60\\x60(\\w*)\\n([\\s\\S]*?)\\x60\\x60\\x60', 'g'),(_,lang,c)=>{const l=lang||'code';return '<div class="code-wrap"><span class="code-lang">'+l+'</span><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>'});
+  t=t.replace(new RegExp('\\x60([^\\x60]+)\\x60', 'g'),(_,c)=>'<code>'+esc(c)+'</code>');
+  t=t.replace(new RegExp('\\*\\*([^*]+)\\*\\*', 'g'),'<strong>$1</strong>');
   return t;
 }
 function copyCode(btn){const code=btn.parentElement.querySelector('code');if(!code)return;navigator.clipboard.writeText(code.innerText).then(()=>{btn.textContent='\u2713 Copied';btn.classList.add('copied');setTimeout(()=>{btn.textContent='Copy';btn.classList.remove('copied')},1500)})}

@@ -830,13 +830,22 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         }
 
         // ACTION 1: Create files
-        const createRegex = /<create_file\s+path="([^"]+)">([\s\S]*?)<\/create_file>/g;
+        const createRegex = /<create_file\s+path=['"]?([^'">]+)['"]?[^>]*>([\s\S]*?)<\/create_file>/gi;
         let match: RegExpExecArray | null;
         let firstCreatedFile = '';
 
         while ((match = createRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
-            const content = match[2].replace(/^\n/, ''); // remove leading newline only
+            let content = match[2].trim();
+            
+            // Strip markdown code fences if AI accidentally wrapped the content inside the xml
+            if (content.startsWith('```')) {
+                const lines = content.split('\n');
+                if (lines[0].startsWith('```')) lines.shift();
+                if (lines.length > 0 && lines[lines.length - 1].startsWith('```')) lines.pop();
+                content = lines.join('\n').trim();
+            }
+
             try {
                 const absPath = path.join(rootPath, relPath);
                 const dir = path.dirname(absPath);
@@ -857,7 +866,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         }
 
         // ACTION 2: Edit files
-        const editRegex = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g;
+        const editRegex = /<edit_file\s+path=['"]?([^'">]+)['"]?[^>]*>([\s\S]*?)<\/edit_file>/gi;
         while ((match = editRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
             const body = match[2];
@@ -897,9 +906,16 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         }
 
         // ACTION 3: Run commands
-        const cmdRegex = /<run_command>([\s\S]*?)<\/run_command>/g;
+        const cmdRegex = /<run_command>([\s\S]*?)<\/run_command>/gi;
         while ((match = cmdRegex.exec(aiMessage)) !== null) {
-            const cmd = match[1].trim();
+            let cmd = match[1].trim();
+            // Clean up if AI outputs markdown inside
+            if (cmd.startsWith('```')) {
+                const lines = cmd.split('\n');
+                if (lines[0].startsWith('```')) lines.shift();
+                if (lines.length > 0 && lines[lines.length - 1].startsWith('```')) lines.pop();
+                cmd = lines.join('\n').trim();
+            }
             try {
                 if (!this._terminal || this._terminal.exitStatus !== undefined) {
                     this._terminal = vscode.window.createTerminal({

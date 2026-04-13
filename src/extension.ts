@@ -918,8 +918,14 @@ select:hover,select:focus{border-color:var(--accent);box-shadow:0 0 12px var(--a
 .msg-body{padding-left:29px;line-height:1.75;color:var(--text);white-space:pre-wrap;word-break:break-word;font-size:13px}
 .msg-user .msg-body{background:var(--surface);border:1px solid var(--border2);border-radius:14px;padding:10px 14px;margin-left:29px;color:var(--text-bright);backdrop-filter:blur(8px)}
 .msg-body pre{background:var(--code-bg);border:1px solid var(--border2);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:8px 0;font-size:12px;line-height:1.6;color:#c9d1d9;position:relative}
+.msg-body pre::-webkit-scrollbar{height:6px}
+.msg-body pre::-webkit-scrollbar-track{background:rgba(0,0,0,.2);border-radius:4px}
+.msg-body pre::-webkit-scrollbar-thumb{background:rgba(124,106,255,.3);border-radius:4px}
+.msg-body pre::-webkit-scrollbar-thumb:hover{background:rgba(124,106,255,.6)}
 .msg-body code{font-family:'SF Mono','JetBrains Mono','Fira Code','Menlo',monospace;font-size:11.5px}
 .msg-body :not(pre)>code{background:rgba(124,106,255,.1);color:var(--accent);padding:2px 7px;border-radius:5px;border:1px solid rgba(124,106,255,.15)}
+.msg-body a{color:var(--accent);text-decoration:none}
+.msg-body a:hover{text-decoration:underline}
 .code-wrap{position:relative}
 .code-lang{position:absolute;top:0;left:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;padding:2px 10px;border-radius:0 0 6px 6px;font-size:9px;font-family:'SF Mono',monospace;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
 .copy-btn{position:absolute;top:8px;right:8px;background:var(--surface2);border:1px solid var(--border2);color:var(--text-dim);padding:4px 12px;border-radius:6px;font-size:10px;cursor:pointer;opacity:0;transition:all .3s;font-family:inherit;z-index:1;backdrop-filter:blur(8px)}
@@ -954,7 +960,8 @@ select:hover,select:focus{border-color:var(--accent);box-shadow:0 0 12px var(--a
 /* INPUT */
 .input-wrap{padding:8px 14px 14px;flex-shrink:0;position:relative;z-index:1}
 .input-box{background:var(--input-bg);border:1px solid var(--border2);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;transition:all .3s;position:relative;backdrop-filter:blur(12px)}
-.input-box:focus-within{border-color:rgba(124,106,255,.4);box-shadow:0 0 20px rgba(124,106,255,.08)}
+.input-box:focus-within{border-color:rgba(124,106,255,.4);box-shadow:0 0 24px rgba(124,106,255,.12);animation:focusPulse 3s infinite}
+@keyframes focusPulse{0%,100%{box-shadow:0 0 20px rgba(124,106,255,.08)}50%{box-shadow:0 0 28px rgba(124,106,255,.18)}}
 textarea{width:100%;background:transparent;border:none;color:var(--text-bright);font-family:inherit;font-size:13px;line-height:1.5;resize:none;outline:none;min-height:22px;max-height:150px}
 textarea::placeholder{color:var(--text-dim)}
 .input-footer{display:flex;align-items:center;justify-content:space-between}
@@ -1027,6 +1034,7 @@ function fmt(t){
   t=t.replace(/\x60([^\x60]+)\x60/g,(_,c)=>pushB('<code>'+esc(c)+'</code>'));
   t=esc(t);
   t=t.replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>');
+  t=t.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank">$1</a>');
   t=t.replace(/__B(\\d+)__/g, (_,i)=>blocks[i]);
   return t;
 }

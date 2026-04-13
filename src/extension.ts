@@ -267,78 +267,16 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     private async _handleSettingsMenu() {
         if (!this._view) return;
 
-        const currentTemp = this._temperature;
-        const modeLabel = currentTemp <= 0.3 ? '📘 백과사전' : currentTemp <= 1.0 ? '💬 밸런스' : '🎨 크리에이티브';
-
         const pick = await vscode.window.showQuickPick([
-            { label: '🔧 AI 엔진 변경', description: 'Ollama / LM Studio 전환', action: 'engine' },
-            { label: `🎛️ AI 모드: ${modeLabel} (Temp: ${currentTemp})`, description: '파라미터 프리셋 변경', action: 'tuning' },
-            { label: '⚙️ 커스텀 파라미터', description: `T:${this._temperature} P:${this._topP} K:${this._topK}`, action: 'custom' },
-        ], { placeHolder: '⚙️ Connect AI 설정' });
+            { label: 'Ollama (로컬 기본)', description: '초보자 추천', action: 'ollama' },
+            { label: 'LM Studio (고급형)', description: '맥북/고급 유저 추천', action: 'lmstudio' },
+        ], { placeHolder: 'AI 엔진을 선택하세요' });
 
         if (!pick) return;
-
-        switch (pick.action) {
-            case 'engine': {
-                const engine = await vscode.window.showQuickPick([
-                    { label: 'Ollama (로컬 기본)', description: '초보자 추천', target: 'http://127.0.0.1:11434' },
-                    { label: 'LM Studio (고급형)', description: '맥북/고급 유저 추천', target: 'http://127.0.0.1:1234' }
-                ], { placeHolder: 'AI 엔진을 선택하세요' });
-                if (engine) {
-                    await vscode.workspace.getConfiguration('connectAiLab').update('ollamaUrl', (engine as any).target, vscode.ConfigurationTarget.Global);
-                    vscode.window.showInformationMessage(`✅ AI 엔진이 [${engine.label}] 로 변경되었습니다!`);
-                    await this._sendModels();
-                }
-                break;
-            }
-            case 'tuning': {
-                const preset = await vscode.window.showQuickPick([
-                    { label: '📘 백과사전 모드', description: 'Temp 0.1 | 정확하고 일관된 답변', temp: 0.1, topP: 0.5, topK: 10 },
-                    { label: '💬 밸런스 모드 (기본)', description: 'Temp 0.8 | 자연스러운 대화', temp: 0.8, topP: 0.9, topK: 40 },
-                    { label: '🎨 크리에이티브 모드', description: 'Temp 1.2 | 창의적이고 다양한 표현', temp: 1.2, topP: 0.95, topK: 80 },
-                    { label: '🤪 엉뚱한 시인 모드', description: 'Temp 1.7 | 극도의 창의성 (환각 주의!)', temp: 1.7, topP: 0.99, topK: 100 },
-                ], { placeHolder: '🎛️ AI 성격을 선택하세요 — 온도가 높을수록 창의적, 낮을수록 정확합니다' });
-
-                if (preset) {
-                    this._temperature = (preset as any).temp;
-                    this._topP = (preset as any).topP;
-                    this._topK = (preset as any).topK;
-                    vscode.window.showInformationMessage(`🎛️ AI 모드 변경: ${preset.label}`);
-                    this._view!.webview.postMessage({ type: 'response', value: `🎛️ **AI 모드 변경: ${preset.label}**\n\n| 파라미터 | 값 |\n|---|---|\n| Temperature | ${this._temperature} |\n| Top-P | ${this._topP} |\n| Top-K | ${this._topK} |` });
-                }
-                break;
-            }
-            case 'custom': {
-                const tempInput = await vscode.window.showInputBox({
-                    prompt: '🌡️ Temperature (0.0 ~ 2.0)',
-                    value: String(this._temperature),
-                    placeHolder: '0.8'
-                });
-                if (!tempInput) return;
-
-                const topPInput = await vscode.window.showInputBox({
-                    prompt: '📊 Top-P (0.0 ~ 1.0)',
-                    value: String(this._topP),
-                    placeHolder: '0.9'
-                });
-                if (!topPInput) return;
-
-                const topKInput = await vscode.window.showInputBox({
-                    prompt: '🔢 Top-K (1 ~ 100)',
-                    value: String(this._topK),
-                    placeHolder: '40'
-                });
-                if (!topKInput) return;
-
-                this._temperature = Math.min(2.0, Math.max(0, parseFloat(tempInput) || 0.8));
-                this._topP = Math.min(1.0, Math.max(0, parseFloat(topPInput) || 0.9));
-                this._topK = Math.min(100, Math.max(1, parseInt(topKInput) || 40));
-
-                vscode.window.showInformationMessage(`⚙️ 커스텀 파라미터 적용: T:${this._temperature} P:${this._topP} K:${this._topK}`);
-                this._view!.webview.postMessage({ type: 'response', value: `⚙️ **커스텀 파라미터 적용 완료**\n\n| 파라미터 | 값 |\n|---|---|\n| Temperature | ${this._temperature} |\n| Top-P | ${this._topP} |\n| Top-K | ${this._topK} |` });
-                break;
-            }
-        }
+        const target = (pick as any).action === 'ollama' ? 'http://127.0.0.1:11434' : 'http://127.0.0.1:1234';
+        await vscode.workspace.getConfiguration('connectAiLab').update('ollamaUrl', target, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(`AI 엔진이 [${pick.label}] 로 변경되었습니다.`);
+        await this._sendModels();
     }
 
     // --------------------------------------------------------
@@ -693,37 +631,71 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            const response = await axios.post(apiUrl, {
+            // ═══ STREAMING API CALL ═══
+            let aiMessage = '';
+            const streamBody = {
                 model: modelName || defaultModel,
                 messages: reqMessages,
-                stream: false,
+                stream: true,
                 ...(isLMStudio 
                     ? { max_tokens: 4096, temperature: this._temperature, top_p: this._topP } 
                     : { options: { num_predict: 4096, temperature: this._temperature, top_p: this._topP, top_k: this._topK } }),
-            }, { timeout });
+            };
 
-            let aiMessage: string = isLMStudio 
-                ? response.data.choices[0].message.content 
-                : response.data.message.content;
+            // 스트리밍: 웹뷰에 'streamStart' 로 빈 메시지 생성 후 'streamChunk'로 실시간 업데이트
+            this._view.webview.postMessage({ type: 'streamStart' });
+
+            const response = await axios.post(apiUrl, streamBody, { 
+                timeout, 
+                responseType: 'stream' 
+            });
+
+            await new Promise<void>((resolve, reject) => {
+                const stream = response.data;
+                let buffer = '';
+                stream.on('data', (chunk: Buffer) => {
+                    buffer += chunk.toString();
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    for (const line of lines) {
+                        if (!line.trim() || line.trim() === 'data: [DONE]') continue;
+                        try {
+                            const raw = line.startsWith('data: ') ? line.slice(6) : line;
+                            const json = JSON.parse(raw);
+                            let token = '';
+                            if (isLMStudio) {
+                                token = json.choices?.[0]?.delta?.content || '';
+                            } else {
+                                token = json.message?.content || '';
+                            }
+                            if (token) {
+                                aiMessage += token;
+                                this._view!.webview.postMessage({ type: 'streamChunk', value: token });
+                            }
+                        } catch { /* skip malformed JSON */ }
+                    }
+                });
+                stream.on('end', () => resolve());
+                stream.on('error', (err: any) => reject(err));
+            });
+
+            // 스트리밍 완료 알림
+            this._view.webview.postMessage({ type: 'streamEnd' });
 
             // 4.5 Second Brain 자율 열람: AI가 <read_brain>을 사용했는지 확인
             const brainReads = [...aiMessage.matchAll(/<read_brain>([\s\S]*?)<\/read_brain>/g)];
             if (brainReads.length > 0) {
-                // AI가 지식을 요청했다! 파일을 읽어서 다시 쿼리한다.
                 let brainContent = '';
                 for (const match of brainReads) {
                     const requestedFile = match[1].trim();
                     const fileContent = this._readBrainFile(requestedFile);
                     brainContent += `\n\n[BRAIN DOCUMENT: ${requestedFile}]\n${fileContent}\n`;
                 }
-
-                // 원래 AI 응답에서 read_brain 태그를 제거하고, 읽어온 지식과 함께 재질의
                 const cleanedResponse = aiMessage.replace(/<read_brain>[\s\S]*?<\/read_brain>/g, '').trim();
-                
-                // 지식을 포함한 Follow-up 메시지 전송
                 reqMessages.push({ role: 'assistant', content: cleanedResponse || '문서를 열람 중입니다...' });
                 reqMessages.push({ role: 'user', content: `[SYSTEM: The following documents were retrieved from the user\'s Second Brain. Use this information to provide a complete and accurate answer to the user\'s original question.]\n${brainContent}\n\nNow answer the user\'s question using the above knowledge. Do NOT use <read_brain> again.` });
 
+                // Follow-up은 non-stream (지식 재질의는 빠르게)
                 const followUp = await axios.post(apiUrl, {
                     model: modelName || defaultModel,
                     messages: reqMessages,
@@ -736,6 +708,8 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 aiMessage = isLMStudio
                     ? followUp.data.choices[0].message.content
                     : followUp.data.message.content;
+                // 지식 재질의 결과는 전체 교체
+                this._view.webview.postMessage({ type: 'response', value: aiMessage });
             }
 
             this._chatHistory.push({ role: 'assistant', content: aiMessage });
@@ -743,15 +717,16 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             // 5. Execute agent actions
             const report = this._executeActions(aiMessage);
 
-            // 6. Send to webview
-            let output = aiMessage;
+            // 6. Agent report 추가 (있을 때만)
             if (report.length > 0) {
-                output += `\n\n---\n📦 **에이전트 작업 결과**\n${report.join('\n')}`;
+                const reportMsg = `\n\n---\n**에이전트 작업 결과**\n${report.join('\n')}`;
+                this._view.webview.postMessage({ type: 'streamChunk', value: reportMsg });
+                this._view.webview.postMessage({ type: 'streamEnd' });
+                aiMessage += reportMsg;
             }
-            this._view.webview.postMessage({ type: 'response', value: output });
 
             // 저장용: AI 응답 기록
-            this._displayMessages.push({ text: output, role: 'ai' });
+            this._displayMessages.push({ text: aiMessage, role: 'ai' });
 
             // 메모리 누수 방지: 대화 이력 최대 50개 반턱으로 제한
             const MAX_HISTORY = 50;
@@ -979,11 +954,7 @@ select:hover,select:focus{border-color:var(--accent);box-shadow:0 0 12px var(--a
 /* INPUT */
 .input-wrap{padding:8px 14px 14px;flex-shrink:0;position:relative;z-index:1}
 .input-box{background:var(--input-bg);border:1px solid var(--border2);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;transition:all .3s;position:relative;backdrop-filter:blur(12px)}
-.input-box::before{content:'';position:absolute;inset:-1px;border-radius:15px;background:conic-gradient(from var(--angle,0deg),var(--accent),var(--accent2),var(--accent3),var(--accent));opacity:0;transition:opacity .4s;z-index:-1}
-.input-box:focus-within{border-color:transparent;box-shadow:0 0 30px var(--accent-glow),0 0 60px var(--accent2-glow)}
-.input-box:focus-within::before{opacity:.5;animation:borderSpin 4s linear infinite}
-@keyframes borderSpin{to{--angle:360deg}}
-@property --angle{syntax:'<angle>';initial-value:0deg;inherits:false}
+.input-box:focus-within{border-color:rgba(124,106,255,.4);box-shadow:0 0 20px rgba(124,106,255,.08)}
 textarea{width:100%;background:transparent;border:none;color:var(--text-bright);font-family:inherit;font-size:13px;line-height:1.5;resize:none;outline:none;min-height:22px;max-height:150px}
 textarea::placeholder{color:var(--text-dim)}
 .input-footer{display:flex;align-items:center;justify-content:space-between}
@@ -998,6 +969,9 @@ textarea::placeholder{color:var(--text-dim)}
 .stop-btn.visible{display:flex}
 @keyframes msgIn{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.stream-active{position:relative}
+.stream-active::after{content:'';display:inline-block;width:2px;height:14px;background:var(--accent);margin-left:2px;animation:blink .6s step-end infinite;vertical-align:text-bottom;border-radius:1px;box-shadow:0 0 6px var(--accent)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 </style></head><body>
 <div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="brainBtn" title="Second Brain">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
 <div class="chat" id="chat">
@@ -1054,9 +1028,25 @@ input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventD
 newChatBtn.addEventListener('click',()=>vscode.postMessage({type:'newChat'}));
 settingsBtn.addEventListener('click',()=>vscode.postMessage({type:'openSettings'}));
 brainBtn.addEventListener('click',()=>vscode.postMessage({type:'syncBrain'}));
+let streamEl=null,streamBody=null;
 window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
   case 'response':hideLoader();setSending(false);addMsg(msg.value,'ai');break;
   case 'error':hideLoader();setSending(false);addMsg(msg.value,'error');break;
+  case 'streamStart':{
+    hideLoader();
+    streamEl=document.createElement('div');streamEl.className='msg';
+    const h=document.createElement('div');h.className='msg-head';
+    h.innerHTML='<div class="av av-ai">\u2726</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span>';
+    streamBody=document.createElement('div');streamBody.className='msg-body stream-active';
+    streamEl.appendChild(h);streamEl.appendChild(streamBody);chat.appendChild(streamEl);chat.scrollTop=chat.scrollHeight;
+    break;}
+  case 'streamChunk':{
+    if(streamBody){streamBody.innerHTML=fmt(streamBody._raw=(streamBody._raw||'')+msg.value);chat.scrollTop=chat.scrollHeight;}
+    break;}
+  case 'streamEnd':{
+    if(streamBody)streamBody.classList.remove('stream-active');
+    setSending(false);streamEl=null;streamBody=null;
+    break;}
   case 'modelsList':modelSel.innerHTML='';msg.value.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;modelSel.appendChild(o)});break;
   case 'clearChat':chat.innerHTML='';addMsg('\uc0c8 \ub300\ud654\uac00 \uc2dc\uc791\ub418\uc5c8\uc2b5\ub2c8\ub2e4.','ai');break;
   case 'restoreMessages':chat.innerHTML='';if(msg.value&&msg.value.length>0){msg.value.forEach(m=>addMsg(m.text,m.role))}break;

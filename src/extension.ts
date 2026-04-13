@@ -330,14 +330,32 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         let combined = '';
         try {
-            const files = fs.readdirSync(brainDir);
-            for (const file of files) {
-                // 마크다운(.md)과 텍스트 파일만 수집
-                if (file.endsWith('.md') || file.endsWith('.txt')) {
-                    const content = fs.readFileSync(path.join(brainDir, file), 'utf-8');
-                    // 컨텍스트 크기 제한 방지 (각 파일당 최대 5000자 반영)
-                    combined += `\n--- [User Knowledge Base: ${file}] ---\n${content.slice(0, 5000)}\n`;
+            // 하위 폴더까지 재귀적으로 탐색하여 지식을 긁어오는 함수
+            const findFilesRecursive = (dir: string): string[] => {
+                let results: string[] = [];
+                const list = fs.readdirSync(dir);
+                for (const file of list) {
+                    const filePath = path.join(dir, file);
+                    const stat = fs.statSync(filePath);
+                    if (stat && stat.isDirectory()) {
+                        // Git 폴더 등은 무시
+                        if (file !== '.git' && file !== 'node_modules') {
+                            results = results.concat(findFilesRecursive(filePath));
+                        }
+                    } else {
+                        if (file.endsWith('.md') || file.endsWith('.txt')) {
+                            results.push(filePath);
+                        }
+                    }
                 }
+                return results;
+            };
+
+            const files = findFilesRecursive(brainDir);
+            for (const file of files) {
+                const content = fs.readFileSync(file, 'utf-8');
+                // 컨텍스트 크기 제한 방지 (각 파일당 최대 3000자 반영)
+                combined += `\n--- [User Knowledge Base: ${path.basename(file)}] ---\n${content.slice(0, 3000)}\n`;
             }
         } catch (e) {
             console.error('Brain read error', e);

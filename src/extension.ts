@@ -933,7 +933,7 @@ select:hover,select:focus{border-color:var(--accent);box-shadow:0 0 12px var(--a
 .msg-error .msg-body{color:var(--red);text-shadow:0 0 20px rgba(255,82,82,.2)}
 
 /* WELCOME */
-.welcome{text-align:center;padding:40px 20px 10px;position:relative}
+.welcome{text-align:center;padding:0 20px 20px;position:relative}
 .welcome-logo{width:56px;height:56px;border-radius:16px;margin:0 auto 16px;background:linear-gradient(135deg,var(--accent),var(--accent2),var(--accent3));display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;box-shadow:0 0 40px rgba(124,106,255,.35),0 0 80px rgba(224,64,251,.15);animation:welcomeFloat 4s ease-in-out infinite;position:relative}
 .welcome-logo::before{content:'';position:absolute;inset:-4px;border-radius:20px;background:conic-gradient(from 0deg,var(--accent),var(--accent2),var(--accent3),var(--accent));opacity:.2;filter:blur(8px);animation:spin 8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -984,9 +984,9 @@ textarea::placeholder{color:var(--text-dim)}
   50% { box-shadow: 0 0 35px var(--accent2-glow); border-color: var(--accent2); }
 }
 .main-view{flex:1;display:flex;flex-direction:column;overflow:hidden;transition:all .5s cubic-bezier(.16,1,.3,1)}
-body.init .main-view{justify-content:center}
-body.init .chat{flex:0 0 auto;overflow:visible;padding-bottom:10px}
-body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:translateY(-10px);transition:all .5s cubic-bezier(.16,1,.3,1)}
+body.init .main-view{justify-content:center;margin-top:-6vh}
+body.init .chat{flex:0 0 auto;overflow:visible;padding-bottom:15px}
+body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;transition:all .5s cubic-bezier(.16,1,.3,1)}
 </style></head><body class="init">
 <div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="brainBtn" title="Second Brain">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
 <div class="main-view" id="mainView">

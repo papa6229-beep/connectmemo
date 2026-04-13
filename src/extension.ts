@@ -225,6 +225,19 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     // 웹뷰가 준비되면 저장된 대화 기록 복원
                     this._restoreDisplayMessages();
                     break;
+                case 'openSettings':
+                    const choice = await vscode.window.showQuickPick([
+                        { label: 'Ollama (로컬 기본)', description: '초보자 추천', target: 'http://127.0.0.1:11434' },
+                        { label: 'LM Studio (고급형)', description: '맥북/고급 유저 추천', target: 'http://127.0.0.1:1234' }
+                    ], { placeHolder: '사용할 AI 엔진을 선택하세요 (선택 시 즉시 적용됩니다)' });
+                    if (choice) {
+                        await vscode.workspace.getConfiguration('connectAiLab').update('ollamaUrl', choice.target, vscode.ConfigurationTarget.Global);
+                        vscode.window.showInformationMessage(`✅ AI 엔진이 [${choice.label}] 로 변경되었습니다!`);
+                        
+                        // 사용자가 엔진을 바꾸자마자 즉시 바뀐 엔진의 모델 명단을 긁어와 웹뷰 목록(Dropdown)을 갱신합니다!
+                        await this._sendModels();
+                    }
+                    break;
             }
         });
 
@@ -239,8 +252,19 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         if (!this._view) { return; }
         const { ollamaBase, defaultModel } = getConfig();
         try {
-            const res = await axios.get(`${ollamaBase}/api/tags`, { timeout: 3000 });
-            let models: string[] = res.data.models.map((m: any) => m.name);
+            const isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+            let models: string[] = [];
+
+            if (isLMStudio) {
+                const res = await axios.get(`${ollamaBase}/v1/models`, { timeout: 3000 });
+                // LM Studio (OpenAI 규격) 응답 파싱
+                models = res.data.data.map((m: any) => m.id);
+            } else {
+                const res = await axios.get(`${ollamaBase}/api/tags`, { timeout: 3000 });
+                // Ollama 규격 응답 파싱
+                models = res.data.models.map((m: any) => m.name);
+            }
+
             if (models.length === 0) {
                 models = [defaultModel];
             } else if (!models.includes(defaultModel)) {
@@ -378,13 +402,29 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 };
             }
 
-            const response = await axios.post(`${ollamaBase}/api/chat`, {
+            let isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+            let apiUrl = isLMStudio ? `${ollamaBase}/v1/chat/completions` : `${ollamaBase}/api/chat`;
+
+            // Auto-Failover Logic: 유저가 설정을 안 건드렸더라도 Ollama가 죽어있으면 자동으로 LM Studio를 찾아갑니다!
+            if (!isLMStudio) {
+                try {
+                    await axios.get(`${ollamaBase}/api/tags`, { timeout: 1000 });
+                } catch (err: any) {
+                    // Ollama 연결 실패 시 LM Studio 1234 포트로 강제 우회
+                    apiUrl = 'http://127.0.0.1:1234/v1/chat/completions';
+                    isLMStudio = true;
+                }
+            }
+
+            const response = await axios.post(apiUrl, {
                 model: modelName || defaultModel,
                 messages: reqMessages,
                 stream: false,
             }, { timeout });
 
-            const aiMessage: string = response.data.message.content;
+            const aiMessage: string = isLMStudio 
+                ? response.data.choices[0].message.content 
+                : response.data.message.content;
             this._chatHistory.push({ role: 'assistant', content: aiMessage });
 
             // 5. Execute agent actions
@@ -604,7 +644,7 @@ textarea::placeholder{color:var(--text-dim)}
 @keyframes shimmer{0%{left:-40px}100%{left:120px}}
 @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
 </style></head><body>
-<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
+<div class="header"><div class="header-left"><div class="logo">✦</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="settingsBtn" title="Engine Settings">⚙️</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
 <div class="chat" id="chat">
 <div class="welcome">
 <div class="welcome-logo">\u2726</div>
@@ -619,7 +659,7 @@ textarea::placeholder{color:var(--text-dim)}
 try {
 const vscode=acquireVsCodeApi(),chat=document.getElementById('chat'),input=document.getElementById('input'),
 sendBtn=document.getElementById('sendBtn'),stopBtn=document.getElementById('stopBtn'),
-modelSel=document.getElementById('modelSel'),newChatBtn=document.getElementById('newChatBtn');
+modelSel=document.getElementById('modelSel'),newChatBtn=document.getElementById('newChatBtn'),settingsBtn=document.getElementById('settingsBtn');
 let loader=null,sending=false;
 vscode.postMessage({type:'getModels'});
 setTimeout(()=>vscode.postMessage({type:'ready'}),300);
@@ -657,6 +697,7 @@ document.addEventListener('click',e=>{if(e.target.classList.contains('qa-btn')){
 sendBtn.addEventListener('click',send);
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 newChatBtn.addEventListener('click',()=>vscode.postMessage({type:'newChat'}));
+settingsBtn.addEventListener('click',()=>vscode.postMessage({type:'openSettings'}));
 window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
   case 'response':hideLoader();setSending(false);addMsg(msg.value,'ai');break;
   case 'error':hideLoader();setSending(false);addMsg(msg.value,'error');break;

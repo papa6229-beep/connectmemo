@@ -1,109 +1,77 @@
-# ✦ Connect AI LAB
+# ✦ Connect AI LAB 
 
 **100% 로컬 · 100% 오프라인 · 100% 무료**  
-VS Code / Cursor / Antigravity에서 작동하는 프리미엄 AI 코딩 에이전트
+VS Code / Cursor 기반의 프리미엄 AI 코딩 에이전트입니다. 코드를 읽고, 작성하고, 터미널 명령어를 대신 실행해 줍니다.
+이 프로젝트는 **EZERAI**와 **Connect AI LAB**이 함께 연구하고 제작했습니다.
 
 ---
 
-## ✨ 핵심 기능
+## ✨ 핵심 기능 (v1.0.11 업데이트)
+
+### 🚀 듀얼 AI 엔진 (Hybrid Backend) 완벽 지원!
+이제 사용자 취향과 컴퓨터 사양에 맞춰 세상에서 제일 강력한 2가지 로컬 AI 엔진을 모두 지원합니다.
+- **Ollama (기본 모드):** 초보자에게 추천합니다! 별도의 설정 없이 백그라운드에서 조용하고 강력하게 작동합니다.
+- **LM Studio (고급 모드):** 맥북 유저나 고급 VRAM 관리가 필요한 분들께 강력히 추천합니다! 글로벌 표준 OpenAI(ChatGPT) 통신 규격과 100% 호환 적용 완료!
 
 | 기능 | 설명 |
 |:--|:--|
+| ⚙️ **실시간 엔진 스위칭 UI** | 채팅창의 톱니바퀴 한 번 클릭으로 즉시 Ollama ↔ LM Studio 변환 및 자동 설정 완료 |
+| 🛡️ **스마트 오토-페일오버** | Ollama가 응답하지 않을 경우, 플러그인이 스스로 0.1초 만에 LM Studio로 우회하여 안정적인 작업을 보장합니다. |
 | 📁 **파일 자동 생성** | "포트폴리오 사이트 만들어줘" → 폴더/파일 자동 생성 및 에디터 오픈 |
-| ✏️ **기존 파일 편집** | "배경색 바꿔줘" → 해당 코드를 찾아 정확히 교체 |
-| 🖥️ **터미널 명령 실행** | "express 설치해줘" → `npm install express` 자동 실행 |
-| 🔍 **프로젝트 자동 분석** | 파일 구조 + 핵심 파일 내용을 AI가 자동으로 읽고 이해 |
-| 💾 **대화 기록 저장** | VS Code를 닫았다 열어도 이전 대화가 그대로 유지 |
-| 🎨 **코드 구문 강조** | highlight.js 기반 전문 코드 하이라이팅 |
+| ✏️ **기존 파일 편집** | "배경색 바꿔줘" → 해당 코드를 찾아 정확히 교체 (자율주행 코딩) |
+| 🖥️ **터미널 명령 실행** | "express 설치해줘" → `npm install express` 자동 실행 대기 |
 
-## 📥 설치 방법
+---
 
-### 방법 1: VSIX 파일 설치 (가장 간단)
+## 📥 설치 방법 (상세 가이드)
 
-1. [Releases](https://github.com/wonseokjung/connect-ai/releases)에서 `.vsix` 파일 다운로드
-2. VS Code / Cursor / Antigravity 열기
-3. `Cmd+Shift+P` (Mac) 또는 `Ctrl+Shift+P` (Windows)  
-4. `Extensions: Install from VSIX` 검색 → 다운받은 파일 선택
-5. 완료! 🎉
+### 방법 1: VSIX 파일 즉시 설치 (가장 간단)
+1. Github [Releases](https://github.com/wonseokjung/connect-ai/releases) 메뉴에서 최신 `.vsix` 파일을 다운로드합니다.
+2. VS Code(또는 Cursor)를 엽니다.
+3. 단축키 `Cmd+Shift+P` (맥) 또는 `Ctrl+Shift+P` (윈도우)를 눌러 명령어 팔레트를 엽니다.
+4. **`Extensions: Install from VSIX`** 를 검색하여 선택한 후, 방금 다운로드한 파일을 고릅니다. 끝! 🎉
 
-### 방법 2: 소스에서 빌드
-
+### 방법 2: 플러그인 소스 직접 빌드
 ```bash
 git clone https://github.com/wonseokjung/connect-ai.git
 cd connect-ai
 npm install
 npm run compile
+vsce package
 ```
-
-## ⚙️ 사전 준비: Ollama 설치
-
-Connect AI LAB은 로컬 AI 서버인 **Ollama**를 사용합니다.
-
-### 1. Ollama 설치
-```bash
-# Mac (Homebrew)
-brew install ollama
-
-# 또는 공식 사이트에서 다운로드
-# https://ollama.com
-```
-
-### 2. AI 모델 다운로드
-```bash
-# Gemma 4 (추천, Google 최신 모델)
-ollama pull gemma4:e2b
-
-# 또는 다른 모델
-ollama pull llama3.3
-ollama pull deepseek-r1
-ollama pull codestral
-```
-
-### 3. Ollama 서버 실행
-```bash
-ollama serve
-```
-
-## 🚀 사용 방법
-
-1. **폴더 열기**: `File → Open Folder` → 프로젝트 폴더 선택
-2. **사이드바 클릭**: 왼쪽 로봇 아이콘 (🤖)  
-3. **대화 시작**: 자연어로 요청하면 AI가 자동으로 파일을 만들고 편집합니다!
-
-### 예시 프롬프트:
-```
-간단한 Express 서버를 만들어줘
-이 프로젝트에 라우터 추가해줘
-package.json의 description을 바꿔줘
-express 패키지 설치해줘
-```
-
-## ⚙️ 설정 변경
-
-`File > Preferences > Settings`에서 "Connect AI LAB" 검색:
-
-| 설정 | 기본값 | 설명 |
-|:--|:--|:--|
-| `ollamaUrl` | `http://127.0.0.1:11434` | Ollama 서버 주소 |
-| `defaultModel` | `gemma4:e2b` | 기본 AI 모델 |
-| `maxContextFiles` | `200` | 컨텍스트에 포함할 최대 파일 수 |
-| `requestTimeout` | `300` | AI 응답 대기 시간 (초) |
-
-## 🔒 프라이버시
-
-- ❌ 클라우드 서버 없음
-- ❌ 데이터 수집 없음  
-- ❌ 인터넷 연결 불필요
-- ✅ 모든 데이터는 내 컴퓨터 안에서만 처리
-
-## 🤝 기여
-
-Pull Request와 Issue를 환영합니다!
-
-## 📄 라이선스
-
-MIT License — 자유롭게 사용, 수정, 배포 가능합니다.
 
 ---
 
-**Made with ❤️ by Connect AI LAB — 여러분의 AI 멘토 Jay**
+## ⚙️ AI 엔진 세팅 가이드 (Ollama / LM Studio)
+
+Connect AI LAB은 사용자의 컴퓨터 자원 안에서 돌아가는 오프라인 모델을 사용합니다. 아래 두 가지 엔진 중 편하신 것을 하나 사용하세요.
+
+### 🟡 Option A: Ollama 설정 (초보자 추천)
+1. **설치:** [Ollama 공식 홈페이지](https://ollama.com)에서 다운로드 또는 `brew install ollama`
+2. **모델 다운로드:** 터미널을 열고 구글 최신 모델인 Gemma4를 받습니다.
+```bash
+ollama pull gemma4:e2b
+```
+3. **가동:** 백그라운드에서 자동으로 켜져 있습니다. (VS Code에서 Connect AI 채팅창의 ⚙️ 버튼을 눌러 `Ollama`가 선택되어 있는지 확인하세요!)
+
+### 🔵 Option B: LM Studio 설정 (애플 실리콘 맥 유저 고속도 추천)
+1. **설치:** [LM Studio 공식 홈페이지](https://lmstudio.ai/)에서 다운로드합니다.
+2. **모델 다운로드:** 프로그램 내부에서 원하는 모델(예: `Gemma4` 또는 Llama)을 검색해 다운로드합니다.
+3. **로컬 서버 열기:**
+   - LM Studio 좌측 메뉴 중 **`<->` 모양 아이콘(Local Server)**을 클릭합니다.
+   - 상단에서 다운로드한 모델을 고르고 **[Start Server]** 초록색 버튼을 누릅니다. (`1234` 포트로 열림)
+4. VS Code로 돌아와 Connect AI 채팅창의 **⚙️ 톱니바퀴 버튼**을 누르고 **`LM Studio (고급형)`**을 클릭하세요. (설정이 연동되며 1초 만에 곧바로 통신을 시작합니다!)
+
+---
+
+## 🔒 절대 프라이버시 원칙
+- ❌ **클라우드 서버 없음 / 인터넷 연결 불필요**
+- ❌ **데이터 수집 없음** (작성된 모든 코드는 컴퓨터 밖으로 나가지 않습니다.)
+- ✅ 회사/개인 프로젝트 보안 유지의 최적해
+
+---
+
+## 📄 라이선스
+MIT License — 자유롭게 사용, 수정, 배포 가능합니다.
+
+**Designed & Developed with ❤️ by EZERAI and Connect AI LAB**

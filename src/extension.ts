@@ -30,7 +30,7 @@ const EXCLUDED_DIRS = new Set([
     '.next', '.cache', '__pycache__', '.DS_Store', 'coverage',
     '.turbo', '.nuxt', '.output', 'vendor', 'target'
 ]);
-const MAX_CONTEXT_SIZE = 40_000; // chars
+const MAX_CONTEXT_SIZE = 12_000; // chars
 
 const SYSTEM_PROMPT = `You are "Connect AI", a premium agentic AI coding assistant running 100% offline on the user's machine.
 
@@ -638,7 +638,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             'src/main.ts', 'src/main.js'
         ];
         let totalRead = 0;
-        const MAX_AUTO_READ = 15_000; // chars total
+        const MAX_AUTO_READ = 6_000; // chars total
 
         for (const kf of keyFiles) {
             if (totalRead >= MAX_AUTO_READ) { break; }
@@ -1011,12 +1011,31 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             const isLM = ollamaBase.includes('1234') || ollamaBase.includes('v1');
             const targetName = isLM ? "LM Studio" : "Ollama";
             
-            const errMsg = error.code === 'ECONNREFUSED'
+            let errMsg = error.code === 'ECONNREFUSED'
                 ? `⚠️ ${targetName} 서버에 연결할 수 없습니다.\n앱에서 로컬 서버가 켜져 있는지(Start Server) 확인해주세요.`
                 : (error.response?.status === 400 || error.response?.status === 413)
                     ? `⚠️ 컨텍스트 용량 초과: 입력이 너무 깁니다. 새 대화(+)를 시작하거나 질문을 줄여주세요.`
                     : `⚠️ 오류: ${error.message}`;
+            
             this._view.webview.postMessage({ type: 'error', value: errMsg });
+
+            // 파싱된 실제 에러 표출 (LM Studio / Ollama Stream HTTP 에러)
+            if (error.response?.data?.on) {
+                let buf = '';
+                error.response.data.on('data', (c: any) => buf += c.toString());
+                error.response.data.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(buf);
+                        let detail = parsed.error?.message || parsed.error || '';
+                        if (detail.includes('greater than the context length')) {
+                            detail = '프로젝트 정보가 모델의 Context Length(기억력 한계)를 초과합니다.\n💡 해결책: LM Studio에서 모델을 불러올 때 오른쪽 설정 패널에서 [Context Length] 슬라이더를 8192 수정 후 리로드하세요.';
+                        }
+                        if (detail) {
+                            this._view!.webview.postMessage({ type: 'error', value: `💡 가이드: ${detail}` });
+                        }
+                    } catch { /* ignore */ }
+                });
+            }
         }
     }
 

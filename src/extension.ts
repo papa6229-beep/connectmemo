@@ -742,7 +742,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                             try {
                                 const raw = line.startsWith('data: ') ? line.slice(6) : line;
                                 const json = JSON.parse(raw);
-                                const token = json.choices?.[0]?.delta?.content || '';
+                                let token = json.choices?.[0]?.delta?.content || '';
+                                if (json.error) {
+                                    token = `[API 오류] ${json.error.message || json.error}`;
+                                }
                                 if (token) { aiMessage += token; this._view!.webview.postMessage({ type: 'streamChunk', value: token }); }
                             } catch {}
                         }
@@ -775,7 +778,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                             if (!line.trim()) continue;
                             try {
                                 const json = JSON.parse(line);
-                                const token = json.message?.content || '';
+                                let token = json.message?.content || '';
+                                if (json.error) {
+                                    token = `[API 오류] ${json.error}`;
+                                }
                                 if (token) { aiMessage += token; this._view!.webview.postMessage({ type: 'streamChunk', value: token }); }
                             } catch {}
                         }
@@ -923,7 +929,9 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                             const raw = line.startsWith('data: ') ? line.slice(6) : line;
                             const json = JSON.parse(raw);
                             let token = '';
-                            if (isLMStudio) {
+                            if (json.error) {
+                                token = `[API 오류] ${json.error.message || json.error}`;
+                            } else if (isLMStudio) {
                                 token = json.choices?.[0]?.delta?.content || '';
                             } else {
                                 token = json.message?.content || '';

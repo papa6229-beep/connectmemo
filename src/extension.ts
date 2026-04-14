@@ -1320,15 +1320,15 @@ let loader=null,sending=false,pendingFiles=[];
 /* Syntax Highlighting (lightweight) */
 function highlight(code,lang){
   let h=esc(code);
-  h=h.replace(/(\\/\\/[^\\n]*)/g,'<span class=\"cm\">$1</span>');
-  h=h.replace(/(#[^\\n]*)/g,'<span class=\"cm\">$1</span>');
-  h=h.replace(/(\\/\\*[\\s\\S]*?\\*\\/)/g,'<span class=\"cm\">$1</span>');
+  h=h.replace(new RegExp("(\\\\/\\\\/[^\\\\n]*)", "g"),'<span class=\"cm\">$1</span>');
+  h=h.replace(new RegExp("(#[^\\\\n]*)", "g"),'<span class=\"cm\">$1</span>');
+  h=h.replace(new RegExp("(\\\\/\\\\*[\\\\s\\\\S]*?\\\\*\\\\/)", "g"),'<span class=\"cm\">$1</span>');
   h=h.replace(/(&quot;[^&]*?&quot;|&#x27;[^&]*?&#x27;)/g,'<span class=\"str\">$1</span>');
-  h=h.replace(/\\b(function|const|let|var|return|if|else|for|while|class|import|export|from|default|async|await|try|catch|throw|new|this|def|self|print|lambda|yield|with|as|raise|except|finally)\\b/g,'<span class=\"kw\">$1</span>');
-  h=h.replace(/\\b(\\d+\\.?\\d*)\\b/g,'<span class=\"num\">$1</span>');
-  h=h.replace(/\\b(True|False|None|true|false|null|undefined|NaN)\\b/g,'<span class=\"num\">$1</span>');
-  h=h.replace(/\\b(String|Number|Boolean|Array|Object|Map|Set|Promise|void|int|float|str|list|dict|tuple)\\b/g,'<span class=\"type\">$1</span>');
-  h=h.replace(/([=!&lt;&gt;+\\-*/%|&amp;^~?:]+)/g,'<span class=\"op\">$1</span>');
+  h=h.replace(new RegExp("\\\\b(function|const|let|var|return|if|else|for|while|class|import|export|from|default|async|await|try|catch|throw|new|this|def|self|print|lambda|yield|with|as|raise|except|finally)\\\\b", "g"),'<span class=\"kw\">$1</span>');
+  h=h.replace(new RegExp("\\\\b(\\\\d+\\\\.?\\\\d*)\\\\b", "g"),'<span class=\"num\">$1</span>');
+  h=h.replace(new RegExp("\\\\b(True|False|None|true|false|null|undefined|NaN)\\\\b", "g"),'<span class=\"num\">$1</span>');
+  h=h.replace(new RegExp("\\\\b(String|Number|Boolean|Array|Object|Map|Set|Promise|void|int|float|str|list|dict|tuple)\\\\b", "g"),'<span class=\"type\">$1</span>');
+  h=h.replace(/([=!+*/%|&^~?:-]+)/g,'<span class=\"op\">$1</span>');
   return h;
 }
 
@@ -1361,7 +1361,7 @@ function fmt(t){
   if(t.lastIndexOf('<create_file') > t.lastIndexOf('</create_file>')) t += '</create_file>';
   if(t.lastIndexOf('<edit_file') > t.lastIndexOf('</edit_file>')) t += '</edit_file>';
   if(t.lastIndexOf('<run_command') > t.lastIndexOf('</run_command>')) t += '</run_command>';
-  if((t.match(/\x60\x60\x60/g)||[]).length % 2 !== 0) t += '\\n\x60\x60\x60';
+  if((t.match(/\x60\x60\x60/g)||[]).length % 2 !== 0) t += '\\\\n\x60\x60\x60';
 
   const blocks = [];
   function pushB(h){ blocks.push(h); return '__B' + (blocks.length-1) + '__'; }
@@ -1395,7 +1395,7 @@ function send(){
   document.body.classList.remove('init');
   const w=document.querySelector('.welcome');if(w)w.remove();
   document.querySelectorAll('.quick-actions').forEach(e=>e.remove());
-  const displayText=text+(pendingFiles.length>0?'\n\ud83d\udcce '+pendingFiles.map(f=>f.name).join(', '):'');
+  const displayText=text+(pendingFiles.length>0?'\\\\n\\ud83d\\udcce '+pendingFiles.map(f=>f.name).join(', '):'');
   addMsg(displayText,'user');
   input.value='';input.style.height='auto';setSending(true);showLoader();
   if(pendingFiles.length>0){

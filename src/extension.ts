@@ -246,6 +246,9 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 case 'prompt':
                     await this._handlePrompt(msg.value, msg.model);
                     break;
+                case 'promptWithFile':
+                    await this._handlePromptWithFile(msg.value, msg.model, msg.files);
+                    break;
                 case 'newChat':
                     this.resetChat();
                     break;
@@ -631,6 +634,155 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         }
 
         return result;
+    }
+
+    // --------------------------------------------------------
+    // Handle prompt with file attachments (multimodal)
+    // --------------------------------------------------------
+    private async _handlePromptWithFile(prompt: string, modelName: string, files: {name: string, type: string, data: string}[]) {
+        if (!this._view) { return; }
+
+        try {
+            const { ollamaBase, defaultModel, timeout } = getConfig();
+            let isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+            let apiUrl = isLMStudio ? `${ollamaBase}/v1/chat/completions` : `${ollamaBase}/api/chat`;
+
+            if (!isLMStudio) {
+                try { await axios.get(`${ollamaBase}/api/tags`, { timeout: 1000 }); }
+                catch { apiUrl = 'http://127.0.0.1:1234/v1/chat/completions'; isLMStudio = true; }
+            }
+
+            // Separate images from text files
+            const imageFiles = files.filter(f => f.type.startsWith('image/'));
+            const textFiles = files.filter(f => !f.type.startsWith('image/'));
+
+            // Build text context from non-image files
+            let fileContext = '';
+            for (const f of textFiles) {
+                // data is base64 encoded, decode to utf-8 text
+                const decoded = Buffer.from(f.data, 'base64').toString('utf-8');
+                fileContext += `\n\n[첨부 파일: ${f.name}]\n\`\`\`\n${decoded.slice(0, 20000)}\n\`\`\``;
+            }
+
+            const userContent = prompt + fileContext;
+            this._chatHistory.push({ role: 'user', content: userContent });
+            this._displayMessages.push({ text: prompt + (files.length > 0 ? `\n📎 ${files.map(f=>f.name).join(', ')}` : ''), role: 'user' });
+
+            // Build messages
+            const reqMessages = [...this._chatHistory];
+            if (reqMessages.length > 0 && reqMessages[0].role === 'system') {
+                const editor = vscode.window.activeTextEditor;
+                let contextBlock = '';
+                if (editor && editor.document.uri.scheme === 'file') {
+                    const text = editor.document.getText();
+                    const name = path.basename(editor.document.fileName);
+                    if (text.trim().length > 0 && text.length < MAX_CONTEXT_SIZE) {
+                        contextBlock = `\n\n[Currently open file: ${name}]\n\`\`\`\n${text}\n\`\`\``;
+                    }
+                }
+                const workspaceCtx = this._getWorkspaceContext();
+                const brainCtx = this._brainEnabled ? this._getSecondBrainContext() : '';
+                reqMessages[0] = {
+                    role: 'system',
+                    content: `${this._systemPrompt}\n\n[BACKGROUND CONTEXT]\n${contextBlock}\n${workspaceCtx}\n${brainCtx}`
+                };
+            }
+
+            // Build image payload for vision models
+            const images = imageFiles.map(f => f.data); // already base64
+
+            let aiMessage = '';
+            this._view.webview.postMessage({ type: 'streamStart' });
+
+            if (isLMStudio) {
+                // OpenAI-compatible format with image_url
+                const lastUserMsg = reqMessages[reqMessages.length - 1];
+                const contentParts: any[] = [{ type: 'text', text: lastUserMsg.content }];
+                for (const img of images) {
+                    contentParts.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${img}` } });
+                }
+                reqMessages[reqMessages.length - 1] = { role: 'user', content: contentParts as any };
+
+                const streamBody = {
+                    model: modelName || defaultModel,
+                    messages: reqMessages,
+                    stream: true,
+                    max_tokens: 4096, temperature: this._temperature, top_p: this._topP
+                };
+                const response = await axios.post(apiUrl, streamBody, { timeout, responseType: 'stream' });
+                await new Promise<void>((resolve, reject) => {
+                    const stream = response.data;
+                    let buffer = '';
+                    stream.on('data', (chunk: Buffer) => {
+                        buffer += chunk.toString();
+                        const lines = buffer.split('\n'); buffer = lines.pop() || '';
+                        for (const line of lines) {
+                            if (!line.trim() || line.trim() === 'data: [DONE]') continue;
+                            try {
+                                const raw = line.startsWith('data: ') ? line.slice(6) : line;
+                                const json = JSON.parse(raw);
+                                const token = json.choices?.[0]?.delta?.content || '';
+                                if (token) { aiMessage += token; this._view!.webview.postMessage({ type: 'streamChunk', value: token }); }
+                            } catch {}
+                        }
+                    });
+                    stream.on('end', () => resolve());
+                    stream.on('error', (err: any) => reject(err));
+                });
+            } else {
+                // Ollama native format with images array
+                const streamBody: any = {
+                    model: modelName || defaultModel,
+                    messages: reqMessages,
+                    stream: true,
+                    options: { num_predict: 4096, temperature: this._temperature, top_p: this._topP, top_k: this._topK }
+                };
+                // Attach images to the last user message for Ollama
+                if (images.length > 0) {
+                    streamBody.messages = reqMessages.map((m: any, i: number) => 
+                        i === reqMessages.length - 1 ? { ...m, images } : m
+                    );
+                }
+                const response = await axios.post(apiUrl, streamBody, { timeout, responseType: 'stream' });
+                await new Promise<void>((resolve, reject) => {
+                    const stream = response.data;
+                    let buffer = '';
+                    stream.on('data', (chunk: Buffer) => {
+                        buffer += chunk.toString();
+                        const lines = buffer.split('\n'); buffer = lines.pop() || '';
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const json = JSON.parse(line);
+                                const token = json.message?.content || '';
+                                if (token) { aiMessage += token; this._view!.webview.postMessage({ type: 'streamChunk', value: token }); }
+                            } catch {}
+                        }
+                    });
+                    stream.on('end', () => resolve());
+                    stream.on('error', (err: any) => reject(err));
+                });
+            }
+
+            this._view.webview.postMessage({ type: 'streamEnd' });
+            this._chatHistory.push({ role: 'assistant', content: aiMessage });
+
+            const report = this._executeActions(aiMessage);
+            if (report.length > 0) {
+                const reportMsg = `\n\n---\n**에이전트 작업 결과**\n${report.join('\n')}`;
+                this._view.webview.postMessage({ type: 'streamChunk', value: reportMsg });
+                this._view.webview.postMessage({ type: 'streamEnd' });
+                aiMessage += reportMsg;
+            }
+            this._displayMessages.push({ text: aiMessage, role: 'ai' });
+            this._saveHistory();
+
+        } catch (error: any) {
+            const errMsg = error.code === 'ECONNREFUSED'
+                ? '⚠️ AI 서버에 연결할 수 없습니다. 로컬 서버를 켜주세요.'
+                : `⚠️ 오류: ${error.message}`;
+            this._view.webview.postMessage({ type: 'error', value: errMsg });
+        }
     }
 
     // --------------------------------------------------------
@@ -1077,6 +1229,18 @@ textarea::placeholder{color:var(--text-dim)}
 body.init .main-view{justify-content:center;margin-top:-6vh}
 body.init .chat{flex:0 0 auto;overflow:visible;padding-bottom:15px}
 body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;transition:all .5s cubic-bezier(.16,1,.3,1)}
+
+/* ATTACHMENT */
+.attach-btn{background:transparent;border:1px solid var(--border2);color:var(--text-dim);width:32px;height:32px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all .3s;flex-shrink:0}
+.attach-btn:hover{color:var(--accent);border-color:var(--accent);box-shadow:0 0 12px var(--accent-glow);transform:translateY(-1px)}
+.attach-preview{display:none;gap:6px;padding:0 0 6px;flex-wrap:wrap}
+.attach-preview.visible{display:flex}
+.attach-chip{display:flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:4px 10px;font-size:10px;color:var(--text);animation:msgIn .3s ease}
+.attach-chip .chip-icon{font-size:12px}
+.attach-chip .chip-name{max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attach-chip .chip-remove{cursor:pointer;color:var(--text-dim);font-size:12px;margin-left:2px;transition:color .2s}
+.attach-chip .chip-remove:hover{color:var(--red)}
+.attach-thumb{width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid var(--border2)}
 </style></head><body class="init">
 <div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="brainBtn" title="Second Brain">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
 <div class="main-view" id="mainView">
@@ -1087,16 +1251,19 @@ body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;tr
 <div class="welcome-sub">\ubcf4\uc548 \u00b7 \ube44\uc6a9\ucd5c\uc801\ud654 \u00b7 \uc9c0\uc2dd\uc5f0\uacb0<br>\ud504\ub85c\uc81d\ud2b8\ub97c \uc774\ud574\ud558\uace0, \ucf54\ub4dc\ub97c \uc791\uc131\ud558\uace0, \uc2e4\ud589\ud569\ub2c8\ub2e4.</div>
 </div></div>
 <div class="input-wrap"><div class="input-box">
+<div class="attach-preview" id="attachPreview"></div>
 <textarea id="input" rows="1" placeholder="\ubb34\uc5c7\uc744 \ub9cc\ub4e4\uc5b4 \ub4dc\ub9b4\uae4c\uc694?"></textarea>
 <div class="input-footer"><span class="input-hint">Enter \uc804\uc1a1 \u00b7 Shift+Enter \uc904\ubc14\uafc8</span>
-<div class="input-btns"><button class="stop-btn" id="stopBtn">\u25a0</button><button class="send-btn" id="sendBtn">\u2191</button></div></div></div></div>
+<div class="input-btns"><button class="attach-btn" id="attachBtn" title="\ud30c\uc77c \ucca8\ubd80">+</button><button class="stop-btn" id="stopBtn">\u25a0</button><button class="send-btn" id="sendBtn">\u2191</button></div></div></div>
+<input type="file" id="fileInput" multiple accept="image/*,audio/*,.txt,.md,.csv,.json,.js,.ts,.html,.css,.py,.java,.rs,.go,.yaml,.yml,.xml,.toml" hidden></div>
 </div>
 <script>
 try {
 const vscode=acquireVsCodeApi(),chat=document.getElementById('chat'),input=document.getElementById('input'),
 sendBtn=document.getElementById('sendBtn'),stopBtn=document.getElementById('stopBtn'),
-modelSel=document.getElementById('modelSel'),newChatBtn=document.getElementById('newChatBtn'),settingsBtn=document.getElementById('settingsBtn'),brainBtn=document.getElementById('brainBtn');
-let loader=null,sending=false;
+modelSel=document.getElementById('modelSel'),newChatBtn=document.getElementById('newChatBtn'),settingsBtn=document.getElementById('settingsBtn'),brainBtn=document.getElementById('brainBtn'),
+attachBtn=document.getElementById('attachBtn'),fileInput=document.getElementById('fileInput'),attachPreview=document.getElementById('attachPreview');
+let loader=null,sending=false,pendingFiles=[];
 vscode.postMessage({type:'getModels'});
 setTimeout(()=>vscode.postMessage({type:'ready'}),300);
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,150)+'px'});
@@ -1134,7 +1301,57 @@ function addMsg(text,role){
 function showLoader(){loader=document.createElement('div');loader.className='msg';loader.innerHTML='<div class="msg-head"><div class="av av-ai">\u2726</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div><div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><span class="loading-text">\uc0dd\uac01\ud558\ub294 \uc911...</span></div>';chat.appendChild(loader);chat.scrollTop=chat.scrollHeight}
 function hideLoader(){if(loader&&loader.parentNode)loader.parentNode.removeChild(loader);loader=null}
 function setSending(v){sending=v;sendBtn.disabled=v;stopBtn.classList.toggle('visible',v);input.disabled=v;if(!v)input.focus()}
-function send(){const text=input.value.trim();if(!text||sending)return;document.body.classList.remove('init');const w=document.querySelector('.welcome');if(w)w.remove();document.querySelectorAll('.quick-actions').forEach(e=>e.remove());addMsg(text,'user');input.value='';input.style.height='auto';setSending(true);showLoader();vscode.postMessage({type:'prompt',value:text,model:modelSel.value})}
+function send(){
+  const text=input.value.trim();
+  if((!text&&pendingFiles.length===0)||sending)return;
+  document.body.classList.remove('init');
+  const w=document.querySelector('.welcome');if(w)w.remove();
+  document.querySelectorAll('.quick-actions').forEach(e=>e.remove());
+  const displayText=text+(pendingFiles.length>0?'\n\ud83d\udcce '+pendingFiles.map(f=>f.name).join(', '):'');
+  addMsg(displayText,'user');
+  input.value='';input.style.height='auto';setSending(true);showLoader();
+  if(pendingFiles.length>0){
+    vscode.postMessage({type:'promptWithFile',value:text||'\uc774 \ud30c\uc77c\uc744 \ubd84\uc11d\ud574\uc8fc\uc138\uc694.',model:modelSel.value,files:pendingFiles});
+    pendingFiles=[];attachPreview.innerHTML='';attachPreview.classList.remove('visible');
+  } else {
+    vscode.postMessage({type:'prompt',value:text,model:modelSel.value});
+  }
+}
+
+/* Attachment Logic */
+attachBtn.addEventListener('click',()=>fileInput.click());
+fileInput.addEventListener('change',()=>{
+  const files=Array.from(fileInput.files);
+  files.forEach(file=>{
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const base64=reader.result.split(',')[1];
+      pendingFiles.push({name:file.name,type:file.type,data:base64});
+      renderPreview();
+    };
+    reader.readAsDataURL(file);
+  });
+  fileInput.value='';
+});
+function renderPreview(){
+  attachPreview.innerHTML='';
+  if(pendingFiles.length===0){attachPreview.classList.remove('visible');return;}
+  attachPreview.classList.add('visible');
+  pendingFiles.forEach((f,i)=>{
+    const chip=document.createElement('div');chip.className='attach-chip';
+    const isImg=f.type.startsWith('image/');
+    if(isImg){
+      const thumb=document.createElement('img');thumb.className='attach-thumb';thumb.src='data:'+f.type+';base64,'+f.data;chip.appendChild(thumb);
+    } else {
+      const icon=document.createElement('span');icon.className='chip-icon';icon.textContent=f.type.startsWith('audio/')?'\ud83c\udfa7':'\ud83d\udcc4';chip.appendChild(icon);
+    }
+    const nm=document.createElement('span');nm.className='chip-name';nm.textContent=f.name;chip.appendChild(nm);
+    const rm=document.createElement('span');rm.className='chip-remove';rm.textContent='\u2715';
+    rm.addEventListener('click',()=>{pendingFiles.splice(i,1);renderPreview();});
+    chip.appendChild(rm);
+    attachPreview.appendChild(chip);
+  });
+}
 document.addEventListener('click',e=>{if(e.target.classList.contains('qa-btn')){const p=e.target.getAttribute('data-prompt');if(p){input.value=p;send()}}});
 sendBtn.addEventListener('click',send);
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});

@@ -132,6 +132,9 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     private _displayMessages: { text: string; role: string }[] = [];
     private _isSyncingBrain: boolean = false;
     private _brainEnabled: boolean = true; // 🧠 ON/OFF 토글 상태
+    private _abortController?: AbortController;
+    private _lastPrompt?: string;
+    private _lastModel?: string;
 
     // 🏛️ AI 파라미터 튜닝
     private _temperature: number;
@@ -261,6 +264,24 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'syncBrain':
                     await this._handleBrainMenu();
+                    break;
+                case 'stopGeneration':
+                    if (this._abortController) {
+                        this._abortController.abort();
+                        this._abortController = undefined;
+                    }
+                    break;
+                case 'regenerate':
+                    if (this._lastPrompt) {
+                        // Remove last AI response from history
+                        if (this._chatHistory.length > 0 && this._chatHistory[this._chatHistory.length - 1].role === 'assistant') {
+                            this._chatHistory.pop();
+                        }
+                        if (this._displayMessages.length > 0 && this._displayMessages[this._displayMessages.length - 1].role === 'ai') {
+                            this._displayMessages.pop();
+                        }
+                        await this._handlePrompt(this._lastPrompt, this._lastModel || '');
+                    }
                     break;
             }
         });
@@ -858,10 +879,14 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
             // 스트리밍: 웹뷰에 'streamStart' 로 빈 메시지 생성 후 'streamChunk'로 실시간 업데이트
             this._view.webview.postMessage({ type: 'streamStart' });
+            this._lastPrompt = prompt;
+            this._lastModel = modelName;
+            this._abortController = new AbortController();
 
             const response = await axios.post(apiUrl, streamBody, { 
                 timeout, 
-                responseType: 'stream' 
+                responseType: 'stream',
+                signal: this._abortController.signal
             });
 
             await new Promise<void>((resolve, reject) => {
@@ -1126,6 +1151,10 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
 .header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(10,10,12,.8);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);flex-shrink:0;position:relative;z-index:10}
 .header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 5%,var(--accent) 30%,var(--accent2) 50%,var(--accent3) 70%,transparent 95%);opacity:.5;animation:headerGlow 4s ease-in-out infinite alternate}
 @keyframes headerGlow{0%{opacity:.3}100%{opacity:.6}}
+.thinking-bar{height:2px;background:transparent;position:relative;overflow:hidden;flex-shrink:0;z-index:10}
+.thinking-bar.active{background:rgba(124,106,255,.1)}
+.thinking-bar.active::after{content:'';position:absolute;top:0;left:-40%;width:40%;height:100%;background:linear-gradient(90deg,transparent,var(--accent),var(--accent2),var(--accent3),transparent);animation:thinkSlide 1.5s ease-in-out infinite}
+@keyframes thinkSlide{0%{left:-40%}100%{left:100%}}
 .header-left{display:flex;align-items:center;gap:8px}
 .logo{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;box-shadow:0 0 15px rgba(124,106,255,.4),0 0 30px rgba(224,64,251,.15);animation:logoPulse 3s ease-in-out infinite;position:relative}
 .logo::after{content:'';position:absolute;inset:-2px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2),var(--accent3));opacity:.3;filter:blur(4px);animation:logoPulse 3s ease-in-out infinite}
@@ -1241,8 +1270,24 @@ body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;tr
 .attach-chip .chip-remove{cursor:pointer;color:var(--text-dim);font-size:12px;margin-left:2px;transition:color .2s}
 .attach-chip .chip-remove:hover{color:var(--red)}
 .attach-thumb{width:28px;height:28px;border-radius:5px;object-fit:cover;border:1px solid var(--border2)}
+
+/* REGENERATE BUTTON */
+.regen-btn{display:inline-flex;align-items:center;gap:4px;background:transparent;border:1px solid var(--border2);color:var(--text-dim);padding:4px 12px;border-radius:8px;font-size:10px;cursor:pointer;transition:all .3s;font-family:inherit;margin-top:6px;margin-left:29px}
+.regen-btn:hover{color:var(--accent);border-color:var(--accent);box-shadow:0 0 12px var(--accent-glow)}
+
+/* SYNTAX HIGHLIGHTING */
+.msg-body pre .kw{color:#c792ea}
+.msg-body pre .str{color:#c3e88d}
+.msg-body pre .num{color:#f78c6c}
+.msg-body pre .cm{color:#546e7a;font-style:italic}
+.msg-body pre .fn{color:#82aaff}
+.msg-body pre .tag{color:#f07178}
+.msg-body pre .attr{color:#ffcb6b}
+.msg-body pre .op{color:#89ddff}
+.msg-body pre .type{color:#ffcb6b}
 </style></head><body class="init">
 <div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="brainBtn" title="Second Brain">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
+<div class="thinking-bar" id="thinkingBar"></div>
 <div class="main-view" id="mainView">
 <div class="chat" id="chat">
 <div class="welcome">
@@ -1262,8 +1307,45 @@ try {
 const vscode=acquireVsCodeApi(),chat=document.getElementById('chat'),input=document.getElementById('input'),
 sendBtn=document.getElementById('sendBtn'),stopBtn=document.getElementById('stopBtn'),
 modelSel=document.getElementById('modelSel'),newChatBtn=document.getElementById('newChatBtn'),settingsBtn=document.getElementById('settingsBtn'),brainBtn=document.getElementById('brainBtn'),
-attachBtn=document.getElementById('attachBtn'),fileInput=document.getElementById('fileInput'),attachPreview=document.getElementById('attachPreview');
+attachBtn=document.getElementById('attachBtn'),fileInput=document.getElementById('fileInput'),attachPreview=document.getElementById('attachPreview'),
+thinkingBar=document.getElementById('thinkingBar');
 let loader=null,sending=false,pendingFiles=[];
+
+/* Syntax Highlighting (lightweight) */
+function highlight(code,lang){
+  let h=esc(code);
+  h=h.replace(/(\/\/[^\n]*)/g,'<span class="cm">$1</span>');
+  h=h.replace(/(#[^\n]*)/g,'<span class="cm">$1</span>');
+  h=h.replace(/(\/\*[\s\S]*?\*\/)/g,'<span class="cm">$1</span>');
+  h=h.replace(/(&quot;[^&]*?&quot;|&#x27;[^&]*?&#x27;)/g,'<span class="str">$1</span>');
+  h=h.replace(/\b(function|const|let|var|return|if|else|for|while|class|import|export|from|default|async|await|try|catch|throw|new|this|def|self|print|lambda|yield|with|as|raise|except|finally)\b/g,'<span class="kw">$1</span>');
+  h=h.replace(/\b(\d+\.?\d*)\b/g,'<span class="num">$1</span>');
+  h=h.replace(/\b(True|False|None|true|false|null|undefined|NaN)\b/g,'<span class="num">$1</span>');
+  h=h.replace(/\b(String|Number|Boolean|Array|Object|Map|Set|Promise|void|int|float|str|list|dict|tuple)\b/g,'<span class="type">$1</span>');
+  h=h.replace(/([=!&lt;&gt;+\-*/%|&amp;^~?:]+)/g,'<span class="op">$1</span>');
+  return h;
+}
+
+/* Clipboard Paste (Ctrl+V images) */
+input.addEventListener('paste',(e)=>{
+  const items=e.clipboardData&&e.clipboardData.items;
+  if(!items)return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      e.preventDefault();
+      const file=item.getAsFile();
+      if(!file)return;
+      const reader=new FileReader();
+      reader.onload=()=>{
+        const base64=reader.result.split(',')[1];
+        pendingFiles.push({name:'clipboard-image.png',type:file.type,data:base64});
+        renderPreview();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+  }
+});
 vscode.postMessage({type:'getModels'});
 setTimeout(()=>vscode.postMessage({type:'ready'}),300);
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,150)+'px'});
@@ -1280,7 +1362,7 @@ function fmt(t){
   t=t.replace(/<create_file\\s+path="([^"]+)">([\\s\\S]*?)<\\/create_file>/g,(_,p,c)=>pushB('<div class="file-badge">\ud83d\udcc1 '+esc(p)+' \u2014 \uc790\ub3d9 \uc0dd\uc131\ub428</div><div class="code-wrap"><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>'));
   t=t.replace(/<edit_file\\s+path="([^"]+)">([\\s\\S]*?)<\\/edit_file>/g,(_,p,c)=>pushB('<div class="edit-badge">\u270f\ufe0f '+esc(p)+' \u2014 \ud3b8\uc9d1\ub428</div><div class="code-wrap"><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>'));
   t=t.replace(/<run_command>([\\s\\S]*?)<\\/run_command>/g,(_,c)=>pushB('<div class="cmd-badge">\u25b6 '+esc(c)+'</div>'));
-  t=t.replace(/\x60\x60\x60(\\w*)\\n([\\s\\S]*?)\x60\x60\x60/g,(_,lang,c)=>{const l=lang||'code';return pushB('<div class="code-wrap"><span class="code-lang">'+esc(l)+'</span><pre><code>'+esc(c)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>');});
+  t=t.replace(/\x60\x60\x60(\\w*)\\n([\\s\\S]*?)\x60\x60\x60/g,(_,lang,c)=>{const l=lang||'code';return pushB('<div class="code-wrap"><span class="code-lang">'+esc(l)+'</span><pre><code>'+highlight(c,l)+'</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>');});
   t=t.replace(/\x60([^\x60]+)\x60/g,(_,c)=>pushB('<code>'+esc(c)+'</code>'));
   t=esc(t);
   t=t.replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>');
@@ -1298,9 +1380,9 @@ function addMsg(text,role){
   if(isUser){body.innerText=text}else{body.innerHTML=fmt(text)}
   el.appendChild(head);el.appendChild(body);chat.appendChild(el);chat.scrollTop=chat.scrollHeight;
 }
-function showLoader(){loader=document.createElement('div');loader.className='msg';loader.innerHTML='<div class="msg-head"><div class="av av-ai">\u2726</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div><div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><span class="loading-text">\uc0dd\uac01\ud558\ub294 \uc911...</span></div>';chat.appendChild(loader);chat.scrollTop=chat.scrollHeight}
-function hideLoader(){if(loader&&loader.parentNode)loader.parentNode.removeChild(loader);loader=null}
-function setSending(v){sending=v;sendBtn.disabled=v;stopBtn.classList.toggle('visible',v);input.disabled=v;if(!v)input.focus()}
+function showLoader(){loader=document.createElement('div');loader.className='msg';loader.innerHTML='<div class="msg-head"><div class="av av-ai">\u2726</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div><div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><span class="loading-text">\uc0dd\uac01\ud558\ub294 \uc911...</span></div>';chat.appendChild(loader);chat.scrollTop=chat.scrollHeight;thinkingBar.classList.add('active')}
+function hideLoader(){if(loader&&loader.parentNode)loader.parentNode.removeChild(loader);loader=null;thinkingBar.classList.remove('active')}
+function setSending(v){sending=v;sendBtn.disabled=v;stopBtn.classList.toggle('visible',v);input.disabled=v;if(!v){input.focus();thinkingBar.classList.remove('active')}}
 function send(){
   const text=input.value.trim();
   if((!text&&pendingFiles.length===0)||sending)return;
@@ -1358,6 +1440,7 @@ input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventD
 newChatBtn.addEventListener('click',()=>vscode.postMessage({type:'newChat'}));
 settingsBtn.addEventListener('click',()=>vscode.postMessage({type:'openSettings'}));
 brainBtn.addEventListener('click',()=>vscode.postMessage({type:'syncBrain'}));
+stopBtn.addEventListener('click',()=>{vscode.postMessage({type:'stopGeneration'});hideLoader();setSending(false);if(streamBody){streamBody.classList.remove('stream-active')}streamEl=null;streamBody=null;});
 let streamEl=null,streamBody=null;
 window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
   case 'response':hideLoader();setSending(false);addMsg(msg.value,'ai');break;
@@ -1375,6 +1458,12 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     break;}
   case 'streamEnd':{
     if(streamBody)streamBody.classList.remove('stream-active');
+    /* Add regenerate button */
+    if(streamEl){
+      const rb=document.createElement('button');rb.className='regen-btn';rb.innerHTML='\ud83d\udd04 Regenerate';
+      rb.addEventListener('click',()=>{rb.remove();vscode.postMessage({type:'regenerate'});showLoader();setSending(true);});
+      streamEl.appendChild(rb);
+    }
     setSending(false);streamEl=null;streamBody=null;
     break;}
   case 'modelsList':modelSel.innerHTML='';msg.value.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;modelSel.appendChild(o)});break;

@@ -824,7 +824,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 this._view.webview.postMessage({ type: 'streamEnd' });
                 aiMessage += reportMsg;
             }
-            this._displayMessages.push({ text: aiMessage, role: 'ai' });
+            this._displayMessages.push({ text: this._stripActionTags(aiMessage), role: 'ai' });
             this._saveHistory();
 
         } catch (error: any) {
@@ -1017,7 +1017,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             }
 
             // 저장용: AI 응답 기록
-            this._displayMessages.push({ text: aiMessage, role: 'ai' });
+            this._displayMessages.push({ text: this._stripActionTags(aiMessage), role: 'ai' });
 
             // 메모리 누수 방지: 대화 이력 최대 50개 반턱으로 제한
             const MAX_HISTORY = 50;
@@ -1180,17 +1180,17 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        // ACTION 4: Read files — inject content back into chat history
+        // ACTION 4: Read files — inject content back into chat history + show preview
         const readRegex = /<(?:read_file|read)\s+(?:path|file|name)=['"]?([^'"\/\>]+)['"]?\s*\/?>(?:<\/(?:read_file|read)>)?/gi;
         while ((match = readRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
             const absPath = path.join(rootPath, relPath);
             try {
                 if (fs.existsSync(absPath)) {
-                    const content = fs.readFileSync(absPath, 'utf-8').slice(0, 10000);
-                    report.push(`📖 읽기: ${relPath} (${content.length}자)`);
-                    // Inject the file content into chat so AI can use it in next turn
-                    this._chatHistory.push({ role: 'user', content: `[시스템: read_file 결과]\n파일: ${relPath}\n\`\`\`\n${content}\n\`\`\`` });
+                    const content = fs.readFileSync(absPath, 'utf-8');
+                    const preview = content.slice(0, 500).split('\n').slice(0, 10).join('\n');
+                    report.push(`📖 읽기: ${relPath} (${content.length}자)\n\`\`\`\n${preview}...\n\`\`\``);
+                    this._chatHistory.push({ role: 'user', content: `[시스템: read_file 결과]\n파일: ${relPath}\n\`\`\`\n${content.slice(0, 10000)}\n\`\`\`` });
                 } else {
                     report.push(`⚠️ 읽기 실패: ${relPath} — 파일이 존재하지 않습니다.`);
                 }
@@ -1211,7 +1211,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                         .filter(e => !e.name.startsWith('.') && !EXCLUDED_DIRS.has(e.name))
                         .map(e => e.isDirectory() ? `📁 ${e.name}/` : `📄 ${e.name}`)
                         .join('\n');
-                    report.push(`📂 목록: ${relDir}/`);
+                    report.push(`📂 목록: ${relDir}/\n\`\`\`\n${listing}\n\`\`\``);
                     this._chatHistory.push({ role: 'user', content: `[시스템: list_files 결과]\n디렉토리: ${relDir}/\n${listing}` });
                 } else {
                     report.push(`⚠️ 목록 실패: ${relDir} — 디렉토리가 존재하지 않습니다.`);
@@ -1272,12 +1272,25 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         }
 
         // Show notification
-        const successCount = report.filter(r => r.startsWith('✅') || r.startsWith('✏️') || r.startsWith('🖥️') || r.startsWith('🗑️')).length;
+        const successCount = report.filter(r => r.startsWith('✅') || r.startsWith('✏️') || r.startsWith('🖥️') || r.startsWith('🗑️') || r.startsWith('📖') || r.startsWith('📂')).length;
         if (successCount > 0) {
             vscode.window.showInformationMessage(`Connect AI: ${successCount}개 에이전트 작업 완료!`);
         }
 
         return report;
+    }
+
+    // Strip raw XML action tags from display message
+    private _stripActionTags(text: string): string {
+        return text
+            .replace(/<(?:create_file|file)\s+[^>]*>[\s\S]*?<\/(?:create_file|file)>/gi, '')
+            .replace(/<(?:edit_file|edit)\s+[^>]*>[\s\S]*?<\/(?:edit_file|edit)>/gi, '')
+            .replace(/<(?:delete_file|delete)\s+[^>]*\s*\/?>(?:<\/(?:delete_file|delete)>)?/gi, '')
+            .replace(/<(?:read_file|read)\s+[^>]*\s*\/?>(?:<\/(?:read_file|read)>)?/gi, '')
+            .replace(/<(?:list_files|list_dir|ls)\s+[^>]*\s*\/?>(?:<\/(?:list_files|list_dir|ls)>)?/gi, '')
+            .replace(/<(?:run_command|command|bash|terminal)>[\s\S]*?<\/(?:run_command|command|bash|terminal)>/gi, '')
+            .replace(/<(?:read_brain)>[\s\S]*?<\/(?:read_brain)>/gi, '')
+            .trim();
     }
 
 

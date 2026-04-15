@@ -1,78 +1,171 @@
-# ✦ Connect AI 
+<p align="center">
+  <img src="assets/icon.png" width="120" alt="Connect AI Logo" />
+</p>
 
-**100% 로컬 · 100% 오프라인 · 100% 무료**  
-VS Code / Cursor 기반의 프리미엄 AI 코딩 에이전트입니다. 코드를 읽고, 작성하고, 터미널 명령어를 대신 실행해 줍니다.
-이 프로젝트는 **EZERAI**와 **Connect AI**이 함께 연구하고 제작했습니다.
+<h1 align="center">Connect AI</h1>
+
+<p align="center">
+  <strong>100% Local · 100% Offline · 100% Free</strong><br/>
+  Your AI coding agent that lives entirely on your machine.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-2.1.2-blue" alt="version" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license" />
+  <img src="https://img.shields.io/badge/platform-VS%20Code%20%7C%20Cursor%20%7C%20Antigravity-purple" alt="platform" />
+  <img src="https://img.shields.io/badge/engine-Ollama%20%7C%20LM%20Studio-orange" alt="engine" />
+</p>
 
 ---
 
-## ✨ 핵심 기능 (v1.0.11 업데이트)
+## Overview
 
-### 🚀 듀얼 AI 엔진 (Hybrid Backend) 완벽 지원!
-이제 사용자 취향과 컴퓨터 사양에 맞춰 세상에서 제일 강력한 2가지 로컬 AI 엔진을 모두 지원합니다.
-- **Ollama (기본 모드):** 초보자에게 추천합니다! 별도의 설정 없이 백그라운드에서 조용하고 강력하게 작동합니다.
-- **LM Studio (고급 모드):** 맥북 유저나 고급 VRAM 관리가 필요한 분들께 강력히 추천합니다! 글로벌 표준 OpenAI(ChatGPT) 통신 규격과 100% 호환 적용 완료!
+Connect AI is an **agentic AI coding assistant** that runs entirely on your local machine — no cloud, no API keys, no data leaves your computer. It reads your project, creates files, edits code, manages directories, and executes terminal commands — all through natural conversation.
 
-| 기능 | 설명 |
+Built for **VS Code**, **Cursor**, and **Antigravity**.
+
+---
+
+## ⚡ Agent Capabilities
+
+Connect AI doesn't just answer questions — it **acts**. Seven built-in agent actions give it full control over your development environment:
+
+| Action | Description |
 |:--|:--|
-| ⚙️ **실시간 엔진 스위칭 UI** | 채팅창의 톱니바퀴 한 번 클릭으로 즉시 Ollama ↔ LM Studio 변환 및 자동 설정 완료 |
-| 🛡️ **스마트 오토-페일오버** | Ollama가 응답하지 않을 경우, 플러그인이 스스로 0.1초 만에 LM Studio로 우회하여 안정적인 작업을 보장합니다. |
-| 📁 **파일 자동 생성** | "포트폴리오 사이트 만들어줘" → 폴더/파일 자동 생성 및 에디터 오픈 |
-| ✏️ **기존 파일 편집** | "배경색 바꿔줘" → 해당 코드를 찾아 정확히 교체 (자율주행 코딩) |
-| 🖥️ **터미널 명령 실행** | "express 설치해줘" → `npm install express` 자동 실행 대기 |
+| **📄 Create Files** | Generates new files and directories in your workspace |
+| **✏️ Edit Files** | Finds and replaces specific code in existing files |
+| **🗑️ Delete Files** | Removes files and folders |
+| **📖 Read Files** | Reads any file in your workspace to understand context |
+| **📂 Browse Directories** | Lists contents of any subdirectory |
+| **🖥️ Run Terminal Commands** | Executes CLI commands (install, build, run, deploy) |
+| **🧠 Second Brain** | Queries your personal knowledge base (GitHub-synced) |
+
+### How It Works
+
+```
+You: "React로 카운터 앱 만들어줘"
+
+Connect AI:
+  ✅ 생성: src/App.jsx
+  ✅ 생성: src/index.js
+  ✅ 생성: index.html
+  🖥️ 실행: npm install react react-dom
+```
+
+All files are created **directly in your local workspace** — no copy-paste needed.
 
 ---
 
-## 📥 설치 방법 (상세 가이드)
+## 🎨 Interface Features
 
-### 방법 1: VSIX 파일 즉시 설치 (가장 간단)
-1. Github [Releases](https://github.com/wonseokjung/connect-ai/releases) 메뉴에서 최신 `.vsix` 파일을 다운로드합니다.
-2. VS Code(또는 Cursor)를 엽니다.
-3. 단축키 `Cmd+Shift+P` (맥) 또는 `Ctrl+Shift+P` (윈도우)를 눌러 명령어 팔레트를 엽니다.
-4. **`Extensions: Install from VSIX`** 를 검색하여 선택한 후, 방금 다운로드한 파일을 고릅니다. 끝! 🎉
+- **🔄 Real-time Streaming** — Token-by-token response rendering
+- **⬛ Abort (Stop)** — Interrupt generation mid-stream
+- **🔄 재생성** — Regenerate any response with one click
+- **📎 Multimodal Input** — Paste images (Cmd+V) or attach files (+)
+- **💡 Syntax Highlighting** — Cinematic code block rendering
+- **⏱️ Thinking Bar** — Visual latency indicator during inference
 
-### 방법 2: 플러그인 소스 직접 빌드
+---
+
+## 📥 Installation
+
+### Option 1: VSIX (Recommended)
+
+1. Download the latest `.vsix` from [Releases](https://github.com/wonseokjung/connect-ai/releases)
+2. Open VS Code / Cursor / Antigravity
+3. `Cmd+Shift+P` → **Extensions: Install from VSIX** → Select the file
+
+### Option 2: Build from Source
+
 ```bash
 git clone https://github.com/wonseokjung/connect-ai.git
 cd connect-ai
 npm install
 npm run compile
-vsce package
+npx vsce package
 ```
 
 ---
 
-## ⚙️ AI 엔진 세팅 가이드 (Ollama / LM Studio)
+## ⚙️ Engine Setup
 
-Connect AI은 사용자의 컴퓨터 자원 안에서 돌아가는 오프라인 모델을 사용합니다. 아래 두 가지 엔진 중 편하신 것을 하나 사용하세요.
+Connect AI requires a local AI engine. Choose one:
 
-### 🟡 Option A: Ollama 설정 (초보자 추천)
-1. **설치:** [Ollama 공식 홈페이지](https://ollama.com)에서 다운로드 또는 `brew install ollama`
-2. **모델 다운로드:** 터미널을 열고 구글 최신 모델인 Gemma4를 받습니다.
+### Ollama (Recommended for Beginners)
+
 ```bash
-ollama pull gemma4:e2b
+# 1. Install
+brew install ollama
+
+# 2. Pull a model
+ollama pull gemma3
+
+# 3. Done — Ollama runs automatically in the background
 ```
-3. **가동:** 백그라운드에서 자동으로 켜져 있습니다. (VS Code에서 Connect AI 채팅창의 ⚙️ 버튼을 눌러 `Ollama`가 선택되어 있는지 확인하세요!)
 
-### 🔵 Option B: LM Studio 설정 (애플 실리콘 맥 유저 고속도 추천)
-1. **설치:** [LM Studio 공식 홈페이지](https://lmstudio.ai/)에서 다운로드합니다.
-2. **모델 다운로드:** 프로그램 내부에서 원하는 모델(예: `Gemma4` 또는 Llama)을 검색해 다운로드합니다.
-3. **로컬 서버 켜기 (매우 중요! ⭐️):**
-   - LM Studio 왼쪽 얇은 메뉴바에서 **`< >` 기호 아이콘 (Developer 탭)**을 클릭합니다.
-   - 중앙 화면 상단에 있는 **`Status: Stopped`** 라고 적힌 스위치 버튼을 눌러서 **ON(초록불)** 상태로 켭니다!! (켜지지 않으면 에러가 납니다)
-   - 서버가 정상 작동하면 `http://127.0.0.1:1234` 포트가 열렸다고 아래 로그에 출력됩니다.
-4. VS Code로 돌아와 Connect AI 채팅창의 **⚙️ 톱니바퀴 버튼**을 누르고 **`LM Studio (고급형)`**을 클릭하세요. (설정이 연동되며 1초 만에 곧바로 통신을 시작합니다!)
+### LM Studio (Recommended for Apple Silicon)
+
+1. Download from [lmstudio.ai](https://lmstudio.ai/)
+2. Search and download a model (e.g., Gemma 4, Llama 3.1)
+3. Go to **Developer tab** (`<>` icon) → **Start Server**
+4. Ensure it shows `http://127.0.0.1:1234`
+5. In Connect AI: **⚙️ Settings** → Select **LM Studio**
+
+> **💡 Tip:** In LM Studio, set **Context Length** to 8192+ for best results.
+
+### Supported Models
+
+| Model | Size | Best For |
+|:--|:--|:--|
+| Gemma 4 E2B | 4.4 GB | Vision + Code (Recommended) |
+| Gemma 3 | 3-5 GB | Fast general coding |
+| Llama 3.1 | 4-8 GB | Multi-language support |
+| Qwen 3 | 4-8 GB | Strong instruction following |
+| DeepSeek Coder | 6-16 GB | Code-heavy tasks |
 
 ---
 
-## 🔒 절대 프라이버시 원칙
-- ❌ **클라우드 서버 없음 / 인터넷 연결 불필요**
-- ❌ **데이터 수집 없음** (작성된 모든 코드는 컴퓨터 밖으로 나가지 않습니다.)
-- ✅ 회사/개인 프로젝트 보안 유지의 최적해
+## 🧠 Second Brain (Knowledge Base)
+
+Sync a GitHub repository as your personal knowledge base. Connect AI will reference it when answering questions.
+
+1. Click **🧠** button in the chat header
+2. Enter your GitHub repo URL
+3. Toggle knowledge mode **ON**
+
+Your documents are stored locally at `~/.connect-ai-brain/`.
 
 ---
 
-## 📄 라이선스
-MIT License — 자유롭게 사용, 수정, 배포 가능합니다.
+## 🔒 Privacy
 
-**Designed & Developed with ❤️ by EZERAI and Connect AI**
+- **Zero cloud dependency** — No internet required after setup
+- **Zero data collection** — All code stays on your machine
+- **Zero telemetry** — No analytics, no tracking
+
+Your code never leaves your computer. Period.
+
+---
+
+## 🛠️ Configuration
+
+Access settings via the **⚙️** button in the chat panel:
+
+| Setting | Default | Description |
+|:--|:--|:--|
+| Engine | Ollama | Ollama or LM Studio |
+| Temperature | 0.7 | Response creativity (0.0–1.0) |
+| Top P | 0.9 | Nucleus sampling |
+| Top K | 40 | Token selection range |
+
+---
+
+## License
+
+MIT — Free to use, modify, and distribute.
+
+---
+
+<p align="center">
+  <strong>Designed & Developed by <a href="https://github.com/wonseokjung">EZERAI</a> × Connect AI</strong>
+</p>

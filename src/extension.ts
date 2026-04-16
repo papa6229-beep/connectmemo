@@ -1392,6 +1392,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     // --------------------------------------------------------
     private async _executeActions(aiMessage: string): Promise<string[]> {
         const report: string[] = [];
+        let brainModified = false;
         let rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
         // Fallback to active editor directory if no workspace folder is open
@@ -1431,6 +1432,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     fs.mkdirSync(dir, { recursive: true });
                 }
                 fs.writeFileSync(absPath, content, 'utf-8');
+                if (absPath.includes('.connect-ai-brain')) brainModified = true;
                 report.push(`✅ 생성: ${relPath}`);
                 if (!firstCreatedFile) { firstCreatedFile = absPath; }
             } catch (err: any) {
@@ -1474,6 +1476,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
                 if (editCount > 0) {
                     fs.writeFileSync(absPath, fileContent, 'utf-8');
+                    if (absPath.includes('.connect-ai-brain')) brainModified = true;
                     report.push(`✏️ 편집 완료: ${relPath} (${editCount}건 수정)`);
                     // Open edited file
                     vscode.window.showTextDocument(vscode.Uri.file(absPath), { preview: false });
@@ -1496,6 +1499,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     } else {
                         fs.unlinkSync(absPath);
                     }
+                    if (absPath.includes('.connect-ai-brain')) brainModified = true;
                     report.push(`🗑️ 삭제: ${relPath}`);
                 } else {
                     report.push(`⚠️ 삭제 스킵: ${relPath} — 파일이 존재하지 않습니다.`);
@@ -1626,6 +1630,20 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const successCount = report.filter(r => r.startsWith('✅') || r.startsWith('✏️') || r.startsWith('🖥️') || r.startsWith('🗑️') || r.startsWith('📖') || r.startsWith('📂')).length;
         if (successCount > 0) {
             vscode.window.showInformationMessage(`Connect AI: ${successCount}개 에이전트 작업 완료!`);
+        }
+
+        // Auto-Push Second Brain changes to Cloud
+        if (brainModified) {
+            try {
+                const brainDir = path.join(os.homedir(), '.connect-ai-brain');
+                const { execSync } = require('child_process');
+                execSync(`git add .`, { cwd: brainDir });
+                execSync(`git commit -m "[P-Reinforce] Auto-synced structured knowledge"`, { cwd: brainDir });
+                execSync(`git push`, { cwd: brainDir });
+                report.push(`☁️ **[GitHub Sync]** 글로벌 뇌(Second Brain)에 지식이 성공적으로 자동 백업되었습니다!`);
+            } catch (err: any) {
+                report.push(`⚠️ **[GitHub Sync 보류]** 동기화 중 권한 문제가 발생했습니다 (수동 푸시 권장)`);
+            }
         }
 
         return report;

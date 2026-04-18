@@ -1075,7 +1075,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        return `\n\n[SECOND BRAIN INDEX — User's Personal Knowledge Base (${files.length} documents)]\nThe user has synced a personal knowledge repository. Below is the TABLE OF CONTENTS only.\nTo read the actual content of any document, use: <read_brain>filename_or_path</read_brain>\n\n${index.join('\n')}\n\n`;
+        return `\n\n[CRITICAL: SECOND BRAIN INDEX — User's Personal Knowledge Base (${files.length} documents)]\nThe user has synced a personal knowledge repository. Below is the TABLE OF CONTENTS.\nIf the user's query is even slightly related to any topics in this index, YOU MUST FIRST READ the relevant document BEFORE answering.\nTo read the actual content of any document, use EXACTLY this syntax: <read_brain>filename_or_path</read_brain>\nYou can call <read_brain> multiple times. ALWAYS READ THE FULL DOCUMENT BEFORE ANSWERING.\n\n${index.join('\n')}\n\n`;
     }
 
     // AI가 <read_brain>태그로 요청한 파일의 실제 내용을 읽어서 반환
@@ -1479,7 +1479,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 stream.on('error', (err: any) => reject(err));
             });
 
-            // 스트리밍 완료 알림
+            // 스트리밍 완료 알림 (1차)
             this._view.webview.postMessage({ type: 'streamEnd' });
 
             // 4.5 Second Brain 자율 열람: AI가 <read_brain>을 사용했는지 확인
@@ -1492,24 +1492,55 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     brainContent += `\n\n[BRAIN DOCUMENT: ${requestedFile}]\n${fileContent}\n`;
                 }
                 const cleanedResponse = aiMessage.replace(/<read_brain>[\s\S]*?<\/read_brain>/g, '').trim();
+                
+                // 유저에게 피드백 제공 (UI 상단에 메시지 추가)
+                this._view.webview.postMessage({ type: 'streamStart' });
+                this._view.webview.postMessage({ type: 'streamChunk', value: `\n\n> 🧠 **[Second Brain 열람 완료]** 스캔한 핵심 지식을 바탕으로 답변을 구성합니다...\n\n` });
+                
                 reqMessages.push({ role: 'assistant', content: cleanedResponse || '문서를 열람 중입니다...' });
-                reqMessages.push({ role: 'user', content: `[SYSTEM: The following documents were retrieved from the user\'s Second Brain. Use this information to provide a complete and accurate answer to the user\'s original question.]\n${brainContent}\n\nNow answer the user\'s question using the above knowledge. Do NOT use <read_brain> again.` });
+                reqMessages.push({ role: 'user', content: `[SYSTEM: The following documents were retrieved from the user's Second Brain. Use this information to provide a complete and accurate answer to the user's original question.]\n${brainContent}\n\nNow answer the user's question using the above knowledge. Do NOT use <read_brain> again. Answer directly and comprehensively.` });
 
-                // Follow-up은 non-stream (지식 재질의는 빠르게)
-                const followUp = await axios.post(apiUrl, {
+                // 2차 스트리밍 시작 (followUp)
+                const followUpResponse = await axios.post(apiUrl, {
                     model: modelName || defaultModel,
                     messages: reqMessages,
-                    stream: false,
+                    stream: true, // 변경: 스트리밍 활성화!
                     ...(isLMStudio 
                         ? { max_tokens: 4096, temperature: this._temperature, top_p: this._topP } 
                         : { options: { num_ctx: 16384, num_predict: 4096, temperature: this._temperature, top_p: this._topP, top_k: this._topK } }),
-                }, { timeout });
+                }, { timeout, responseType: 'stream', signal: this._abortController?.signal });
 
-                aiMessage = isLMStudio
-                    ? followUp.data.choices[0].message.content
-                    : followUp.data.message.content;
-                // 지식 재질의 결과는 전체 교체
-                this._view.webview.postMessage({ type: 'response', value: aiMessage });
+                aiMessage = cleanedResponse + `\n\n> 🧠 **[Second Brain 열람 완료]** 스캔한 핵심 지식을 바탕으로 답변을 구성합니다...\n\n`;
+                
+                await new Promise<void>((resolve, reject) => {
+                    const stream = followUpResponse.data;
+                    let buffer = '';
+                    stream.on('data', (chunk: Buffer) => {
+                        buffer += chunk.toString();
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+                        for (const line of lines) {
+                            if (!line.trim() || line.trim() === 'data: [DONE]') continue;
+                            try {
+                                const raw = line.startsWith('data: ') ? line.slice(6) : line;
+                                const json = JSON.parse(raw);
+                                let token = '';
+                                if (json.error) token = `[API 오류] ${json.error.message || json.error}`;
+                                else if (isLMStudio) token = json.choices?.[0]?.delta?.content || '';
+                                else token = json.message?.content || '';
+                                
+                                if (token) {
+                                    aiMessage += token;
+                                    this._view!.webview.postMessage({ type: 'streamChunk', value: token });
+                                }
+                            } catch { /* skip */ }
+                        }
+                    });
+                    stream.on('end', () => resolve());
+                    stream.on('error', (err: any) => reject(err));
+                });
+                
+                this._view.webview.postMessage({ type: 'streamEnd' });
             }
 
             this._chatHistory.push({ role: 'assistant', content: aiMessage });

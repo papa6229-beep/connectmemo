@@ -2158,7 +2158,7 @@ sendBtn.addEventListener('click',send);
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 newChatBtn.addEventListener('click',()=>vscode.postMessage({type:'newChat'}));
 settingsBtn.addEventListener('click',()=>vscode.postMessage({type:'openSettings'}));
-brainBtn.addEventListener('click',()=>vscode.postMessage({type:'showBrainNetwork'}));
+brainBtn.addEventListener('click',()=>vscode.postMessage({type:'syncBrain'}));
 stopBtn.addEventListener('click',()=>{vscode.postMessage({type:'stopGeneration'});hideLoader();setSending(false);if(streamBody){streamBody.classList.remove('stream-active')}streamEl=null;streamBody=null;});
 let streamEl=null,streamBody=null;
 window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){

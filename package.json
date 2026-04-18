@@ -53,6 +53,10 @@
       {
         "command": "connect-ai-lab.focusChat",
         "title": "Connect AI: Focus Chat Input"
+      },
+      {
+        "command": "connect-ai-lab.showBrainNetwork",
+        "title": "Connect AI: Show Brain Topology 🧠"
       }
     ],
     "keybindings": [

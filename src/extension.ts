@@ -407,98 +407,127 @@ function showBrainNetwork(context: vscode.ExtensionContext) {
   <meta charset="UTF-8">
   <title>Connect AI - Neural Construct</title>
   <style>
-    body { margin: 0; padding: 0; background-color: #030503; overflow: hidden; font-family: 'SF Pro Display', -apple-system, sans-serif; }
-    #ui-layer {
-      position: absolute; top: 20px; left: 24px; color: #00FF41; z-index: 10; pointer-events: none;
-    }
+    body { margin: 0; padding: 0; background-color: #030503; overflow: hidden; font-family: 'SF Pro Display', -apple-system, sans-serif; cursor: crosshair; }
+    #ui-layer { position: absolute; top: 20px; left: 24px; color: #00FF41; z-index: 10; pointer-events: none; }
     h1 { font-size: 28px; margin: 0 0 5px 0; text-shadow: 0 0 15px #00FF41; font-weight: 900; letter-spacing: -1px; display: flex; align-items: center; gap: 10px;}
     p { margin: 0; font-size: 13px; color: #888899; letter-spacing: 0.5px; }
     .status { color: #fff; font-family: monospace; background: rgba(0,255,65,0.2); padding: 2px 6px; border-radius: 4px; font-size: 11px; }
     
     .glitch { animation: glitch 3s infinite alternate; }
-    @keyframes glitch {
-      0% { opacity: 1; }
-      97% { opacity: 1; }
-      98% { opacity: 0.3; }
-      99% { opacity: 1; text-shadow: 0 0 30px #00FF41, 2px 0 red, -2px 0 blue;}
-      100% { opacity: 1; text-shadow: 0 0 15px #00FF41; }
-    }
+    @keyframes glitch { 0%{opacity:1} 97%{opacity:1} 98%{opacity:0.3} 99%{opacity:1; text-shadow:0 0 30px #00FF41, 2px 0 red, -2px 0 blue;} 100%{opacity:1; text-shadow:0 0 15px #00FF41;} }
     
-    #overlay-scan {
-      position: absolute; inset: 0; pointer-events: none; z-index: 5;
-      background: linear-gradient(rgba(0,255,65,0) 50%, rgba(0,255,65,0.03) 50%); background-size: 100% 4px;
-    }
+    #overlay-scan { position: absolute; inset: 0; pointer-events: none; z-index: 5; background: linear-gradient(rgba(0,255,65,0) 50%, rgba(0,255,65,0.03) 50%); background-size: 100% 4px; }
+    
+    #action-panel { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; gap: 15px; }
+    .btn-inject { background: rgba(0,255,65,0.1); border: 1px solid #00FF41; color: #00FF41; padding: 14px 40px; font-size: 18px; font-weight: 800; letter-spacing: 2px; cursor: pointer; border-radius: 4px; box-shadow: 0 0 20px rgba(0,255,65,0.2); transition: all 0.2s; backdrop-filter: blur(4px); }
+    .btn-inject:hover { background: #00FF41; color: #000; box-shadow: 0 0 40px rgba(0,255,65,0.8); transform: translateY(-2px); }
+    
+    #alert-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #fff; font-size: 64px; font-weight: 900; letter-spacing: -2px; z-index: 30; opacity: 0; pointer-events: none; text-shadow: 0 0 40px #00FF41; text-align: center; }
   </style>
-  <script src="https://unpkg.com/3d-force-graph"></script>
+  <script src="https://unpkg.com/force-graph"></script>
 </head>
 <body>
   <div id="overlay-scan"></div>
   <div id="ui-layer">
     <h1 class="glitch">✦ Neural Construct</h1>
-    <p>Synaptic Network & Pattern Recognition <span class="status">[SCANNING ONLINE]</span></p>
+    <p>Memory Architecture <span class="status" id="mem-status">[BASE MEMORY: 142 NODES]</span></p>
   </div>
   
-  <div id="3d-graph"></div>
+  <div id="alert-text">KNOWLEDGE INJECTED<br><span style="font-size:24px; color:#00FF41;">ASSIMILATING MRBEAST ALGORITHM...</span></div>
+  
+  <div id="action-panel">
+    <button class="btn-inject" onclick="injectKnowledge()">[ INJECT BRAIN PACK ]</button>
+  </div>
+  
+  <div id="2d-graph"></div>
 
   <script>
-    const N_NODES = 400; 
-    
-    const gData = {
-      nodes: [...Array(N_NODES).keys()].map(i => {
-        let group, name, size;
-        if (i === 0) { group = 0; name = 'Core Agent [Gemma-4]'; size = 30; } 
-        else if (i < 80) { group = 1; name = 'Brain Pack: MrBeast Traffic'; size = Math.random() * 8 + 2; } 
-        else if (i < 180) { group = 2; name = 'System Architecture Repo'; size = Math.random() * 6 + 2; }
-        else { group = 3; name = 'Second Brain Raw Markdown Node'; size = Math.random() * 4 + 1; }
-        return { id: i, group, name, val: size };
-      }),
-      links: []
-    };
+    let nodeCountId = 0;
+    const gData = { nodes: [], links: [] };
 
-    for (let i = 1; i < N_NODES; i++) {
-        if (Math.random() < 0.05) gData.links.push({ source: i, target: 0 });
-        const groupNodes = gData.nodes.filter(n => n.group === gData.nodes[i].group);
-        for(let j=0; j<2; j++) {
-            const target = groupNodes[Math.floor(Math.random() * groupNodes.length)].id;
-            if(target !== i) gData.links.push({ source: i, target: target });
+    gData.nodes.push({ id: nodeCountId++, group: 0, name: 'Core Agent [Gemma-4]', val: 12 });
+    for (let i = 0; i < 150; i++) {
+        gData.nodes.push({ id: nodeCountId, group: 2, name: 'Base Memory Node', val: Math.random() * 2 + 1 });
+        if (Math.random() < 0.08) gData.links.push({ source: nodeCountId, target: 0 });
+        if (i > 1 && Math.random() < 0.6) {
+           gData.links.push({ source: nodeCountId, target: Math.floor(Math.random() * (nodeCountId - 1)) + 1 });
         }
-        if (Math.random() < 0.02) {
-            gData.links.push({ source: i, target: Math.floor(Math.random() * N_NODES) });
-        }
+        nodeCountId++;
     }
 
-    const Graph = ForceGraph3D()
-      (document.getElementById('3d-graph'))
-        .backgroundColor('#030503') 
-        .nodeLabel('name') 
+    const Graph = ForceGraph()(document.getElementById('2d-graph'))
+        .backgroundColor('#030503')
+        .nodeLabel('name')
         .nodeColor(node => {
             if(node.group === 0) return '#FFFFFF'; 
-            if(node.group === 1) return '#00FF41'; 
-            if(node.group === 2) return '#00e5ff'; 
-            return 'rgba(0, 143, 17, 0.6)'; 
+            if(node.group === 1) return '#00FF41';
+            return 'rgba(0, 143, 17, 0.4)';
         })
-        .nodeRelSize(4)
-        .linkColor(() => 'rgba(0, 255, 65, 0.15)') 
-        .linkWidth(0.5)
-        .linkDirectionalParticles(2)
-        .linkDirectionalParticleWidth(1.5)
-        .linkDirectionalParticleColor(() => '#00FF41')
-        .linkDirectionalParticleResolution(8)
+        .nodeRelSize(3)
+        .linkColor(link => link.isNew ? 'rgba(0, 255, 65, 0.8)' : 'rgba(0, 255, 65, 0.15)') 
+        .linkWidth(link => link.isNew ? 2 : 0.5)
+        .linkDirectionalParticles(link => link.isNew ? 4 : 0)
+        .linkDirectionalParticleWidth(2.5)
+        .linkDirectionalParticleColor(() => '#FFFFFF')
+        .linkDirectionalParticleSpeed(0.015)
+        .d3VelocityDecay(0.12)
         .graphData(gData);
 
-    let angle = 0;
-    setInterval(() => {
-      angle += Math.PI / 2000; 
-      Graph.cameraPosition({ x: 600 * Math.cos(angle), z: 600 * Math.sin(angle) });
-    }, 20);
-
     Graph.onNodeClick(node => {
-      const distance = 60;
-      const distRatio = 1 + distance/Math.hypot(node.x, node.y, node.z);
-      Graph.cameraPosition(
-        { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio }, node, 2000
-      );
+        Graph.centerAt(node.x, node.y, 1000);
+        Graph.zoom(3, 2000);
     });
+
+    function injectKnowledge() {
+        document.querySelector('.btn-inject').style.display = 'none';
+        const alertBox = document.getElementById('alert-text');
+        alertBox.style.opacity = 1;
+
+        // Zoom out smoothly
+        Graph.zoom(0.4, 1500);
+
+        setTimeout(() => {
+            alertBox.style.opacity = 0;
+            const newDataNodes = [];
+            const newLinks = [];
+            
+            const packCoreId = nodeCountId++;
+            newDataNodes.push({ id: packCoreId, group: 1, name: 'MrBeast Master Node', val: 7 });
+            newLinks.push({ source: packCoreId, target: 0, isNew: true });
+            
+            for(let i = 0; i < 100; i++) {
+                const newId = nodeCountId++;
+                newDataNodes.push({ id: newId, group: 1, name: 'Algorithm Fragment', val: Math.random() * 2 + 1 });
+                newLinks.push({ source: newId, target: packCoreId, isNew: true });
+                if(Math.random() < 0.2) newLinks.push({ source: newId, target: 0, isNew: true });
+            }
+
+            const updatedData = {
+                nodes: [...gData.nodes, ...newDataNodes],
+                links: [...gData.links, ...newLinks]
+            };
+            
+            Graph.graphData(updatedData);
+            document.getElementById('mem-status').innerText = \`[BASE MEMORY + 101 NEW NEURONS ACQUIRED]\`;
+
+            setTimeout(() => {
+                const addedCore = updatedData.nodes.find(n => n.id === packCoreId);
+                if(addedCore) {
+                    Graph.centerAt(addedCore.x, addedCore.y, 2000);
+                    Graph.zoom(1.8, 2000);
+                }
+            }, 1000);
+
+            setTimeout(() => {
+                updatedData.links.forEach(l => l.isNew = false);
+                updatedData.nodes.forEach(n => { if(n.group === 1) n.group = 2; });
+                Graph.graphData(updatedData);
+                document.getElementById('mem-status').innerText = \`[ASSIMILATION COMPLETE. READY.]\`;
+                Graph.zoomToFit(2000, 50);
+            }, 8000);
+
+        }, 1500);
+    }
   </script>
 </body>
 </html>`;
@@ -664,7 +693,8 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     await this._handleSettingsMenu();
                     break;
                 case 'syncBrain':
-                    await this._handleBrainMenu();
+                case 'showBrainNetwork':
+                    vscode.commands.executeCommand('connect-ai-lab.showBrainNetwork');
                     break;
                 case 'injectLocalBrain':
                     await this._handleInjectLocalBrain(msg.files);
@@ -1964,7 +1994,7 @@ body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;tr
 .msg-body pre .op{color:#89ddff}
 .msg-body pre .type{color:#ffcb6b}
 </style></head><body class="init">
-<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="brainBtn" title="Second Brain">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
+<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="brainBtn" title="Neural Construct Topology 🌌">\ud83c\udf0c</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
 <div class="thinking-bar" id="thinkingBar"></div>
 <div class="main-view" id="mainView">
 <div class="chat" id="chat">
@@ -1977,7 +2007,7 @@ body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;tr
 <div class="attach-preview" id="attachPreview"></div>
 <textarea id="input" rows="1" placeholder="\ubb34\uc5c7\uc744 \ub9cc\ub4e4\uc5b4 \ub4dc\ub9b4\uae4c\uc694?"></textarea>
 <div class="input-footer"><span class="input-hint">Enter \uc804\uc1a1 \u00b7 Shift+Enter \uc904\ubc14\uafc8</span>
-<div class="input-btns"><button class="attach-btn" id="attachBtn" title="\ud30c\uc77c \ucca8\ubd80">+</button><button class="attach-btn" id="injectLocalBtn" title="\ub0b4 \ub450\ub1cc\uc5d0 \ud30c\uc77c \uc5f0\ub3d9 (Second Brain)" style="font-size:14px;color:var(--accent);">\ud83e\udde0</button><button class="stop-btn" id="stopBtn">\u25a0</button><button class="send-btn" id="sendBtn">\u2191</button></div></div></div>
+<div class="input-btns"><button class="attach-btn" id="attachBtn" title="\ud30c\uc77c \ucca8\ubd80">+</button><button class="attach-btn" id="injectLocalBtn" title="Inject Brain Pack \ud83d\udc89" style="font-size:11px;font-weight:900;color:#000;background:var(--accent);width:auto;padding:0 12px;border-radius:10px;letter-spacing:1px;box-shadow:0 0 10px rgba(0,255,65,0.4);">INJECT</button><button class="stop-btn" id="stopBtn">\u25a0</button><button class="send-btn" id="sendBtn">\u2191</button></div></div></div>
 <input type="file" id="fileInput" multiple accept="image/*,audio/*,.txt,.md,.csv,.json,.js,.ts,.html,.css,.py,.java,.rs,.go,.yaml,.yml,.xml,.toml" hidden></div>
 </div>
 <script>
@@ -2132,7 +2162,7 @@ sendBtn.addEventListener('click',send);
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 newChatBtn.addEventListener('click',()=>vscode.postMessage({type:'newChat'}));
 settingsBtn.addEventListener('click',()=>vscode.postMessage({type:'openSettings'}));
-brainBtn.addEventListener('click',()=>vscode.postMessage({type:'syncBrain'}));
+brainBtn.addEventListener('click',()=>vscode.postMessage({type:'showBrainNetwork'}));
 stopBtn.addEventListener('click',()=>{vscode.postMessage({type:'stopGeneration'});hideLoader();setSending(false);if(streamBody){streamBody.classList.remove('stream-active')}streamEl=null;streamBody=null;});
 let streamEl=null,streamBody=null;
 window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){

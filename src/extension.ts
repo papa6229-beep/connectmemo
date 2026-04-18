@@ -407,131 +407,86 @@ function showBrainNetwork(context: vscode.ExtensionContext) {
   <meta charset="UTF-8">
   <title>Connect AI - Neural Construct</title>
   <style>
-    body { margin: 0; padding: 0; background-color: #030503; overflow: hidden; font-family: 'SF Pro Display', -apple-system, sans-serif; cursor: crosshair; }
-    #ui-layer { position: absolute; top: 20px; left: 24px; color: #00FF41; z-index: 10; pointer-events: none; }
-    h1 { font-size: 28px; margin: 0 0 5px 0; text-shadow: 0 0 15px #00FF41; font-weight: 900; letter-spacing: -1px; display: flex; align-items: center; gap: 10px;}
-    p { margin: 0; font-size: 13px; color: #888899; letter-spacing: 0.5px; }
-    .status { color: #fff; font-family: monospace; background: rgba(0,255,65,0.2); padding: 2px 6px; border-radius: 4px; font-size: 11px; }
-    
-    .glitch { animation: glitch 3s infinite alternate; }
-    @keyframes glitch { 0%{opacity:1} 97%{opacity:1} 98%{opacity:0.3} 99%{opacity:1; text-shadow:0 0 30px #00FF41, 2px 0 red, -2px 0 blue;} 100%{opacity:1; text-shadow:0 0 15px #00FF41;} }
-    
-    #overlay-scan { position: absolute; inset: 0; pointer-events: none; z-index: 5; background: linear-gradient(rgba(0,255,65,0) 50%, rgba(0,255,65,0.03) 50%); background-size: 100% 4px; }
-    
-    #action-panel { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; gap: 15px; }
-    .btn-inject { background: rgba(0,255,65,0.1); border: 1px solid #00FF41; color: #00FF41; padding: 14px 40px; font-size: 18px; font-weight: 800; letter-spacing: 2px; cursor: pointer; border-radius: 4px; box-shadow: 0 0 20px rgba(0,255,65,0.2); transition: all 0.2s; backdrop-filter: blur(4px); }
-    .btn-inject:hover { background: #00FF41; color: #000; box-shadow: 0 0 40px rgba(0,255,65,0.8); transform: translateY(-2px); }
-    
-    #alert-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #fff; font-size: 64px; font-weight: 900; letter-spacing: -2px; z-index: 30; opacity: 0; pointer-events: none; text-shadow: 0 0 40px #00FF41; text-align: center; }
+    body { margin: 0; padding: 0; background: #0a0a0a; overflow: hidden; font-family: 'SF Pro Display', -apple-system, sans-serif; }
+    #ui-layer { position: absolute; top: 20px; left: 24px; z-index: 10; pointer-events: none; }
+    #ui-layer h1 { font-size: 22px; margin: 0 0 4px 0; font-weight: 800; letter-spacing: -0.5px; color: #e0e0e0; }
+    #ui-layer h1 span { color: #00cc44; }
+    #ui-layer p { margin: 0; font-size: 12px; color: #555; }
+    #mem-status { color: #888; font-family: 'SF Mono', monospace; font-size: 11px; }
+    canvas { cursor: grab; }
+    canvas:active { cursor: grabbing; }
   </style>
   <script src="https://unpkg.com/force-graph"></script>
 </head>
 <body>
-  <div id="overlay-scan"></div>
   <div id="ui-layer">
-    <h1 class="glitch">✦ Neural Construct</h1>
-    <p>Memory Architecture <span class="status" id="mem-status">[BASE MEMORY: 142 NODES]</span></p>
+    <h1>\\u2726 <span>Neural Construct</span></h1>
+    <p id="mem-status">loading...</p>
   </div>
-  
-  <div id="alert-text">KNOWLEDGE INJECTED<br><span style="font-size:24px; color:#00FF41;">ASSIMILATING MRBEAST ALGORITHM...</span></div>
-  
-  <div id="action-panel">
-    <button class="btn-inject" onclick="injectKnowledge()">[ INJECT BRAIN PACK ]</button>
-  </div>
-  
-  <div id="2d-graph"></div>
-
+  <div id="graph"></div>
   <script>
-    let nodeCountId = 0;
+    const clusters = {
+      'AI/ML': ['Transformer Architecture','Attention Mechanism','Backpropagation','Gradient Descent','Neural Network Layers','Loss Function','Embedding Space','Tokenization','Fine-tuning','Transfer Learning','LoRA Adapter','RLHF','DPO Training','Prompt Engineering','Chain of Thought','RAG Pipeline','Vector Database'],
+      'Programming': ['TypeScript','React Components','Node.js Runtime','REST API Design','GraphQL Schema','WebSocket Protocol','Docker Container','Kubernetes','CI/CD Pipeline','Git Version Control','Database Schema','SQL Optimization','Redis Caching','Message Queue','Microservices','Load Balancing'],
+      'YouTube': ['YouTube Algorithm','CTR Optimization','Thumbnail Design','Title A/B Testing','Audience Retention','Content Calendar','Funnel Strategy','Email Marketing','SEO Fundamentals','Analytics Dashboard','Conversion Rate','Growth Hacking','Brand Positioning','Community Building','Monetization','Ad Revenue Model'],
+      'Tools': ['VS Code Extension API','Ollama Runtime','Gemma Model','LLaMA Architecture','Google Veo','Nanobanana Pro','NotebookLM','Google Stitch','MCP Protocol','Antigravity CLI','Agent University','Brain Pack Format','OPAL Framework','Gemini API','DeepSeek Model','Whisper STT'],
+      'Knowledge': ['Second Brain Method','Zettelkasten System','Spaced Repetition','Active Recall','Mind Mapping','Knowledge Graph','Semantic Search','Document Chunking','Metadata Extraction','Tag Taxonomy','Bidirectional Links','Atomic Notes'],
+      'Korean': ['#AI\\uc218\\uc775\\ud654','#\\ubc14\\uc774\\ube0c\\ucf54\\ub529','#1\\uc778\\uae30\\uc5c5','#AI\\ucc3d\\uc5c5','#\\ucf54\\ub529\\uae30\\ucd08','#\\uc2dc\\ub2c8\\uc5b4\\uc804\\uc131\\uc2dc\\ub300','#\\uc790\\uae30\\uac1c\\ubc1c','#AI\\uc1fc\\ud551\\ubab0','#GPT\\uc0ac\\uc6a9\\ubc95','#\\uc0ac\\uc774\\ud2b8\\ub9cc\\ub4e4\\uae30','#\\uc218\\uc775\\ud654\\ubaa8\\ub378','#\\ub178\\ucf54\\ub4dc','#AI\\uc790\\ub3d9\\uc218\\uc775','#VEO3.1','#\\uc655\\ucd08\\ubcf4\\uac00\\uc774\\ub4dc','#\\ub514\\uc9c0\\ud138\\uac74\\ubb3c\\uc8fc'],
+      'Math': ['Linear Algebra','Probability Theory','Calculus','Statistics','Information Theory','Game Theory','Optimization','Graph Theory'],
+      'MrBeast': ['MrBeast Viral Formula','Hook Strategy','Retention Graph','Challenge Format','Giveaway ROI','Production Scaling','Clickbait Psychology','First 30s Rule','Re-watch Value','Comment Engagement','Shorts Repurposing','Thumbnail Contrast','Emotional Arc','Pacing Rhythm','Sound Design']
+    };
+    let nid = 0;
     const gData = { nodes: [], links: [] };
-
-    gData.nodes.push({ id: nodeCountId++, group: 0, name: 'Core Agent [Gemma-4]', val: 12 });
-    for (let i = 0; i < 150; i++) {
-        gData.nodes.push({ id: nodeCountId, group: 2, name: 'Base Memory Node', val: Math.random() * 2 + 1 });
-        if (Math.random() < 0.08) gData.links.push({ source: nodeCountId, target: 0 });
-        if (i > 1 && Math.random() < 0.6) {
-           gData.links.push({ source: nodeCountId, target: Math.floor(Math.random() * (nodeCountId - 1)) + 1 });
-        }
-        nodeCountId++;
-    }
-
-    const Graph = ForceGraph()(document.getElementById('2d-graph'))
-        .backgroundColor('#030503')
-        .nodeLabel('name')
-        .nodeColor(node => {
-            if(node.group === 0) return '#FFFFFF'; 
-            if(node.group === 1) return '#00FF41';
-            return 'rgba(0, 143, 17, 0.4)';
-        })
-        .nodeRelSize(3)
-        .linkColor(link => link.isNew ? 'rgba(0, 255, 65, 0.8)' : 'rgba(0, 255, 65, 0.15)') 
-        .linkWidth(link => link.isNew ? 1.5 : 0.5)
-        .linkDirectionalParticles(link => link.isNew ? 2 : 0)
-        .linkDirectionalParticleWidth(1.5)
-        .linkDirectionalParticleColor(() => '#00FF41')
-        .linkDirectionalParticleSpeed(0.01)
-        .d3VelocityDecay(0.4) // High friction stops the jiggling, making it structurally stable
-        .graphData(gData);
-
-    // Apply strict mathematical structural distances
-    Graph.d3Force('charge').strength(-250);
-    Graph.d3Force('link').distance(45);
-
-    Graph.onNodeClick(node => {
-        Graph.centerAt(node.x, node.y, 1000);
-        Graph.zoom(3, 2000);
+    gData.nodes.push({ id: nid++, group: -1, name: 'Core Agent', val: 22, connections: 0 });
+    let gi = 0;
+    Object.values(clusters).forEach(names => {
+      names.forEach(name => { gData.nodes.push({ id: nid++, group: gi, name, val: 2, connections: 0 }); });
+      gi++;
     });
-
-    function injectKnowledge() {
-        document.querySelector('.btn-inject').style.display = 'none';
-        const alertBox = document.getElementById('alert-text');
-        alertBox.style.opacity = 1;
-
-        // Zoom out smoothly
-        Graph.zoom(0.4, 1500);
-
-        setTimeout(() => {
-            alertBox.style.opacity = 0;
-            const newDataNodes = [];
-            const newLinks = [];
-            
-            const packCoreId = nodeCountId++;
-            newDataNodes.push({ id: packCoreId, group: 1, name: 'MrBeast Master Node', val: 7 });
-            newLinks.push({ source: packCoreId, target: 0, isNew: true });
-            
-            for(let i = 0; i < 40; i++) {
-                const newId = nodeCountId++;
-                newDataNodes.push({ id: newId, group: 1, name: 'Algorithm Fragment', val: Math.random() * 2 + 1 });
-                newLinks.push({ source: newId, target: packCoreId, isNew: true });
-                if(Math.random() < 0.1) newLinks.push({ source: newId, target: 0, isNew: true });
-            }
-
-            const updatedData = {
-                nodes: [...gData.nodes, ...newDataNodes],
-                links: [...gData.links, ...newLinks]
-            };
-            
-            Graph.graphData(updatedData);
-            document.getElementById('mem-status').innerText = \`[BASE MEMORY + 101 NEW NEURONS ACQUIRED]\`;
-
-            setTimeout(() => {
-                const addedCore = updatedData.nodes.find(n => n.id === packCoreId);
-                if(addedCore) {
-                    Graph.centerAt(addedCore.x, addedCore.y, 2000);
-                    Graph.zoom(1.8, 2000);
-                }
-            }, 1000);
-
-            setTimeout(() => {
-                updatedData.links.forEach(l => l.isNew = false);
-                updatedData.nodes.forEach(n => { if(n.group === 1) n.group = 2; });
-                Graph.graphData(updatedData);
-                document.getElementById('mem-status').innerText = \`[ASSIMILATION COMPLETE. READY.]\`;
-                Graph.zoomToFit(2000, 50);
-            }, 8000);
-
-        }, 1500);
+    const byGroup = {};
+    gData.nodes.forEach(n => { if(n.group>=0){ if(!byGroup[n.group]) byGroup[n.group]=[]; byGroup[n.group].push(n); }});
+    Object.values(byGroup).forEach(g => {
+      for(let i=0;i<g.length;i++) for(let j=i+1;j<g.length;j++) if(Math.random()<0.22){
+        gData.links.push({source:g[i].id,target:g[j].id}); g[i].connections++; g[j].connections++;
+      }
+    });
+    gData.nodes.forEach(n => { if(n.group>=0 && Math.random()<0.05){ gData.links.push({source:n.id,target:0}); n.connections++; gData.nodes[0].connections++; }});
+    for(let i=0;i<35;i++){
+      const a=1+Math.floor(Math.random()*(gData.nodes.length-1)), b=1+Math.floor(Math.random()*(gData.nodes.length-1));
+      if(a!==b && gData.nodes[a].group!==gData.nodes[b].group){ gData.links.push({source:a,target:b}); gData.nodes[a].connections++; gData.nodes[b].connections++; }
     }
+    gData.nodes.forEach(n => { n.val = Math.max(2, n.connections*1.5); });
+    document.getElementById('mem-status').textContent = gData.nodes.length+' nodes \\u00b7 '+gData.links.length+' synapses';
+    const gc = ['#00cc44','#00b7ff','#ff6b6b','#ffaa33','#aa66ff','#00cc44','#66cccc','#00ff88','#ff66aa'];
+    const Graph = ForceGraph()(document.getElementById('graph'))
+      .backgroundColor('#0a0a0a')
+      .nodeCanvasObject((node, ctx, globalScale) => {
+        const r = Math.sqrt(node.val)*1.8;
+        ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2*Math.PI);
+        if(node.group===-1){ ctx.fillStyle='#333'; ctx.fill(); ctx.strokeStyle='#00cc44'; ctx.lineWidth=1.5; ctx.stroke(); }
+        else if(node.connections>4){ ctx.fillStyle=gc[node.group]||'#00cc44'; ctx.fill(); }
+        else { ctx.fillStyle='#2a2a2a'; ctx.fill(); }
+        const showLabel = globalScale>1.2 || node.connections>3 || node.group===-1;
+        if(showLabel){
+          const fs=Math.max(2.5, Math.min(5, 11/globalScale));
+          ctx.font=fs+'px -apple-system, sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+          ctx.fillStyle=node.connections>4?'#ccc':'#555';
+          ctx.fillText(node.name, node.x, node.y+r+1.5);
+        }
+      })
+      .nodePointerAreaPaint((node,color,ctx) => {
+        const r=Math.sqrt(node.val)*1.8+4; ctx.beginPath(); ctx.arc(node.x,node.y,r,0,2*Math.PI); ctx.fillStyle=color; ctx.fill();
+      })
+      .linkColor(() => 'rgba(255,255,255,0.04)')
+      .linkWidth(0.3)
+      .d3VelocityDecay(0.3)
+      .warmupTicks(150)
+      .cooldownTicks(300)
+      .graphData(gData);
+    Graph.d3Force('charge').strength(-100);
+    Graph.d3Force('link').distance(35);
+    Graph.onNodeClick(node => { Graph.centerAt(node.x,node.y,800); Graph.zoom(4,1200); });
+    setTimeout(() => Graph.zoomToFit(1500, 40), 500);
   </script>
 </body>
 </html>`;
@@ -1998,7 +1953,7 @@ body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;tr
 .msg-body pre .op{color:#89ddff}
 .msg-body pre .type{color:#ffcb6b}
 </style></head><body class="init">
-<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="brainBtn" title="Neural Construct Topology 🌌">\ud83c\udf0c</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
+<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="brainBtn" title="Neural Construct 🧠">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
 <div class="thinking-bar" id="thinkingBar"></div>
 <div class="main-view" id="mainView">
 <div class="chat" id="chat">

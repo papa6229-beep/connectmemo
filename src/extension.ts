@@ -79,9 +79,11 @@ Example — user says "서버 실행해줘":
 <read_brain>filename.md</read_brain>
 Use this to READ documents from the user's personal knowledge base.
 
-━━━ ACTION 8: READ WEBSITES ━━━
+━━━ ACTION 8: READ WEBSITES & SEARCH INTERNET ━━━
 <read_url>https://example.com</read_url>
-Use this to read the textual content of any website on the internet.
+To search the internet, you MUST use DuckDuckGo by formatting the URL like this:
+<read_url>https://html.duckduckgo.com/html/?q=YOUR+SEARCH+QUERY</read_url>
+Use this forcefully whenever asked for real-time info, news, or whenever requested to "search". NEVER say you cannot search.
 
 CRITICAL RULES:
 1. ALWAYS respond in the same language the user uses.
@@ -1241,7 +1243,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 const workspaceCtx = this._getWorkspaceContext();
                 const brainCtx = this._brainEnabled ? this._getSecondBrainContext() : '';
                 const internetCtx = internetEnabled 
-                    ? `\n\n[INTERNET SYNC ON]\nCurrent Time: ${new Date().toLocaleString('ko-KR')}\nYou have internet access toggled ON. When the user asks for realtime info, search queries (like Google Trends, news, etc.), or the latest data, you MUST NEVER SAY you cannot search. Instead, you MUST search the web by using this exact action format:\n<read_url>https://html.duckduckgo.com/html/?q=YOUR+SEARCH+KEYWORD</read_url>`
+                    ? `\n\n[CRITICAL DIRECTIVE: INTERNET ACCESS IS ENABLED]\nCurrent Time: ${new Date().toLocaleString('ko-KR')}\nYou have FULL internet access via the <read_url> tool. You MUST NEVER say you cannot search, or that your capabilities are limited. To search, ALWAYS output:\n<read_url>https://html.duckduckgo.com/html/?q=YOUR+SEARCH+TERM</read_url>\nIf the user asks to search, or asks for recent info, DO NOT apologize. Just use the tag.`
                     : '';
                 reqMessages[0] = {
                     role: 'system',
@@ -1414,7 +1416,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             // 시스템 프롬프트(0번 인덱스)에 현재 작업 환경 정보를 주입
             if (reqMessages.length > 0 && reqMessages[0].role === 'system') {
                 const internetCtx = internetEnabled 
-                    ? `\n\n[INTERNET SYNC ON]\nCurrent Time: ${new Date().toLocaleString('ko-KR')}\nYou have internet access toggled ON. When the user asks for realtime info, search queries (like Google Trends, news, etc.), or the latest data, you MUST NEVER SAY you cannot search. Instead, you MUST search the web by using this exact action format:\n<read_url>https://html.duckduckgo.com/html/?q=YOUR+SEARCH+KEYWORD</read_url>`
+                    ? `\n\n[CRITICAL DIRECTIVE: INTERNET ACCESS IS ENABLED]\nCurrent Time: ${new Date().toLocaleString('ko-KR')}\nYou have FULL internet access via the <read_url> tool. You MUST NEVER say you cannot search, or that your capabilities are limited. To search, ALWAYS output:\n<read_url>https://html.duckduckgo.com/html/?q=YOUR+SEARCH+TERM</read_url>\nIf the user asks to search, or asks for recent info, DO NOT apologize. Just use the tag.`
                     : '';
                 reqMessages[0] = {
                     role: 'system',

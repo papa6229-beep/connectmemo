@@ -203,7 +203,7 @@ export function activate(context: vscode.ExtensionContext) {
                             stream: false
                         };
                         
-                        const ollamaRes = await axios.post(targetUrl, payload, { timeout: 120000 });
+                        const ollamaRes = await axios.post(targetUrl, payload, { timeout: getConfig().timeout });
                         const responseText = isLMStudio 
                             ? ollamaRes.data.choices?.[0]?.message?.content || ''
                             : ollamaRes.data.message?.content || '';
@@ -248,7 +248,7 @@ export function activate(context: vscode.ExtensionContext) {
                         
                         let responseText = "";
                         try {
-                            const ollamaRes = await axios.post(targetUrl, payload, { timeout: 120000 });
+                            const ollamaRes = await axios.post(targetUrl, payload, { timeout: getConfig().timeout });
                             
                             if (ollamaRes.data.error) {
                                 throw new Error(typeof ollamaRes.data.error === 'string' ? ollamaRes.data.error : JSON.stringify(ollamaRes.data.error));
@@ -258,8 +258,12 @@ export function activate(context: vscode.ExtensionContext) {
                                 ? ollamaRes.data.choices?.[0]?.message?.content || ""
                                 : ollamaRes.data.message?.content || "";
                         } catch (apiErr: any) {
+                            const isTimeout = apiErr.code === 'ETIMEDOUT' || apiErr.code === 'ECONNABORTED' || apiErr.message?.includes('timeout');
+                            const errDetail = isTimeout
+                                ? `AI 응답 시간 초과 — 모델이 문제를 풀기에 시간이 부족했습니다. 더 작은 모델(e2b)을 사용하거나 Settings에서 Request Timeout을 늘려주세요.`
+                                : `오프라인: AI 엔진에 연결할 수 없습니다. (${apiErr.message})`;
                             res.writeHead(500, { 'Content-Type': 'application/json' });
-                            res.end(JSON.stringify({ error: `오프라인: AI 엔진에 연결할 수 없습니다. (${apiErr.message})` }));
+                            res.end(JSON.stringify({ error: errDetail }));
                             return;
                         }
 
@@ -306,7 +310,7 @@ export function activate(context: vscode.ExtensionContext) {
                         
                         let responseText = "";
                         try {
-                            const ollamaRes = await axios.post(targetUrl, payload, { timeout: 120000 });
+                            const ollamaRes = await axios.post(targetUrl, payload, { timeout: getConfig().timeout });
                             responseText = isLMStudio 
                                 ? ollamaRes.data.choices?.[0]?.message?.content || ""
                                 : ollamaRes.data.message?.content || "";

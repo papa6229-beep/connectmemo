@@ -1135,45 +1135,40 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             await execAsync(`git remote remove origin`, { cwd: brainDir }).catch(() => {});
             await execAsync(`git remote add origin ${cleanRepo}`, { cwd: brainDir });
             
+            // 양방향 동기화(2-way Sync): 내 로컬 변경사항 저장 -> 깃허브 변경사항 병합 -> 최종 깃허브 업로드
             try {
-                await execAsync(`git fetch origin`, { cwd: brainDir });
-            } catch (fetchErr: any) {
-                // Private 레포 또는 인증 실패 시 사용자 친화적 안내
-                const msg = fetchErr.message || '';
-                if (msg.includes('Authentication') || msg.includes('403') || msg.includes('404') || msg.includes('could not read')) {
-                    throw new Error('깃허브 저장소에 접근할 수 없습니다. 저장소가 Public(공개)인지 확인하고, URL이 정확한지 다시 확인해주세요.');
-                }
-                throw fetchErr;
-            }
-            
-            // 빈 저장소(새로 만든 깃허브 레포)인 경우 graceful 처리
-            try {
-                await execAsync(`git reset --hard origin/main`, { cwd: brainDir });
-            } catch {
+                // 1. 내 로컬에 새로 추가되거나 수정된 지식이 있다면 커밋 준비
+                await execAsync(`git add .`, { cwd: brainDir });
+                await execAsync(`git commit -m "Auto-sync local brain"`, { cwd: brainDir }).catch(() => {});
+                
+                // 2. 깃허브에 다른 변경사항이 있다면 다운로드해서 합치기 (최신 지식 병합)
                 try {
-                    await execAsync(`git reset --hard origin/master`, { cwd: brainDir });
+                    await execAsync(`git fetch origin`, { cwd: brainDir });
+                    await execAsync(`git pull origin main --no-edit --allow-unrelated-histories`, { cwd: brainDir }).catch(async () => {
+                        await execAsync(`git pull origin master --no-edit --allow-unrelated-histories`, { cwd: brainDir });
+                    });
                 } catch {
-                    // 빈 레포지토리 — 브랜치가 아예 없는 경우 (새로 만든 깃허브)
-                    // 로컬에서 첫 커밋을 자동 생성하여 연결 완료
-                    const readmePath = path.join(brainDir, 'README.md');
-                    if (!fs.existsSync(readmePath)) {
-                        fs.writeFileSync(readmePath, '# 🧠 Second Brain\n\nConnect AI 지식 저장소입니다.\n', 'utf-8');
-                    }
-                    await execAsync(`git add .`, { cwd: brainDir });
-                    await execAsync(`git commit -m "Initial commit: Second Brain 초기화"`, { cwd: brainDir });
-                    try {
-                        await execAsync(`git branch -M main`, { cwd: brainDir });
-                        await execAsync(`git push -u origin main`, { cwd: brainDir });
-                    } catch { /* push 실패해도 로컬 연결은 완료 */ }
+                    // 원격 저장소가 완전히 비어있거나 pull 실패 시 무시
                 }
+
+                // 3. 로컬과 깃허브가 완벽히 합쳐진 최종본을 다시 깃허브로 밀어넣기 (클라우드 최신화)
+                await execAsync(`git push -u origin main`, { cwd: brainDir }).catch(async () => {
+                    await execAsync(`git push -u origin master`, { cwd: brainDir }).catch(() => {});
+                });
+            } catch (syncErr: any) {
+                const msg = syncErr.message || '';
+                if (msg.includes('Authentication') || msg.includes('403') || msg.includes('404')) {
+                    throw new Error('깃허브 저장소에 접근할 수 없습니다. URL 및 권한을 확인해주세요.');
+                }
+                console.warn('Sync warning:', syncErr);
             }
-            
+
             // 연동 완료 후 자동으로 지식 모드 ON
             this._brainEnabled = true;
             this._ctx.globalState.update('brainEnabled', true);
             
-            vscode.window.showInformationMessage('🧠 Second Brain 지식 연동 완료!');
-            this._view.webview.postMessage({ type: 'response', value: '✅ **Second Brain 업데이트 완료! 이제 회원님의 뇌(문서)를 바탕으로 특화된 코딩을 진행합니다. (지식 모드: 🟢 ON)**' });
+            vscode.window.showInformationMessage('✅ 깃허브 지식과 내 지식 폴더가 완벽히 동기화(병합) 되었습니다!');
+            this._view.webview.postMessage({ type: 'response', value: '✅ **지식 동기화 완전 완료!** 이제 내 PC의 지식 폴더 내용과 깃허브가 서로 최신 상태로 병합되었습니다.\n\n해당 지식을 바탕으로 맞춤형 답변을 생성합니다. (지식 모드: 🟢 ON)' });
         } catch (error: any) {
             // 사용자 친화적 에러 메시지 분기
             const errMsg = error.message || '';

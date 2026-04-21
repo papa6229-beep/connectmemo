@@ -177,8 +177,10 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             if (req.method === 'GET' && req.url === '/ping') {
+                const brainDir = path.join(os.homedir(), '.connect-ai-brain');
+                const brainCount = fs.existsSync(brainDir) ? provider._findBrainFiles(brainDir).length : 0;
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ status: 'ok', msg: 'Connect AI Bridge Ready', config: getConfig() }));
+                res.end(JSON.stringify({ status: 'ok', msg: 'Connect AI Bridge Ready', config: getConfig(), brain: { fileCount: brainCount, enabled: provider._brainEnabled } }));
             }
             else if (req.method === 'POST' && req.url === '/api/exam') {
                 let body = '';
@@ -629,7 +631,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     // 대화 표시용 (system prompt 제외, 유저에게 보여줄 것만 저장)
     private _displayMessages: { text: string; role: string }[] = [];
     private _isSyncingBrain: boolean = false;
-    private _brainEnabled: boolean = true; // 🧠 ON/OFF 토글 상태
+    public _brainEnabled: boolean = true; // 🧠 ON/OFF 토글 상태
     private _abortController?: AbortController;
     private _lastPrompt?: string;
     private _lastModel?: string;
@@ -1007,8 +1009,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             // 아직 한 번도 연동한 적 없음
             items.push({ label: '🔗 깃허브 연결하기', description: '지식 저장소 GitHub URL 입력', action: 'sync' });
         } else {
+            const brainFiles = fs.existsSync(brainDir) ? this._findBrainFiles(brainDir) : [];
             items.push(
                 { label: `🧠 지식 모드: ${statusLabel}`, description: '지식 기반 코딩 ON/OFF 전환', action: 'toggle' },
+                { label: `📂 내 두뇌 파일 목록 (${brainFiles.length}개)`, description: '주입된 지식 파일 확인', action: 'listFiles' },
                 { label: '🔄 지식 새로고침', description: `현재: ${secondBrainRepo?.split('/').pop() || '없음'}`, action: 'resync' },
                 { label: '🔗 다른 깃허브로 변경', description: '새로운 지식 저장소 URL 입력', action: 'change' },
                 { label: '❌ 깃허브 연결 끊기', description: '로컬 지식을 삭제하고 연결 해제', action: 'disconnect' }
@@ -1022,6 +1026,27 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             case 'viewGraph':
                 vscode.commands.executeCommand('connect-ai-lab.showBrainNetwork');
                 break;
+            case 'listFiles': {
+                const brainFiles = fs.existsSync(brainDir) ? this._findBrainFiles(brainDir) : [];
+                if (brainFiles.length === 0) {
+                    vscode.window.showInformationMessage('📂 두뇌에 저장된 파일이 없습니다. 웹사이트에서 Brain Pack을 주입하세요!');
+                } else {
+                    const fileItems = brainFiles.slice(0, 50).map(f => {
+                        const rel = path.relative(brainDir, f);
+                        let title = '';
+                        try { title = fs.readFileSync(f, 'utf-8').split('\n').find(l => l.trim().length > 0)?.replace(/^#+\s*/, '').slice(0, 60) || ''; } catch {}
+                        return { label: `📄 ${rel}`, description: title, filePath: f };
+                    });
+                    const selected = await vscode.window.showQuickPick(fileItems, { 
+                        placeHolder: `📂 내 두뇌 파일 (총 ${brainFiles.length}개)` 
+                    });
+                    if (selected) {
+                        const doc = await vscode.workspace.openTextDocument(selected.filePath);
+                        vscode.window.showTextDocument(doc);
+                    }
+                }
+                break;
+            }
             case 'sync':
                 await this._syncSecondBrain();
                 break;
@@ -1163,7 +1188,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     }
 
     // 재귀 탐색 유틸리티 (하위 폴더까지 .md/.txt 파일 긁어옴)
-    private _findBrainFiles(dir: string): string[] {
+    public _findBrainFiles(dir: string): string[] {
         let results: string[] = [];
         try {
             const list = fs.readdirSync(dir);
@@ -1216,7 +1241,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         const msgLimit = truncated ? `\n(⚠️ 메모리 폭발 방지를 위해 상위 ${MAX_INDEX}개 파일의 목차만 표시됩니다.)` : '';
 
-        return `\n\n[CRITICAL: SECOND BRAIN INDEX — User's Personal Knowledge Base (${files.length} documents)]\nThe user has synced a personal knowledge repository. Below is the TABLE OF CONTENTS.${msgLimit}\nIf the user's query is even slightly related to any topics in this index, YOU MUST FIRST READ the relevant document BEFORE answering.\nTo read the actual content of any document, use EXACTLY this syntax: <read_brain>filename_or_path</read_brain>\nYou can call <read_brain> multiple times. ALWAYS READ THE FULL DOCUMENT BEFORE ANSWERING.\n\n${index.join('\n')}\n\n`;
+        return `\n\n[CRITICAL: SECOND BRAIN INDEX — User's Personal Knowledge Base (${files.length} documents)]\nThe user has synced a personal knowledge repository. Below is the TABLE OF CONTENTS.${msgLimit}\nIf the user's query is even slightly related to any topics in this index, YOU MUST FIRST READ the relevant document BEFORE answering.\nTo read the actual content of any document, use EXACTLY this syntax: <read_brain>filename_or_path</read_brain>\nYou can call <read_brain> multiple times. ALWAYS READ THE FULL DOCUMENT BEFORE ANSWERING.\n\n**IMPORTANT: When your answer uses knowledge from the Second Brain, you MUST end your response with a "📚 출처" section listing the file(s) you referenced. Example:\n📚 출처: MrBeast_분석.md, 마케팅_전략.md**\n\n${index.join('\n')}\n\n`;
     }
 
     // AI가 <read_brain>태그로 요청한 파일의 실제 내용을 읽어서 반환

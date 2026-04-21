@@ -1010,9 +1010,13 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const brainFiles = fs.existsSync(brainDir) ? this._findBrainFiles(brainDir) : [];
         const fileCount = brainFiles.length;
         
+        const currentRepo = vscode.workspace.getConfiguration('connectAiLab').get<string>('secondBrainRepo', '');
+        const repoLabel = currentRepo ? currentRepo.split('/').pop() : '없음';
+        
         const items: any[] = [
             { label: `📂 내 지식 파일 보기 (${fileCount}개)`, description: fileCount > 0 ? '내가 넣어둔 지식 목록 확인' : '아직 지식이 없습니다', action: 'listFiles' },
             { label: '📁 내 뇌 폴더 변경하기', description: `현재: ${brainDir}`, action: 'changeFolder' },
+            { label: `🔗 깃허브에서 지식 가져오기`, description: `연결됨: ${repoLabel}`, action: 'githubSync' },
             { label: '🔄 지식 새로고침', description: '폴더 내용을 다시 읽어옵니다', action: 'resync' },
             { label: '🌐 내 지식 지도 보기', description: '지식들이 어떻게 연결되어 있는지 시각화', action: 'viewGraph' },
         ];
@@ -1077,6 +1081,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             }
             case 'viewGraph': {
                 vscode.commands.executeCommand('connect-ai-lab.showBrainNetwork');
+                break;
+            }
+            case 'githubSync': {
+                await this._syncSecondBrain();
                 break;
             }
         }

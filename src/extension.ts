@@ -37,6 +37,35 @@ function _getBrainDir(): string {
     return path.join(os.homedir(), '.connect-ai-brain');
 }
 
+function _isBrainDirExplicitlySet(): boolean {
+    const { localBrainPath } = getConfig();
+    return !!(localBrainPath && localBrainPath.trim() !== '');
+}
+
+async function _ensureBrainDir(): Promise<string | null> {
+    if (_isBrainDirExplicitlySet()) {
+        return _getBrainDir();
+    }
+    // 폴더 미설정 → 사용자에게 강제 선택 요청
+    const result = await vscode.window.showInformationMessage(
+        '📁 지식을 저장할 폴더를 먼저 선택해주세요! (내 지식이 저장될 곳입니다)',
+        '폴더 선택하기'
+    );
+    if (result !== '폴더 선택하기') return null;
+    
+    const folders = await vscode.window.showOpenDialog({
+        canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
+        openLabel: '이 폴더를 내 지식 폴더로 사용',
+        title: '🧠 내 지식 폴더 선택'
+    });
+    if (!folders || folders.length === 0) return null;
+    
+    const selectedPath = folders[0].fsPath;
+    await vscode.workspace.getConfiguration('connectAiLab').update('localBrainPath', selectedPath, vscode.ConfigurationTarget.Global);
+    vscode.window.showInformationMessage(`✅ 지식 폴더가 설정되었습니다: ${selectedPath}`);
+    return selectedPath;
+}
+
 const EXCLUDED_DIRS = new Set([
     'node_modules', '.git', '.vscode', 'out', 'dist', 'build',
     '.next', '.cache', '__pycache__', '.DS_Store', 'coverage',
@@ -350,7 +379,21 @@ export function activate(context: vscode.ExtensionContext) {
                 req.on('end', async () => {
                     try {
                         const parsed = JSON.parse(body);
-                        const brainDir = _getBrainDir();
+                        
+                        // 폴더 미설정 시 강제 선택 요청
+                        let brainDir: string;
+                        if (!_isBrainDirExplicitlySet()) {
+                            const ensured = await _ensureBrainDir();
+                            if (!ensured) {
+                                res.writeHead(400, { 'Content-Type': 'application/json' });
+                                res.end(JSON.stringify({ error: '지식 폴더를 먼저 선택해주세요.' }));
+                                return;
+                            }
+                            brainDir = ensured;
+                        } else {
+                            brainDir = _getBrainDir();
+                        }
+                        
                         if (!fs.existsSync(brainDir)) {
                             fs.mkdirSync(brainDir, { recursive: true });
                         }
@@ -1109,6 +1152,12 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         if (this._isSyncingBrain) {
             vscode.window.showWarningMessage('동기화가 이미 진행 중입니다. 잠시만 기다려주세요!');
             return;
+        }
+
+        // 폴더 미설정 시 먼저 폴더 선택 강제
+        if (!_isBrainDirExplicitlySet()) {
+            const ensured = await _ensureBrainDir();
+            if (!ensured) { return; }
         }
 
         let secondBrainRepo = vscode.workspace.getConfiguration('connectAiLab').get<string>('secondBrainRepo', '');

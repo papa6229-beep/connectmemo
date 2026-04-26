@@ -811,8 +811,14 @@ export function activate(context: vscode.ExtensionContext) {
 
                         fs.writeFileSync(filePath, markdown, 'utf-8');
 
-                        // 0. 그래프 패널들에 새 데이터 broadcast — 새 노드가 즉시
-                        //    등장하고 살짝 펄스로 강조되어 "주입됨" 시각화 가능.
+                        // 0a. 항상 보이는 사용자 신호 — sidebar가 닫혀있어도 이 토스트는 떠서
+                        //     "주입됐다"는 사실을 즉시 인지 가능.
+                        vscode.window.showInformationMessage(
+                            `🧠 새 지식 주입됨: ${safeTitle}.md (저장 위치: ${path.relative(brainDir, filePath)})`
+                        );
+
+                        // 0b. 그래프 패널들에 새 데이터 broadcast — 새 노드가 즉시
+                        //     등장하고 살짝 펄스로 강조되어 "주입됨" 시각화 가능.
                         provider.broadcastGraphRefresh(safeTitle);
 
                         // 1. VSCode 채팅창에 매트릭스 터미널 UI로 다운로드 시각화 인젝션
@@ -2300,16 +2306,21 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         return this._displayMessages.map(m => `[${m.role.toUpperCase()}]\n${m.text}`).join('\n\n');
     }
 
-    /** 외부에서 프롬프트 전송 (예: 코드 선택 → 설명) */
+    /** 외부에서 프롬프트 전송 (예: 코드 선택 → 설명, EZER 주입 등).
+     *  sidebar가 아직 mount 안 됐어도 history에는 항상 저장 — 다음에 사이드바를
+     *  열면 자동 복원되어 보임. mount되어 있으면 즉시 webview에도 전달. */
     public injectSystemMessage(message: string) {
-        if(this._view) {
+        this._chatHistory.push({ role: 'assistant', content: message });
+        this._displayMessages.push({ role: 'ai', text: message });
+        this._saveHistory();
+        if (this._view) {
             this._view.webview.postMessage({ type: 'response', value: message });
-            this._chatHistory.push({ role: 'assistant', content: message });
-            this._displayMessages.push({ role: 'ai', text: message });
-            this._saveHistory();
         }
     }
 
+    // Pending prompts buffered while the sidebar webview is unmounted —
+    // flushed when resolveWebviewView wires up the new _view.
+    private _pendingPrompts: string[] = [];
     public sendPromptFromExtension(prompt: string) {
         if (this._view) {
             this._view.show?.(true);
@@ -2317,7 +2328,20 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             setTimeout(() => {
                 this._view?.webview.postMessage({ type: 'injectPrompt', value: prompt });
             }, 300);
+        } else {
+            // Buffer until the sidebar opens; cap to avoid unbounded growth.
+            this._pendingPrompts.push(prompt);
+            if (this._pendingPrompts.length > 20) this._pendingPrompts.shift();
         }
+    }
+    /** Called from resolveWebviewView once _view is ready. */
+    private _flushPendingPrompts() {
+        if (!this._view || this._pendingPrompts.length === 0) return;
+        const queue = this._pendingPrompts.slice();
+        this._pendingPrompts.length = 0;
+        queue.forEach((p, i) => {
+            setTimeout(() => this._view?.webview.postMessage({ type: 'injectPrompt', value: p }), 400 + i * 200);
+        });
     }
 
     // --------------------------------------------------------
@@ -2407,6 +2431,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         // 리스너를 붙인 후 HTML을 렌더링합니다.
         webviewView.webview.html = this._getHtml();
+
+        // Sidebar just mounted — drain any prompts that were buffered while it
+        // was closed (e.g. EZER injected knowledge before the user opened it).
+        this._flushPendingPrompts();
     }
 
     // --------------------------------------------------------

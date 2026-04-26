@@ -1118,6 +1118,22 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
     #graph { position: absolute; inset: 0; width: 100vw; height: 100vh; z-index: 0; }
     canvas { cursor: grab; }
     canvas:active { cursor: grabbing; }
+    /* Search/filter bar — toggle with `/` key */
+    #search-bar { position: absolute; top: 64px; left: 24px; z-index: 12;
+      background: rgba(20,21,28,.92); border: 1px solid rgba(93,224,230,.32);
+      border-radius: 10px; padding: 6px 10px;
+      display: none; align-items: center; gap: 8px;
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      box-shadow: 0 8px 32px rgba(0,0,0,.4), 0 0 16px rgba(93,224,230,.08);
+      min-width: 260px; max-width: 380px; }
+    #search-bar.active { display: flex; animation: searchSlideIn .25s cubic-bezier(.16,1,.3,1); }
+    @keyframes searchSlideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+    #search-input { background: transparent; border: 0; outline: 0;
+      color: #e8e9ee; font-size: 13px; font-family: 'SF Pro Display', -apple-system, sans-serif;
+      flex: 1; padding: 4px 0; min-width: 0; }
+    #search-input::placeholder { color: #5a5d68; }
+    #search-count { color: #5DE0E6; font-size: 11px; font-family: 'SF Mono', monospace; white-space: nowrap; }
+    #search-count.zero { color: #FFB266; }
     /* Thinking Mode */
     #thinking-overlay { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 15; background: rgba(20,21,28,.92); border: 1px solid rgba(93,224,230,.38); border-radius: 14px; padding: 14px 22px; font-size: 13px; color: #e0e2e8; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 12px 48px rgba(93,224,230,.18), 0 4px 16px rgba(0,0,0,.5); display: none; min-width: 340px; max-width: 600px; }
     #thinking-overlay.active { display: block; animation: slideUp .45s cubic-bezier(.16,1,.3,1); }
@@ -1149,12 +1165,17 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
     <div class="row"><div class="swatch" style="background:#B4B4C8;opacity:.5"></div><span>같은 태그</span></div>
     <div class="row synapse" style="margin-top:6px"><div class="swatch" style="background:#5DE0E6"></div><span>🧠 검색 중</span></div>
     <div class="row"><div class="swatch" style="background:#FFB266"></div><span>이미 사용함</span></div>
-    <div class="row" style="margin-top:8px;font-size:10px;color:#5a5d68;line-height:1.5"><span>💡 클릭 → 인접만 강조<br>&nbsp;&nbsp;&nbsp;&nbsp;더블클릭 → 파일 열기<br>&nbsp;&nbsp;&nbsp;&nbsp;빈 곳 클릭 → 해제</span></div>
+    <div class="row" style="margin-top:8px;font-size:10px;color:#5a5d68;line-height:1.55"><span>💡 클릭 → 인접만 강조<br>&nbsp;&nbsp;&nbsp;&nbsp;더블클릭 → 파일 열기<br>&nbsp;&nbsp;&nbsp;&nbsp;빈 곳 클릭 → 해제<br>&nbsp;&nbsp;&nbsp;&nbsp;<kbd style="background:#1a1a1f;padding:1px 5px;border-radius:3px;border:1px solid #2a2a30;font-family:SF Mono,monospace;font-size:9px">/</kbd> → 검색</span></div>
   </div>
   <div id="empty">
     <div class="big">📂 아직 지식이 없어요</div>
     <div>지식 폴더에 .md 파일을 넣고 다시 열어주세요</div>
     <div style="font-size:10px;color:#444">팁: <code style="background:#1a1a1a;padding:2px 6px;border-radius:4px">[[다른노트]]</code> 형식으로 링크하면 자동 연결됩니다</div>
+  </div>
+  <div id="search-bar">
+    <span style="color:#5DE0E6;font-size:13px">⌕</span>
+    <input id="search-input" type="text" placeholder="이름·태그·폴더 검색  (ESC로 닫기)" autocomplete="off" spellcheck="false" />
+    <span id="search-count"></span>
   </div>
   <div id="graph"></div>
   <div id="tooltip"></div>
@@ -1303,9 +1324,9 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
       .cooldownTicks(1200)
       .onNodeHover(node => {
         hoverNode = node || null;
-        // Sticky selection wins — when a node is "pinned" via click, hover
-        // doesn't disturb the highlight set (Obsidian-style behavior).
-        if (!stickyNode) applyHighlight(hoverNode);
+        // Sticky selection / active search win — when either is pinning the
+        // highlight set, hover doesn't disturb it (Obsidian-style behavior).
+        if (!stickyNode && !(searchActive && searchInput.value)) applyHighlight(hoverNode);
         document.body.style.cursor = node ? 'pointer' : 'grab';
         if (node) {
           tooltip.style.display = 'block';
@@ -1341,6 +1362,8 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
 
     let lastClick = { id: null, t: 0 };
     Graph.onNodeClick(node => {
+      // Click during active search → close the search panel and act as a normal pin
+      if (searchActive) closeSearch();
       const now = Date.now();
       if (lastClick.id === node.id && now - lastClick.t < 400) {
         // Double-click on the same node → open file
@@ -1360,7 +1383,71 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
     });
 
     Graph.onBackgroundClick(() => {
-      if (stickyNode) unpinNode();
+      if (searchActive) closeSearch();
+      else if (stickyNode) unpinNode();
+    });
+
+    // ── Search/filter bar (`/` to open, ESC to close) ──
+    const searchBar = document.getElementById('search-bar');
+    const searchInput = document.getElementById('search-input');
+    const searchCount = document.getElementById('search-count');
+    let searchActive = false;
+    function openSearch() {
+      searchActive = true;
+      searchBar.classList.add('active');
+      searchInput.focus();
+      searchInput.select();
+    }
+    function closeSearch() {
+      searchActive = false;
+      searchBar.classList.remove('active');
+      searchInput.value = '';
+      searchCount.textContent = '';
+      searchCount.classList.remove('zero');
+      // Restore prior state (sticky pin or current hover)
+      applyHighlight(stickyNode || hoverNode);
+    }
+    function runSearch(q) {
+      q = q.trim().toLowerCase();
+      if (!q) {
+        searchCount.textContent = '';
+        searchCount.classList.remove('zero');
+        applyHighlight(stickyNode || hoverNode);
+        return;
+      }
+      const matches = new Set();
+      data.nodes.forEach(n => {
+        const hay = ((n.name || '') + ' ' + (n.folder || '') + ' ' +
+                     (n.tags || []).map(t => '#' + t).join(' ')).toLowerCase();
+        if (hay.includes(q)) matches.add(n.id);
+      });
+      searchCount.textContent = matches.size + '개';
+      searchCount.classList.toggle('zero', matches.size === 0);
+      if (matches.size === 0) {
+        // Don't dim the whole graph for zero results — feels punishing
+        highlightNodes = new Set(); highlightLinks = new Set();
+        return;
+      }
+      highlightNodes = new Set(matches);
+      highlightLinks = new Set();
+      data.links.forEach(l => {
+        const sId = (l.source && l.source.id) || l.source;
+        const tId = (l.target && l.target.id) || l.target;
+        if (matches.has(sId) && matches.has(tId)) highlightLinks.add(l);
+      });
+    }
+    searchInput.addEventListener('input', () => runSearch(searchInput.value));
+    document.addEventListener('keydown', (e) => {
+      if (e.target === searchInput) {
+        if (e.key === 'Escape') { closeSearch(); e.preventDefault(); }
+        return;
+      }
+      if (e.key === '/' && !searchActive) {
+        e.preventDefault();
+        openSearch();
+      } else if (e.key === 'Escape' && searchActive) {
+        closeSearch();
+      }
     });
 
     // Force tuning: hubs repel more (so they sit at cluster centers naturally),

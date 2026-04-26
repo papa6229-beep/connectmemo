@@ -4,10 +4,207 @@ import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { spawnSync } from 'child_process';
 
-const execAsync = promisify(exec);
+// ============================================================
+// Security helpers
+// ============================================================
+
+const MAX_HTTP_BODY = 5 * 1024 * 1024; // 5MB cap on /api/* request bodies
+const MAX_STREAM_BUFFER = 2 * 1024 * 1024; // 2MB cap on per-stream line buffer
+const MAX_FILE_NAME_LEN = 200;
+
+/**
+ * Run a git subcommand with argv form (no shell interpolation).
+ * Returns stdout on success, throws on failure. Never blocks longer than `timeout`.
+ */
+function gitExec(args: string[], cwd: string, timeout = 15000): string {
+    const res = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf-8',
+        timeout,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } // never block on credential prompt
+    });
+    if (res.error) throw res.error;
+    if (res.status !== 0) {
+        const err: any = new Error(`git ${args[0]} failed: ${res.stderr?.trim() || 'unknown'}`);
+        err.code = res.status;
+        err.stderr = res.stderr;
+        throw err;
+    }
+    return res.stdout || '';
+}
+
+/** Same as gitExec but swallows errors and returns null. */
+function gitExecSafe(args: string[], cwd: string, timeout = 15000): string | null {
+    try { return gitExec(args, cwd, timeout); }
+    catch { return null; }
+}
+
+/**
+ * Resolve `relPath` against `root` and confirm the result stays within `root`.
+ * Returns absolute path on success, null if traversal is detected.
+ */
+function safeResolveInside(root: string, relPath: string): string | null {
+    if (typeof relPath !== 'string' || relPath.length === 0) return null;
+    const resolvedRoot = path.resolve(root);
+    const abs = path.resolve(resolvedRoot, relPath);
+    const rel = path.relative(resolvedRoot, abs);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+    return abs;
+}
+
+/**
+ * Sanitize a filename: remove path separators / traversal segments / control chars.
+ * Returns a safe basename (never a path) or null if nothing usable remains.
+ */
+function safeBasename(name: string): string | null {
+    if (typeof name !== 'string') return null;
+    // Drop any path components — only the final segment is allowed.
+    const base = path.basename(name).replace(/[\x00-\x1f\\/:*?"<>|]/g, '_').trim();
+    if (!base || base === '.' || base === '..') return null;
+    return base.slice(0, MAX_FILE_NAME_LEN);
+}
+
+/**
+ * Drain an http request body with a hard size cap. Resolves to the body string,
+ * or rejects with an Error("BODY_TOO_LARGE") if the cap is exceeded.
+ */
+function readRequestBody(req: http.IncomingMessage, maxBytes = MAX_HTTP_BODY): Promise<string> {
+    return new Promise((resolve, reject) => {
+        let received = 0;
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => {
+            received += chunk.length;
+            if (received > maxBytes) {
+                reject(new Error('BODY_TOO_LARGE'));
+                req.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+        req.on('error', reject);
+    });
+}
+
+/**
+ * Validate a remote git URL. Only http(s) and git@host:owner/repo forms are accepted.
+ * Returns the cleaned URL or null when unsafe.
+ */
+function validateGitRemoteUrl(url: string): string | null {
+    if (typeof url !== 'string') return null;
+    const trimmed = url.trim();
+    if (!trimmed || trimmed.length > 500) return null;
+    // Allowed: https://host/path, http://host/path, git@host:path
+    const httpsLike = /^https?:\/\/[A-Za-z0-9._-]+(:\d+)?\/[A-Za-z0-9._\-/]+(\.git)?\/?$/;
+    const sshLike = /^git@[A-Za-z0-9._-]+:[A-Za-z0-9._\-/]+(\.git)?$/;
+    if (!httpsLike.test(trimmed) && !sshLike.test(trimmed)) return null;
+    return trimmed;
+}
+
+/** Detect whether `git` is on PATH. Cached after first call. */
+let _gitAvailableCache: boolean | null = null;
+function isGitAvailable(): boolean {
+    if (_gitAvailableCache !== null) return _gitAvailableCache;
+    try {
+        const res = spawnSync('git', ['--version'], { encoding: 'utf-8', timeout: 5000 });
+        _gitAvailableCache = res.status === 0;
+    } catch {
+        _gitAvailableCache = false;
+    }
+    return _gitAvailableCache;
+}
+
+type GitErrorKind = 'auth' | 'not_found' | 'rejected' | 'merge_conflict' | 'network' | 'unknown';
+
+/** Translate raw git stderr into a user-actionable Korean message + machine-readable kind. */
+function classifyGitError(stderr: string): { kind: GitErrorKind; message: string } {
+    const s = (stderr || '').toLowerCase();
+    if (
+        s.includes('authentication failed') ||
+        s.includes('could not read username') ||
+        s.includes('terminal prompts disabled') ||
+        s.includes('invalid credentials') ||
+        s.includes('403')
+    ) {
+        return {
+            kind: 'auth',
+            message: '깃허브 인증 실패. Personal Access Token이 필요합니다.\n👉 GitHub → Settings → Developer settings → Personal access tokens 에서 토큰 생성 후, 한 번만 터미널에서 `git push` 실행해 자격증명을 캐시하세요.'
+        };
+    }
+    if (s.includes('repository not found') || s.includes('does not appear to be a git repository') || s.includes('404')) {
+        return { kind: 'not_found', message: '저장소를 찾을 수 없습니다. URL을 확인하거나 Private 저장소라면 토큰 권한을 확인하세요.' };
+    }
+    if (s.includes('rejected') && (s.includes('non-fast-forward') || s.includes('fetch first'))) {
+        return { kind: 'rejected', message: 'GitHub에 다른 변경사항이 있어 push가 거부됐습니다. 메뉴 → 깃허브 동기화로 병합해주세요.' };
+    }
+    if (s.includes('merge conflict') || s.includes('automatic merge failed') || s.includes('overwritten by merge')) {
+        return { kind: 'merge_conflict', message: '병합 충돌이 발생했습니다. 메뉴 → 깃허브 동기화에서 수동 해결하세요.' };
+    }
+    if (s.includes('could not resolve host') || s.includes('connection refused') || s.includes('network is unreachable') || s.includes('timed out')) {
+        return { kind: 'network', message: '네트워크 연결을 확인하세요.' };
+    }
+    return { kind: 'unknown', message: (stderr || 'unknown error').slice(0, 240) };
+}
+
+/** Detect remote default branch ("main" / "master" / etc). Returns "main" as fallback. */
+function getRemoteDefaultBranch(cwd: string): string {
+    const out = gitExecSafe(['ls-remote', '--symref', 'origin', 'HEAD'], cwd, 10000);
+    if (out) {
+        const m = out.match(/ref:\s+refs\/heads\/([^\s]+)\s+HEAD/);
+        if (m) return m[1];
+    }
+    return 'main';
+}
+
+/** Ensure brain folder has at least one commit so `push` has something to ship. */
+function ensureInitialCommit(cwd: string) {
+    if (gitExecSafe(['log', '-1'], cwd) !== null) return; // already has commits
+    const placeholder = path.join(cwd, '.gitkeep');
+    if (!fs.existsSync(placeholder)) fs.writeFileSync(placeholder, '');
+    gitExecSafe(['add', '.'], cwd);
+    // --allow-empty handles the edge case where everything is gitignored
+    gitExecSafe(['commit', '--allow-empty', '-m', 'Initial brain commit'], cwd);
+}
+
+/** Auto-create a sensible .gitignore in the brain folder so junk files don't pollute the remote. */
+function ensureBrainGitignore(brainDir: string) {
+    const gi = path.join(brainDir, '.gitignore');
+    if (fs.existsSync(gi)) return;
+    const lines = [
+        '# Connect AI auto-generated',
+        '.DS_Store',
+        '.obsidian/',
+        '.trash/',
+        'node_modules/',
+        '*.tmp',
+        '*.log',
+        '.cache/',
+        'Thumbs.db'
+    ];
+    try { fs.writeFileSync(gi, lines.join('\n') + '\n'); }
+    catch { /* non-fatal */ }
+}
+
+/** Run a git subcommand and return stdout/stderr/status — used when we need to inspect failures. */
+function gitRun(args: string[], cwd: string, timeout = 30000): { status: number | null; stdout: string; stderr: string; error?: Error } {
+    const res = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf-8',
+        timeout,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+    });
+    return {
+        status: res.status,
+        stdout: res.stdout || '',
+        stderr: res.stderr || '',
+        error: res.error
+    };
+}
+
+/** Module-scoped lock so auto-sync and manual sync never run concurrently against the same brain. */
+let _autoSyncRunning = false;
 
 // ============================================================
 // Connect AI — Full Agentic Local AI for VS Code
@@ -17,12 +214,26 @@ const execAsync = promisify(exec);
 // Settings are read from VS Code configuration (File > Preferences > Settings)
 function getConfig() {
     const cfg = vscode.workspace.getConfiguration('connectAiLab');
+
+    // ollamaUrl: only http(s)://localhost or 127.0.0.1 is meaningful here.
+    let ollamaBase = (cfg.get<string>('ollamaUrl', 'http://127.0.0.1:11434') || '').trim();
+    if (!/^https?:\/\//i.test(ollamaBase)) ollamaBase = 'http://127.0.0.1:11434';
+
+    const defaultModelRaw = cfg.get<string>('defaultModel', 'gemma4:e2b') || 'gemma4:e2b';
+    const defaultModel = defaultModelRaw.trim() || 'gemma4:e2b';
+
+    // requestTimeout: clamp to [5, 1800] seconds, then convert to ms.
+    const rawTimeout = cfg.get<number>('requestTimeout', 300);
+    const timeoutSec = (typeof rawTimeout === 'number' && isFinite(rawTimeout))
+        ? Math.min(1800, Math.max(5, rawTimeout))
+        : 300;
+
     return {
-        ollamaBase: cfg.get<string>('ollamaUrl', 'http://127.0.0.1:11434'),
-        defaultModel: cfg.get<string>('defaultModel', 'gemma4:e2b'),
+        ollamaBase,
+        defaultModel,
         maxTreeFiles: 200,
-        timeout: cfg.get<number>('requestTimeout', 300) * 1000,
-        localBrainPath: cfg.get<string>('localBrainPath', '')
+        timeout: timeoutSec * 1000,
+        localBrainPath: cfg.get<string>('localBrainPath', '') || ''
     };
 }
 
@@ -48,7 +259,7 @@ async function _ensureBrainDir(): Promise<string | null> {
     }
     // 폴더 미설정 → 사용자에게 강제 선택 요청
     const result = await vscode.window.showInformationMessage(
-        '📁 지식을 저장할 폴더를 먼저 선택해주세요! (내 지식이 저장될 곳입니다)',
+        '📁 지식을 저장할 폴더를 먼저 선택해주세요! (AI가 답변할 때 참고할 .md 파일들이 보관됩니다)',
         '폴더 선택하기'
     );
     if (result !== '폴더 선택하기') return null;
@@ -62,7 +273,7 @@ async function _ensureBrainDir(): Promise<string | null> {
     
     const selectedPath = folders[0].fsPath;
     await vscode.workspace.getConfiguration('connectAiLab').update('localBrainPath', selectedPath, vscode.ConfigurationTarget.Global);
-    vscode.window.showInformationMessage(`✅ 지식 폴더가 설정되었습니다: ${selectedPath}`);
+    vscode.window.showInformationMessage(`✅ 지식 폴더가 설정되었어요: ${selectedPath}`);
     return selectedPath;
 }
 
@@ -138,6 +349,114 @@ CRITICAL RULES:
 10. The [WORKSPACE INFO] section tells you exactly which folder is open and what files exist. USE this information.`;
 
 // ============================================================
+// Robust Git Auto-Sync (module scope)
+// ------------------------------------------------------------
+// Auto-sync runs silently in the background after every brain
+// modification. It must be NON-DESTRUCTIVE: never force-push,
+// never use `-X ours` to silently discard remote changes, and
+// never block the UI thread on credential prompts.
+// On any conflict / auth failure, surface a friendly message
+// and let the user resolve it via the manual sync menu.
+// ============================================================
+function _safeGitAutoSync(brainDir: string, commitMsg: string, provider: any = null) {
+    if (_autoSyncRunning) return; // dedup: another auto-sync (or manual sync) is already running
+    _autoSyncRunning = true;
+
+    const notify = (msg: string, delayMs = 4000) => {
+        if (provider && provider.injectSystemMessage) {
+            setTimeout(() => provider.injectSystemMessage(msg), delayMs);
+        }
+    };
+
+    try {
+        if (!isGitAvailable()) {
+            notify(`⚠️ **[GitHub Sync 건너뜀]** git이 설치되지 않았습니다. https://git-scm.com 에서 설치 후 재시도하세요. (로컬 파일은 안전하게 저장됨)`);
+            return;
+        }
+
+        // 폴더가 git repo가 아니면, GitHub URL이 설정돼 있을 때만 자동 init.
+        // (사용자가 settings.json에서 직접 폴더 경로를 입력한 경우에도 작동하도록 함)
+        const isRepo = gitExecSafe(['status'], brainDir) !== null;
+        if (!isRepo) {
+            const repoUrl = vscode.workspace.getConfiguration('connectAiLab').get<string>('secondBrainRepo', '');
+            const cleanRepo = repoUrl ? validateGitRemoteUrl(repoUrl) : null;
+            if (!cleanRepo) {
+                // GitHub URL도 없음 → 사용자가 sync 의도를 표현한 적이 없음. 조용히 종료.
+                notify(`✅ 지식이 로컬에 저장되었습니다.\n\n💡 **Tip:** 깃허브 백업을 원하시면 🧠 메뉴 → '깃허브 동기화'를 눌러 저장소를 연결하세요!`, 3000);
+                return;
+            }
+            // GitHub URL이 있다 → 자동으로 git init + remote 등록
+            const initRes = gitRun(['init'], brainDir, 10000);
+            if (initRes.status !== 0) {
+                notify(`⚠️ **[GitHub Sync]** git init 실패: ${classifyGitError(initRes.stderr).message}`);
+                return;
+            }
+        }
+
+        ensureBrainGitignore(brainDir);
+        ensureInitialCommit(brainDir);
+
+        // Stage + commit any new local work. "nothing to commit" is fine.
+        gitExecSafe(['add', '.'], brainDir);
+        gitExecSafe(['commit', '-m', commitMsg], brainDir);
+
+        // No remote configured → try to pull from settings, otherwise stay local.
+        const existingRemote = gitExecSafe(['remote', 'get-url', 'origin'], brainDir)?.trim() || '';
+        if (!existingRemote) {
+            const repoUrl = vscode.workspace.getConfiguration('connectAiLab').get<string>('secondBrainRepo', '');
+            const cleanRepo = repoUrl ? validateGitRemoteUrl(repoUrl) : null;
+            if (!cleanRepo) {
+                notify(`✅ 지식이 로컬에 안전하게 저장되었습니다.\n\n💡 **Tip:** 깃허브 백업을 원하시면 🧠 메뉴 → '깃허브 동기화'를 눌러주세요!`, 3000);
+                return;
+            }
+            gitExecSafe(['remote', 'add', 'origin', cleanRepo], brainDir);
+        }
+
+        // Detect what branch the remote actually uses (main / master / something else).
+        const remoteBranch = getRemoteDefaultBranch(brainDir);
+        const currentBranch = gitExecSafe(['rev-parse', '--abbrev-ref', 'HEAD'], brainDir)?.trim() || '';
+        if (currentBranch && currentBranch !== remoteBranch) {
+            gitExecSafe(['branch', '-M', remoteBranch], brainDir);
+        }
+
+        // Fetch first so we know whether we're behind.
+        const fetchRes = gitRun(['fetch', 'origin', remoteBranch], brainDir, 30000);
+        if (fetchRes.status !== 0) {
+            // Fetch failure usually = auth or network. Surface details and stop.
+            const err = classifyGitError(fetchRes.stderr);
+            notify(`⚠️ **[GitHub Sync 실패]** ${err.message}`);
+            return;
+        }
+
+        // Try fast-forward only — if local has diverged, do NOT auto-merge.
+        const ffRes = gitRun(['merge', '--ff-only', `origin/${remoteBranch}`], brainDir, 15000);
+        if (ffRes.status !== 0) {
+            const stderrLower = ffRes.stderr.toLowerCase();
+            const diverged = stderrLower.includes('not possible') || stderrLower.includes('non-fast-forward') || stderrLower.includes('refusing');
+            if (diverged) {
+                notify(`⚠️ **[GitHub Sync 보류]** 로컬과 GitHub에 서로 다른 변경사항이 있습니다.\n👉 메뉴 → 🧠 → '깃허브 동기화' 에서 수동으로 병합해주세요. (로컬 파일은 안전합니다)`);
+                return;
+            }
+            // Other merge errors (e.g., no upstream yet on first push) — push will create it.
+        }
+
+        // Push without -f. If push fails, classify and inform the user.
+        const pushRes = gitRun(['push', '-u', 'origin', remoteBranch], brainDir, 60000);
+        if (pushRes.status === 0) {
+            notify(`✅ **[GitHub Sync]** 글로벌 뇌(Second Brain)에 지식이 자동 백업되었습니다!`, 5000);
+        } else {
+            const err = classifyGitError(pushRes.stderr);
+            notify(`⚠️ **[GitHub Sync 실패]** ${err.message}\n\n💡 메뉴 → 🧠 → '깃허브 동기화' 에서 수동 해결을 시도해보세요. (로컬 파일은 안전합니다)`);
+        }
+    } catch (e: any) {
+        console.error('Git Auto-Sync Failed:', e);
+        notify(`⚠️ **[GitHub Sync 오류]** ${e?.message || e}\n(로컬 파일은 안전합니다)`);
+    } finally {
+        _autoSyncRunning = false;
+    }
+}
+
+// ============================================================
 // Extension Activation
 // ============================================================
 
@@ -202,91 +521,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     // ==========================================
-    // Robust Git Auto-Sync Helper
-    // ==========================================
-    const _safeGitAutoSync = (brainDir: string, commitMsg: string, provider: any = null) => {
-        try {
-            const { execSync } = require('child_process');
-            const GIT_TIMEOUT = 15000; // 15초 타임아웃 (credential 무한대기 방지)
-            
-            // Check if git is initialized
-            try { execSync(`git status`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT }); } 
-            catch { return; /* Not a git repo, silently skip */ }
-
-            // remote origin이 등록되어 있는지 확인, 없으면 설정에서 가져와서 등록
-            try {
-                const remoteCheck = execSync(`git remote get-url origin`, { cwd: brainDir, encoding: 'utf-8', timeout: GIT_TIMEOUT }).trim();
-                if (!remoteCheck) throw new Error('empty');
-            } catch {
-                // remote가 없음 → secondBrainRepo 설정에서 가져와서 등록
-                const repoUrl = vscode.workspace.getConfiguration('connectAiLab').get<string>('secondBrainRepo', '');
-                if (!repoUrl) {
-                    // 깃허브 URL이 아예 설정 안 됨 → 로컬에만 커밋하고 리턴
-                    try {
-                        execSync(`git add .`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-                        execSync(`git commit -m "${commitMsg}"`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-                    } catch(e) {}
-                    if (provider && provider.injectSystemMessage) {
-                        setTimeout(() => {
-                            provider.injectSystemMessage(`✅ 지식이 로컬에 안전하게 저장되었습니다.\n\n💡 **Tip:** 깃허브 백업을 원하시면 🧠 메뉴 → '깃허브 동기화'를 눌러주세요!`);
-                        }, 3000);
-                    }
-                    return;
-                }
-                const cleanRepo = repoUrl.replace(/[;&|$()]/g, '');
-                try { execSync(`git remote remove origin`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT }); } catch(e){}
-                execSync(`git remote add origin ${cleanRepo}`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-            }
-
-            execSync(`git branch -M main`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-            execSync(`git add .`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-            
-            try {
-                execSync(`git commit -m "${commitMsg}"`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-            } catch (e) { /* Ignore empty commit */ }
-
-            // Pull with auto-resolve conflicts (prefer local on conflict)
-            try {
-                execSync(`git pull origin main --no-edit --allow-unrelated-histories -s recursive -X ours`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-            } catch (e) {
-                try { execSync(`git merge --abort`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT }); } catch(err){}
-                try {
-                    execSync(`git pull origin master --no-edit --allow-unrelated-histories -s recursive -X ours`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-                } catch (e) {
-                    try { execSync(`git merge --abort`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT }); } catch(err){}
-                }
-            }
-
-            // Push
-            try {
-                execSync(`git push -u origin main`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-                if (provider && provider.injectSystemMessage) {
-                    setTimeout(() => {
-                        provider.injectSystemMessage(`✅ **[GitHub Sync]** 글로벌 뇌(Second Brain)에 지식이 성공적으로 자동 백업되었습니다!`);
-                    }, 5000);
-                }
-            } catch (e) {
-                try {
-                    execSync(`git push -u origin main -f`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
-                    if (provider && provider.injectSystemMessage) {
-                        setTimeout(() => {
-                            provider.injectSystemMessage(`✅ **[GitHub Sync]** 글로벌 뇌에 지식이 강제 동기화 되었습니다!`);
-                        }, 5000);
-                    }
-                } catch(e2) {
-                    if (provider && provider.injectSystemMessage) {
-                        setTimeout(() => {
-                            provider.injectSystemMessage(`⚠️ **[GitHub Sync 보류]** 원격 저장소 권한이 없거나 오프라인 상태입니다. (로컬에는 안전하게 주입되었습니다)`);
-                        }, 5000);
-                    }
-                }
-            }
-        } catch (e) {
-            console.error('Git Auto-Sync Failed:', e);
-        }
-    };
-
-    // ==========================================
     // EZER AI <-> Connect AI Bridge Server (Port 4825)
     // ==========================================
     try {
@@ -308,14 +542,15 @@ export function activate(context: vscode.ExtensionContext) {
                 res.end(JSON.stringify({ status: 'ok', msg: 'Connect AI Bridge Ready', config: getConfig(), brain: { fileCount: brainCount, enabled: provider._brainEnabled } }));
             }
             else if (req.method === 'POST' && req.url === '/api/exam') {
-                let body = '';
-                req.on('data', chunk => body += chunk.toString());
-                req.on('end', async () => {
+                (async () => {
                     try {
+                        const body = await readRequestBody(req);
                         const parsed = JSON.parse(body);
+                        const promptStr = typeof parsed.prompt === 'string' ? parsed.prompt : '자동 접수된 문제';
+
                         // 웹사이트에서 전송된 문제를 Connect AI 채팅창으로 실시간 보고
-                        provider.sendPromptFromExtension(`[A.U 입학시험 수신] ${parsed.prompt || '자동 접수된 문제'}`);
-                        
+                        provider.sendPromptFromExtension(`[A.U 입학시험 수신] ${promptStr}`);
+
                         // 실제 AI 엔진으로 문제를 전달하여 답안을 받아옴
                         const config = getConfig();
                         const isLMStudio = config.ollamaBase.includes('1234') || config.ollamaBase.includes('v1');
@@ -323,48 +558,54 @@ export function activate(context: vscode.ExtensionContext) {
                         if (base.endsWith('/')) base = base.slice(0, -1);
                         if (isLMStudio && !base.endsWith('/v1')) base += '/v1';
                         const targetUrl = isLMStudio ? base + '/chat/completions' : base + '/api/chat';
-                        
+
                         const payload = {
                             model: config.defaultModel,
-                            messages: [{ role: 'user', content: parsed.prompt || '자동 접수된 문제' }],
+                            messages: [{ role: 'user', content: promptStr }],
                             stream: false
                         };
-                        
-                        const ollamaRes = await axios.post(targetUrl, payload, { timeout: getConfig().timeout });
-                        const responseText = isLMStudio 
+
+                        const ollamaRes = await axios.post(targetUrl, payload, { timeout: config.timeout });
+                        const responseText = isLMStudio
                             ? ollamaRes.data.choices?.[0]?.message?.content || ''
                             : ollamaRes.data.message?.content || '';
-                        
+
                         res.writeHead(200, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ success: true, rawOutput: responseText }));
                     } catch (e: any) {
-                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        const status = e.message === 'BODY_TOO_LARGE' ? 413 : 500;
+                        res.writeHead(status, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: e.message }));
                     }
-                });
+                })();
             }
 
             else if (req.method === 'POST' && req.url === '/api/evaluate') {
-                let body = '';
-                req.on('data', chunk => body += chunk.toString());
-                req.on('end', async () => {
+                (async () => {
                     try {
+                        const body = await readRequestBody(req);
                         const parsed = JSON.parse(body);
-                        
+                        const promptStr = typeof parsed.prompt === 'string' ? parsed.prompt : '';
+                        if (!promptStr) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'prompt 필드가 비어 있습니다.' }));
+                            return;
+                        }
+
                         const config = getConfig();
                         const isLMStudio = config.ollamaBase.includes('1234') || config.ollamaBase.includes('v1');
-                        
+
                         let base = config.ollamaBase;
                         if (base.endsWith('/')) base = base.slice(0, -1);
                         if (isLMStudio && !base.endsWith('/v1')) base += '/v1';
-                        
+
                         const targetUrl = isLMStudio ? base + '/chat/completions' : base + '/api/chat';
-                        
-                        const fullPrompt = `당신은 주어진 문제에 대해 오직 정답과 풀이 과정만을 도출하는 AI 에이전트입니다.\n\n[문제]\n${parsed.prompt}\n\n위 문제에 대해 핵심 풀이와 정답만 답변하십시오.`;
-                        
+
+                        const fullPrompt = `당신은 주어진 문제에 대해 오직 정답과 풀이 과정만을 도출하는 AI 에이전트입니다.\n\n[문제]\n${promptStr}\n\n위 문제에 대해 핵심 풀이와 정답만 답변하십시오.`;
+
                         // VSCode 채팅 사이드바에 우아하게 시스템 메시지 인젝션 (마스터에게 실시간 보고)
-                        if((provider as any).injectSystemMessage) {
-                            (provider as any).injectSystemMessage(`**[A.U 벤치마크 문항 수신 완료]**\n\nAI 에이전트가 백그라운드에서 다음 문항을 전력으로 해결하고 있습니다...\n> _"${parsed.prompt.substring(0, 60)}..."_`);
+                        if ((provider as any).injectSystemMessage) {
+                            (provider as any).injectSystemMessage(`**[A.U 벤치마크 문항 수신 완료]**\n\nAI 에이전트가 백그라운드에서 다음 문항을 전력으로 해결하고 있습니다...\n> _"${promptStr.substring(0, 60)}..."_`);
                         }
                         
                         const payload = {
@@ -401,10 +642,11 @@ export function activate(context: vscode.ExtensionContext) {
                         res.writeHead(200, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ rawOutput: responseText }));
                     } catch (e: any) {
-                        res.writeHead(500);
+                        const status = e.message === 'BODY_TOO_LARGE' ? 413 : 500;
+                        res.writeHead(status, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: e.message }));
                     }
-                });
+                })();
             }
             else if (req.method === 'GET' && req.url === '/api/evaluate-history') {
                 (async () => {
@@ -459,12 +701,20 @@ export function activate(context: vscode.ExtensionContext) {
                 })();
             }
             else if (req.method === 'POST' && req.url === '/api/brain-inject') {
-                let body = '';
-                req.on('data', chunk => body += chunk.toString());
-                req.on('end', async () => {
+                (async () => {
                     try {
+                        const body = await readRequestBody(req);
                         const parsed = JSON.parse(body);
-                        
+
+                        const titleRaw = typeof parsed.title === 'string' ? parsed.title : '';
+                        const markdown = typeof parsed.markdown === 'string' ? parsed.markdown : '';
+                        const safeTitle = safeBasename(titleRaw.replace(/[^a-zA-Z0-9가-힣_]/gi, '_'));
+                        if (!safeTitle || !markdown) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'title/markdown 필드가 유효하지 않습니다.' }));
+                            return;
+                        }
+
                         // 폴더 미설정 시 강제 선택 요청
                         let brainDir: string;
                         if (!_isBrainDirExplicitlySet()) {
@@ -478,43 +728,49 @@ export function activate(context: vscode.ExtensionContext) {
                         } else {
                             brainDir = _getBrainDir();
                         }
-                        
+
                         if (!fs.existsSync(brainDir)) {
                             fs.mkdirSync(brainDir, { recursive: true });
                         }
-                        
+
                         // P-Reinforce 아키텍처 호환: 00_Raw 폴더 내 날짜별 분류
                         const today = new Date();
                         const dateStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
                         const datePath = path.join(brainDir, '00_Raw', dateStr);
-                        
+
+                        // Path traversal 방어: datePath가 brainDir 안에 있는지 확인
+                        if (!datePath.startsWith(path.resolve(brainDir) + path.sep)) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'invalid path' }));
+                            return;
+                        }
+
                         fs.mkdirSync(datePath, { recursive: true });
-                        
-                        const safeTitle = parsed.title.replace(/[^a-zA-Z0-9가-힣_]/gi, '_');
                         const filePath = path.join(datePath, `${safeTitle}.md`);
-                        
-                        fs.writeFileSync(filePath, parsed.markdown, 'utf-8');
-                        
+
+                        fs.writeFileSync(filePath, markdown, 'utf-8');
+
                         // 1. VSCode 채팅창에 매트릭스 터미널 UI로 다운로드 시각화 인젝션
                         if ((provider as any).injectSystemMessage) {
-                            (provider as any).injectSystemMessage(`\`\`\`console\n[SYSTEM] MATRIX UPLINK ESTABLISHED...\n[SYSTEM] DOWNLOADING BRAIN PACK: ${parsed.title}\n[SYSTEM] █████████░░░ 90% ...\n[SYSTEM] ████████████ 100% COMPLETE\n[SYSTEM] KNOWLEDGE INJECTED TO LOCAL NEURAL NET\n\`\`\``);
+                            (provider as any).injectSystemMessage(`\`\`\`console\n[SYSTEM] MATRIX UPLINK ESTABLISHED...\n[SYSTEM] DOWNLOADING BRAIN PACK: ${safeTitle}\n[SYSTEM] █████████░░░ 90% ...\n[SYSTEM] ████████████ 100% COMPLETE\n[SYSTEM] KNOWLEDGE INJECTED TO LOCAL NEURAL NET\n\`\`\``);
                         }
-                        
+
                         // 2. AI 입을 빌려 네오의 명대사를 치게 함
                         setTimeout(() => {
-                            provider.sendPromptFromExtension(`[A.U 히든 커맨드: 당신은 방금 마스터로부터 '${parsed.title}' 지식 팩을 뇌에 주입받았습니다. 영화 매트릭스에서 무술을 주입받은 네오처럼 쿨하게 딱 한마디만 하십시오. "나 방금 ${parsed.title} 지식을 마스터했어. (I know ${parsed.title}.) 앞으로 이와 관련된 건 무엇이든 물어봐." 절대 쓸데없는 안부인사나 부가설명을 덧붙이지 마십시오.]`);
+                            provider.sendPromptFromExtension(`[A.U 히든 커맨드: 당신은 방금 마스터로부터 '${safeTitle}' 지식 팩을 뇌에 주입받았습니다. 영화 매트릭스에서 무술을 주입받은 네오처럼 쿨하게 딱 한마디만 하십시오. "나 방금 ${safeTitle} 지식을 마스터했어. (I know ${safeTitle}.) 앞으로 이와 관련된 건 무엇이든 물어봐." 절대 쓸데없는 안부인사나 부가설명을 덧붙이지 마십시오.]`);
                         }, 1500);
-                        
+
                         // [자동 깃허브 푸시 로직 적용]
                         _safeGitAutoSync(brainDir, `Auto-Inject Knowledge [Raw]: ${safeTitle}`, provider);
-                        
+
                         res.writeHead(200, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ success: true, filePath }));
                     } catch (e: any) {
-                        res.writeHead(500);
+                        const status = e.message === 'BODY_TOO_LARGE' ? 413 : 500;
+                        res.writeHead(status, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: e.message }));
                     }
-                });
+                })();
             } else {
                 res.writeHead(404);
                 res.end();
@@ -792,6 +1048,20 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         });
     }
 
+    /** 메모리 누수 방지: 대화 이력 길이 제한 (최근 50건만 유지, 시스템 프롬프트는 보존) */
+    private _pruneHistory() {
+        const MAX_HISTORY = 50;
+        if (this._chatHistory.length > MAX_HISTORY + 1) {
+            const sysIdx = this._chatHistory.findIndex(m => m.role === 'system');
+            const sys = sysIdx >= 0 ? this._chatHistory[sysIdx] : null;
+            const tail = this._chatHistory.slice(-MAX_HISTORY);
+            this._chatHistory = sys ? [sys, ...tail] : tail;
+        }
+        if (this._displayMessages.length > MAX_HISTORY) {
+            this._displayMessages = this._displayMessages.slice(-MAX_HISTORY);
+        }
+    }
+
     private _initHistory() {
         this._chatHistory = [{ role: 'system', content: this._systemPrompt }];
         this._displayMessages = [];
@@ -1037,9 +1307,13 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         for (const file of files) {
             try {
+                if (typeof file?.name !== 'string' || typeof file?.data !== 'string') continue;
                 const fileContent = Buffer.from(file.data, 'base64').toString('utf-8');
-                const safeTitle = file.name.replace(/[^a-zA-Z0-9가-힣_.-]/gi, '_');
-                const filePath = path.join(datePath, safeTitle);
+                const sanitized = file.name.replace(/[^a-zA-Z0-9가-힣_.-]/gi, '_');
+                const safeTitle = safeBasename(sanitized);
+                if (!safeTitle) continue;
+                const filePath = safeResolveInside(datePath, safeTitle);
+                if (!filePath) continue; // path traversal blocked
                 fs.writeFileSync(filePath, fileContent, 'utf-8');
                 injectedTitles.push(safeTitle);
             } catch (err) {
@@ -1079,13 +1353,26 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             let models: string[] = [];
 
             if (isLMStudio) {
-                const res = await axios.get(`${ollamaBase}/v1/models`, { timeout: 3000 });
-                // LM Studio (OpenAI 규격) 응답 파싱
-                models = res.data.data.map((m: any) => m.id);
+                // LM Studio 0.3+ 의 native API는 state 필드를 줘서 로드된 모델만 골라낼 수 있음
+                try {
+                    const nativeRes = await axios.get(`${ollamaBase}/api/v0/models`, { timeout: 3000 });
+                    const items: any[] = nativeRes.data?.data || [];
+                    if (items.length > 0) {
+                        models = items
+                            .filter((m: any) => m.state === 'loaded' && (!m.type || m.type === 'llm' || m.type === 'vlm'))
+                            .map((m: any) => m.id);
+                    }
+                } catch { /* 구버전 LM Studio는 native API 없음 → /v1/models 폴백 */ }
+
+                if (models.length === 0) {
+                    // 폴백: OpenAI 호환 엔드포인트 (전체 모델 목록 — 로드 여부 판별 불가)
+                    const res = await axios.get(`${ollamaBase}/v1/models`, { timeout: 3000 });
+                    models = (res.data?.data || []).map((m: any) => m.id);
+                }
             } else {
+                // Ollama: 설치된 모델 전부 반환
                 const res = await axios.get(`${ollamaBase}/api/tags`, { timeout: 3000 });
-                // Ollama 규격 응답 파싱
-                models = res.data.models.map((m: any) => m.name);
+                models = (res.data?.models || []).map((m: any) => m.name);
             }
 
             if (models.length === 0) {
@@ -1113,11 +1400,11 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const repoLabel = currentRepo ? currentRepo.split('/').pop() : '없음';
         
         const items: any[] = [
-            { label: `📂 내 지식 목록 (${fileCount}개)`, description: '클릭하면 파일 내용 열기', action: 'listFiles' },
-            { label: `🔄 깃허브 동기화`, description: `${repoLabel} — 로컬↔깃허브 양방향 최신화`, action: 'githubSync' },
-            { label: '🔗 깃허브 주소 변경', description: '연결할 지식 저장소 URL 바꾸기', action: 'changeGithub' },
-            { label: '📁 폴더 위치 바꾸기', description: `현재: ${brainDir}`, action: 'changeFolder' },
-            { label: '🌐 지식 지도', description: '내 지식의 연결 관계 시각화', action: 'viewGraph' },
+            { label: `📂 내 지식 목록 (${fileCount}개)`, description: '저장된 지식 파일을 클릭해서 열어보기', action: 'listFiles' },
+            { label: `☁️ GitHub에 백업`, description: `${repoLabel} — 지식을 클라우드와 양방향 동기화`, action: 'githubSync' },
+            { label: '🔗 백업 저장소 주소 변경', description: 'GitHub 저장소 URL 바꾸기', action: 'changeGithub' },
+            { label: '📁 지식 폴더 위치 변경', description: `현재: ${brainDir}`, action: 'changeFolder' },
+            { label: '🌐 지식 네트워크 보기', description: '내 지식들의 연결 관계를 시각화', action: 'viewGraph' },
         ];
 
         const pick = await vscode.window.showQuickPick(items, { placeHolder: '🧠 내 지식 관리' });
@@ -1127,10 +1414,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             case 'listFiles': {
                 if (fileCount === 0) {
                     const action = await vscode.window.showInformationMessage(
-                        '📂 아직 지식이 없습니다. 뇌 폴더에 .md 파일을 넣어주세요!',
-                        '📁 뇌 폴더 열기'
+                        '📂 아직 저장된 지식이 없어요. 지식 폴더에 .md 파일을 넣어주세요!',
+                        '📁 지식 폴더 열기'
                     );
-                    if (action === '📁 뇌 폴더 열기') {
+                    if (action === '📁 지식 폴더 열기') {
                         if (!fs.existsSync(brainDir)) fs.mkdirSync(brainDir, { recursive: true });
                         vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(brainDir));
                     }
@@ -1156,7 +1443,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     canSelectFiles: false,
                     canSelectFolders: true,
                     canSelectMany: false,
-                    openLabel: '이 폴더를 내 뇌로 사용하기',
+                    openLabel: '이 폴더를 내 지식 폴더로 사용',
                     title: '📁 AI에게 읽혀줄 지식(.md 파일)이 들어있는 폴더를 선택하세요'
                 });
                 if (folders && folders.length > 0) {
@@ -1169,23 +1456,22 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     const newGitDir = path.join(selectedPath, '.git');
                     if (!fs.existsSync(newGitDir)) {
                         try {
-                            const { execSync } = require('child_process');
-                            execSync(`git init`, { cwd: selectedPath, stdio: 'ignore' });
-                            execSync(`git branch -M main`, { cwd: selectedPath, stdio: 'ignore' });
-                            
+                            gitExec(['init'], selectedPath);
+                            gitExecSafe(['branch', '-M', 'main'], selectedPath);
+
                             const existingRepo = vscode.workspace.getConfiguration('connectAiLab').get<string>('secondBrainRepo', '');
-                            if (existingRepo) {
-                                const cleanRepo = existingRepo.replace(/[;&|$()]/g, '');
-                                execSync(`git remote add origin ${cleanRepo}`, { cwd: selectedPath, stdio: 'ignore' });
+                            const cleanRepo = existingRepo ? validateGitRemoteUrl(existingRepo) : null;
+                            if (cleanRepo) {
+                                gitExecSafe(['remote', 'add', 'origin', cleanRepo], selectedPath);
                             }
-                        } catch(e) {
+                        } catch (e) {
                             console.warn('Git init on new brain folder failed:', e);
                         }
                     }
                     
                     const newFiles = this._findBrainFiles(selectedPath);
-                    vscode.window.showInformationMessage(`✅ 뇌 폴더가 변경되었습니다! (${newFiles.length}개 지식 파일 발견)`);
-                    this._view.webview.postMessage({ type: 'response', value: `🧠 **뇌 폴더 연결 완료!**\n📁 ${selectedPath}\n📄 ${newFiles.length}개의 지식 파일을 읽어들이고 있습니다.` });
+                    vscode.window.showInformationMessage(`✅ 지식 폴더가 변경되었어요! (${newFiles.length}개 지식 파일 발견)`);
+                    this._view.webview.postMessage({ type: 'response', value: `🧠 **지식 폴더 연결 완료!**\n📁 ${selectedPath}\n📄 ${newFiles.length}개의 지식 파일을 읽고 있어요.` });
                 }
                 break;
             }
@@ -1193,8 +1479,8 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 this._brainEnabled = true;
                 this._ctx.globalState.update('brainEnabled', true);
                 const refreshedFiles = this._findBrainFiles(brainDir);
-                vscode.window.showInformationMessage(`🔄 지식 새로고침 완료! (${refreshedFiles.length}개 파일)`);
-                this._view.webview.postMessage({ type: 'response', value: `🔄 **지식 새로고침 완료!** ${refreshedFiles.length}개 파일이 연결되어 있습니다.\n\n지식 모드가 ON 되었습니다.` });
+                vscode.window.showInformationMessage(`🔄 지식 새로고침 완료! (${refreshedFiles.length}개)`);
+                this._view.webview.postMessage({ type: 'response', value: `🔄 **지식 새로고침 완료!** ${refreshedFiles.length}개 지식이 연결되어 있어요.\n\n지식 모드가 ON 되었습니다.` });
                 break;
             }
             case 'viewGraph': {
@@ -1249,80 +1535,138 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             secondBrainRepo = inputUrl;
         }
 
+        // git이 시스템에 없으면 의미 있는 에러로 즉시 종료
+        if (!isGitAvailable()) {
+            this._view.webview.postMessage({ type: 'error', value: '⚠️ git이 설치되지 않았습니다.\n\n👉 https://git-scm.com/downloads 에서 설치 후 VS Code를 다시 실행해주세요.' });
+            return;
+        }
+
+        // 자동 sync와 동시 실행 방지 (data race로 인한 손상 방지)
+        if (_autoSyncRunning) {
+            this._view.webview.postMessage({ type: 'response', value: '⏳ 백그라운드에서 자동 동기화가 진행 중입니다. 잠시 후 다시 시도해주세요.' });
+            return;
+        }
+        _autoSyncRunning = true;
         this._isSyncingBrain = true;
         const brainDir = _getBrainDir();
         try {
-            this._view.webview.postMessage({ type: 'response', value: '🔄 **지식 동기화 진행 중...** 내 지식 폴더와 깃허브를 가장 최신 상태로 조율하고 있습니다.' });
-            
+            this._view.webview.postMessage({ type: 'response', value: '🔄 **지식 동기화 진행 중...** 내 지식 폴더와 GitHub을 최신 상태로 맞추고 있어요.' });
+
             if (!fs.existsSync(brainDir)) {
                 fs.mkdirSync(brainDir, { recursive: true });
             }
-            
-            const gitDir = path.join(brainDir, '.git');
-            const cleanRepo = secondBrainRepo.replace(/[;&|$()]/g, '');
-            
-            // 기존 폴더(또는 Inject된 파일)가 있더라도 덮어쓰기 위해 git init 방식 사용
-            if (!fs.existsSync(gitDir)) {
-                await execAsync(`git init`, { cwd: brainDir });
-            }
-            
-            // 확실하게 브랜치 이름을 main으로 통일 (기본값이 master인 경우 방지)
-            await execAsync(`git branch -M main`, { cwd: brainDir }).catch(() => {});
-            
-            // 원격 저장소 추가(오류 무시) 후 fetch & 강제 reset (untracked 파일은 보존됨!)
-            await execAsync(`git remote remove origin`, { cwd: brainDir }).catch(() => {});
-            await execAsync(`git remote add origin ${cleanRepo}`, { cwd: brainDir });
-            
-            // 양방향 동기화(2-way Sync): 내 로컬 변경사항 저장 -> 깃허브 변경사항 병합 -> 최종 깃허브 업로드
-            try {
-                // 1. 내 로컬에 새로 추가되거나 수정된 지식이 있다면 커밋 준비
-                await execAsync(`git add .`, { cwd: brainDir });
-                await execAsync(`git commit -m "Auto-sync local brain"`, { cwd: brainDir }).catch(() => {});
-                
-                // 2. 깃허브에 다른 변경사항이 있다면 다운로드해서 합치기 (최신 지식 병합)
-                try {
-                    await execAsync(`git fetch origin`, { cwd: brainDir });
-                    // 원격에 main 브랜치가 있으면 pull
-                    await execAsync(`git pull origin main --no-edit --allow-unrelated-histories -s recursive -X ours`, { cwd: brainDir }).catch(async () => {
-                        // main이 실패하면 master 시도 후 main으로 병합
-                        await execAsync(`git pull origin master --no-edit --allow-unrelated-histories -s recursive -X ours`, { cwd: brainDir });
-                    });
-                } catch {
-                    // 원격 저장소가 완전히 비어있거나 pull 실패 시 무시
-                }
 
-                // 3. 로컬과 깃허브가 완벽히 합쳐진 최종본을 다시 깃허브로 밀어넣기 (클라우드 최신화)
-                await execAsync(`git push -u origin main`, { cwd: brainDir }).catch(async () => {
-                    // 강제 푸시 시도 (원격이 비어있거나 꼬였을 때)
-                    await execAsync(`git push -u origin main -f`, { cwd: brainDir });
-                });
-            } catch (syncErr: any) {
-                const msg = syncErr.message || '';
-                if (msg.includes('Authentication') || msg.includes('403') || msg.includes('404')) {
-                    throw new Error('깃허브 저장소에 접근할 수 없습니다. URL 및 권한을 확인해주세요.');
+            const gitDir = path.join(brainDir, '.git');
+            const cleanRepo = validateGitRemoteUrl(secondBrainRepo);
+            if (!cleanRepo) {
+                throw new Error('지원되지 않는 저장소 URL 형식입니다. 예: https://github.com/사용자/레포지토리');
+            }
+
+            // git이 없으면 init
+            if (!fs.existsSync(gitDir)) {
+                gitExec(['init'], brainDir);
+            }
+
+            ensureBrainGitignore(brainDir);
+            ensureInitialCommit(brainDir);
+
+            // remote 재연결
+            gitExecSafe(['remote', 'remove', 'origin'], brainDir);
+            gitExec(['remote', 'add', 'origin', cleanRepo], brainDir);
+
+            // 1. 로컬 변경사항 커밋
+            gitExecSafe(['add', '.'], brainDir);
+            gitExecSafe(['commit', '-m', 'Auto-sync local brain'], brainDir);
+
+            // 2. 원격 기본 브랜치 감지 + 로컬 브랜치 정렬
+            const remoteBranch = getRemoteDefaultBranch(brainDir);
+            const currentBranch = gitExecSafe(['rev-parse', '--abbrev-ref', 'HEAD'], brainDir)?.trim() || '';
+            if (currentBranch && currentBranch !== remoteBranch) {
+                gitExecSafe(['branch', '-M', remoteBranch], brainDir);
+            }
+
+            // 3. fetch (원격 상태 파악)
+            const fetchRes = gitRun(['fetch', 'origin'], brainDir, 30000);
+            const remoteHasBranch = gitExecSafe(['rev-parse', '--verify', `origin/${remoteBranch}`], brainDir) !== null;
+
+            if (fetchRes.status !== 0 && !(fetchRes.stderr || '').toLowerCase().includes("couldn't find remote ref")) {
+                const err = classifyGitError(fetchRes.stderr);
+                throw new Error(err.message);
+            }
+
+            // 4. 원격에 브랜치가 있으면 fast-forward 시도
+            if (remoteHasBranch) {
+                const ffRes = gitRun(['merge', '--ff-only', `origin/${remoteBranch}`], brainDir, 15000);
+                if (ffRes.status !== 0) {
+                    const stderrLower = ffRes.stderr.toLowerCase();
+                    const diverged = stderrLower.includes('not possible') || stderrLower.includes('non-fast-forward') || stderrLower.includes('refusing');
+                    if (diverged) {
+                        // 사용자에게 충돌 해결 방법 선택권 제공 (silently 덮어쓰지 않음!)
+                        const choice = await vscode.window.showWarningMessage(
+                            '⚠️ 로컬과 GitHub에 서로 다른 변경사항이 있습니다. 어떻게 병합할까요?',
+                            { modal: true },
+                            '🤝 자동 병합 시도 (안전)',
+                            '💪 로컬 우선 (GitHub 변경 무시)',
+                            '☁️ GitHub 우선 (로컬 변경 무시)'
+                        );
+                        if (!choice) {
+                            this._view.webview.postMessage({ type: 'response', value: '⏸️ 동기화가 취소되었습니다. 로컬 파일은 안전하게 보존되었습니다.' });
+                            return;
+                        }
+                        if (choice.startsWith('🤝')) {
+                            const mergeRes = gitRun(['pull', 'origin', remoteBranch, '--no-edit', '--allow-unrelated-histories'], brainDir, 30000);
+                            if (mergeRes.status !== 0) {
+                                gitExecSafe(['merge', '--abort'], brainDir);
+                                throw new Error('자동 병합 실패. 메뉴에서 "로컬 우선" 또는 "GitHub 우선"을 선택해주세요.');
+                            }
+                        } else if (choice.startsWith('💪')) {
+                            gitExec(['pull', 'origin', remoteBranch, '--no-edit', '--allow-unrelated-histories', '-s', 'recursive', '-X', 'ours'], brainDir, 30000);
+                        } else {
+                            gitExec(['fetch', 'origin', remoteBranch], brainDir, 30000);
+                            gitExec(['reset', '--hard', `origin/${remoteBranch}`], brainDir, 15000);
+                        }
+                    }
                 }
-                console.warn('Sync warning:', syncErr);
+            }
+
+            // 5. push (force 없이)
+            const pushRes = gitRun(['push', '-u', 'origin', remoteBranch], brainDir, 60000);
+            if (pushRes.status !== 0) {
+                const err = classifyGitError(pushRes.stderr);
+                if (err.kind === 'rejected') {
+                    // 충돌이 다시 발생한 경우 — force-push는 사용자 명시적 동의 후에만
+                    const force = await vscode.window.showWarningMessage(
+                        '⚠️ Push가 거부되었습니다. GitHub에 더 새로운 변경사항이 있을 수 있습니다.\n\n강제로 덮어쓸까요? (GitHub의 새로운 변경사항이 영구 손실됩니다)',
+                        { modal: true },
+                        '⛔ 취소 (안전)',
+                        '⚠️ 강제 덮어쓰기'
+                    );
+                    if (force === '⚠️ 강제 덮어쓰기') {
+                        const forceRes = gitRun(['push', '-u', 'origin', remoteBranch, '--force-with-lease'], brainDir, 60000);
+                        if (forceRes.status !== 0) {
+                            throw new Error(classifyGitError(forceRes.stderr).message);
+                        }
+                    } else {
+                        throw new Error('동기화가 취소되었습니다. 로컬 파일은 안전합니다.');
+                    }
+                } else {
+                    throw new Error(err.message);
+                }
             }
 
             // 연동 완료 후 자동으로 지식 모드 ON
             this._brainEnabled = true;
             this._ctx.globalState.update('brainEnabled', true);
-            
-            vscode.window.showInformationMessage('✅ 깃허브 지식과 내 지식 폴더가 완벽히 동기화(병합) 되었습니다!');
-            this._view.webview.postMessage({ type: 'response', value: '✅ **지식 동기화 완료!** 이제 내 PC의 폴더와 깃허브가 완벽하게 동일한 최신 상태가 되었습니다.\n\n지금부터 이 지식들을 바탕으로 맥락에 맞는 스마트한 답변을 제공합니다. (지식 모드: 🟢 ON)' });
+
+            vscode.window.showInformationMessage('✅ GitHub과 지식 폴더가 완벽히 동기화되었어요!');
+            this._view.webview.postMessage({ type: 'response', value: `✅ **지식 동기화 완료!** (브랜치: \`${remoteBranch}\`)\n\n이제 내 PC와 GitHub이 동일한 최신 상태입니다.\n\n앞으로 답변할 때 이 지식들을 참고합니다. (지식 모드: 🟢 ON)` });
         } catch (error: any) {
-            // 사용자 친화적 에러 메시지 분기
-            const errMsg = error.message || '';
-            let userMsg = errMsg;
-            if (errMsg.includes('not found') || errMsg.includes('does not exist')) {
-                userMsg = '깃허브 저장소를 찾을 수 없습니다. URL을 다시 확인해주세요.';
-            } else if (errMsg.includes('Authentication') || errMsg.includes('permission')) {
-                userMsg = '깃허브 인증에 실패했습니다. 저장소가 Public(공개)인지 확인해주세요.';
-            }
+            const userMsg = error?.message || '알 수 없는 오류';
             vscode.window.showErrorMessage(`Second Brain 동기화 실패: ${userMsg}`);
-            this._view.webview.postMessage({ type: 'error', value: `⚠️ 동기화 실패: ${userMsg}\n\n💡 **해결 방법:**\n1. 깃허브 저장소가 **Public(공개)** 상태인지 확인\n2. URL 형식: \`https://github.com/사용자이름/저장소이름\`\n3. 새로 만든 빈 저장소도 연결 가능합니다!` });
+            this._view.webview.postMessage({ type: 'error', value: `⚠️ 동기화 실패: ${userMsg}\n\n💡 **자주 발생하는 원인:**\n• Private 저장소인데 Personal Access Token이 설정 안 됨\n• 저장소 URL이 잘못됨 (\`https://github.com/사용자/저장소\` 형식 확인)\n• 네트워크 연결 끊김\n• git이 설치되지 않음\n\n👉 토큰 설정: GitHub Settings → Developer settings → Personal access tokens → Generate new token (repo 권한 부여)` });
         } finally {
             this._isSyncingBrain = false;
+            _autoSyncRunning = false;
         }
     }
 
@@ -1388,24 +1732,29 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const brainDir = _getBrainDir();
         if (!fs.existsSync(brainDir)) return '[ERROR] Second Brain이 동기화되지 않았습니다. 🧠 버튼을 먼저 눌러주세요.';
 
-        // 정확한 경로 매칭 시도
-        const exactPath = path.join(brainDir, filename);
-        if (fs.existsSync(exactPath)) {
+        // Path traversal 방어: brainDir 밖으로 나가는 경로는 차단
+        const exactPath = safeResolveInside(brainDir, filename);
+        if (exactPath && fs.existsSync(exactPath) && fs.statSync(exactPath).isFile()) {
             const content = fs.readFileSync(exactPath, 'utf-8');
             return content.slice(0, 8000); // 파일당 최대 8000자
         }
 
         // 파일명만으로 퍼지 검색 (하위 폴더에 있을 수 있으므로)
+        const baseOnly = path.basename(filename);
         const allFiles = this._findBrainFiles(brainDir);
-        const match = allFiles.find(f => 
-            path.basename(f) === filename || 
-            path.basename(f) === filename + '.md' ||
-            f.includes(filename)
+        const match = allFiles.find(f =>
+            path.basename(f) === baseOnly ||
+            path.basename(f) === baseOnly + '.md' ||
+            (baseOnly.length > 2 && f.includes(baseOnly))
         );
 
         if (match) {
-            const content = fs.readFileSync(match, 'utf-8');
-            return content.slice(0, 8000);
+            // 결과 파일이 brainDir 안인지 한 번 더 확인
+            const resolved = path.resolve(match);
+            if (resolved.startsWith(path.resolve(brainDir) + path.sep)) {
+                const content = fs.readFileSync(resolved, 'utf-8');
+                return content.slice(0, 8000);
+            }
         }
 
         return `[NOT FOUND] "${filename}" 파일을 Second Brain에서 찾을 수 없습니다. 목차(INDEX)를 다시 확인해주세요.`;
@@ -1576,6 +1925,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     let buffer = '';
                     stream.on('data', (chunk: Buffer) => {
                         buffer += chunk.toString();
+                        if (buffer.length > MAX_STREAM_BUFFER) {
+                            // Buffer가 비정상적으로 커짐 → 라인 구분자가 없는 응답일 수 있음. 강제로 자른다.
+                            buffer = buffer.slice(-MAX_STREAM_BUFFER);
+                        }
                         const lines = buffer.split('\n'); buffer = lines.pop() || '';
                         for (const line of lines) {
                             if (!line.trim() || line.trim() === 'data: [DONE]') continue;
@@ -1587,7 +1940,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                                     token = `[API 오류] ${json.error.message || json.error}`;
                                 }
                                 if (token) { aiMessage += token; this._view!.webview.postMessage({ type: 'streamChunk', value: token }); }
-                            } catch {}
+                            } catch { /* malformed JSON line, skip */ }
                         }
                     });
                     stream.on('end', () => resolve());
@@ -1613,6 +1966,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     let buffer = '';
                     stream.on('data', (chunk: Buffer) => {
                         buffer += chunk.toString();
+                        if (buffer.length > MAX_STREAM_BUFFER) buffer = buffer.slice(-MAX_STREAM_BUFFER);
                         const lines = buffer.split('\n'); buffer = lines.pop() || '';
                         for (const line of lines) {
                             if (!line.trim()) continue;
@@ -1623,7 +1977,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                                     token = `[API 오류] ${json.error}`;
                                 }
                                 if (token) { aiMessage += token; this._view!.webview.postMessage({ type: 'streamChunk', value: token }); }
-                            } catch {}
+                            } catch { /* malformed JSON line, skip */ }
                         }
                     });
                     stream.on('end', () => resolve());
@@ -1642,24 +1996,25 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 aiMessage += reportMsg;
             }
             this._displayMessages.push({ text: this._stripActionTags(aiMessage), role: 'ai' });
+            this._pruneHistory();
             this._saveHistory();
 
         } catch (error: any) {
             const { ollamaBase } = getConfig();
             const isLM = ollamaBase.includes('1234') || ollamaBase.includes('v1');
             const targetName = isLM ? "LM Studio" : "Ollama";
-            
+
             let errMsg = '';
             if (error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET') {
-                errMsg = `⚠️ ${targetName} 서버에 연결할 수 없습니다.\n\n**해결 방법:**\n1. ${targetName} 앱을 열고 서버가 켜져 있는지(Start Server) 확인\n2. Settings > 모델 기본 URL이 올바른지 확인 (기본: http://127.0.0.1:${isLM ? '1234' : '11434'})`;
+                errMsg = `⚠️ ${targetName}에 연결할 수 없어요.\n\n**확인할 점:**\n• ${targetName} 앱이 켜져 있나요? (Start Server 클릭)\n• 포트가 ${isLM ? '1234' : '11434'} 맞나요? (설정 > Ollama URL)`;
             } else if (error.response?.status === 400) {
-                errMsg = `⚠️ 모델 요청 오류 (400)\n\n**원인:** 모델 이름이 올바르지 않거나, 컨텍스트 길이 초과\n**해결:** 좌측 모델 선택 드롭다운에서 정확한 모델을 선택하세요.\n${isLM ? '• LM Studio의 경우 모델을 먼저 로드(Load)한 후 시도하세요.' : '• Ollama: ollama list 로 설치된 모델 확인'}`;
+                errMsg = `⚠️ AI가 요청을 이해하지 못했어요.\n\n**해결 방법:**\n• 헤더의 모델 선택 드롭다운에서 다른 모델을 골라보세요\n${isLM ? '• LM Studio에서 모델을 먼저 로드(Load)했는지 확인하세요' : '• 터미널에서 `ollama list`로 설치된 모델을 확인하세요'}`;
             } else if (error.response?.status === 404) {
-                errMsg = `⚠️ 모델을 찾을 수 없습니다 (404)\n\n**원인:** 선택한 모델이 ${targetName}에 로드되지 않았습니다.\n**해결:** ${isLM ? 'LM Studio에서 해당 모델을 먼저 다운로드 후 Load 해주세요.' : 'ollama pull 모델이름 으로 먼저 다운로드하세요.'}`;
+                errMsg = `⚠️ 선택한 모델을 찾을 수 없어요.\n\n**해결 방법:**\n${isLM ? '• LM Studio에서 모델을 다운로드 후 로드(Load)하세요' : '• 터미널에서 `ollama pull 모델이름`으로 먼저 받아주세요'}`;
             } else if (error.response?.status === 413) {
-                errMsg = `⚠️ 컨텍스트 용량 초과 (413)\n\n**해결:** 🧠 지식 모드를 일시적으로 OFF 하거나, + 버튼으로 새 대화를 시작하세요.`;
+                errMsg = `⚠️ 대화가 너무 길어졌어요.\n\n**해결 방법:**\n• 헤더의 + 버튼으로 새 대화를 시작하세요\n• 또는 🧠 지식 모드를 일시 OFF\n${isLM ? '• 또는 LM Studio에서 모델 로드 시 Context Length를 8192 이상으로 늘려주세요' : ''}`;
             } else if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
-                errMsg = `⚠️ AI 응답 시간 초과\n\n모델이 문제를 처리하는 데 시간이 너무 오래 걸렸습니다.\n**해결:** 더 작은 모델을 선택하거나, 질문을 짧게 줄여보세요.`;
+                errMsg = `⚠️ AI 응답이 너무 오래 걸려요.\n\n**해결 방법:**\n• 더 작은 모델로 바꿔보세요 (예: 7B → 3B)\n• 질문을 짧게 줄여보세요\n• 설정에서 Request Timeout을 늘려보세요`;
             } else {
                 errMsg = `⚠️ 오류: ${error.message}`;
             }
@@ -1773,6 +2128,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 let buffer = '';
                 stream.on('data', (chunk: Buffer) => {
                     buffer += chunk.toString();
+                    if (buffer.length > MAX_STREAM_BUFFER) buffer = buffer.slice(-MAX_STREAM_BUFFER);
                     const lines = buffer.split('\n');
                     buffer = lines.pop() || '';
                     for (const line of lines) {
@@ -1866,6 +2222,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     let buffer = '';
                     stream.on('data', (chunk: Buffer) => {
                         buffer += chunk.toString();
+                        if (buffer.length > MAX_STREAM_BUFFER) buffer = buffer.slice(-MAX_STREAM_BUFFER);
                         const lines = buffer.split('\n');
                         buffer = lines.pop() || '';
                         for (const line of lines) {
@@ -1877,7 +2234,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                                 if (json.error) token = `[API 오류] ${json.error.message || json.error}`;
                                 else if (isLMStudio) token = json.choices?.[0]?.delta?.content || '';
                                 else token = json.message?.content || '';
-                                
+
                                 if (token) {
                                     aiMessage += token;
                                     this._view!.webview.postMessage({ type: 'streamChunk', value: token });
@@ -1909,14 +2266,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             // 저장용: AI 응답 기록
             this._displayMessages.push({ text: this._stripActionTags(aiMessage), role: 'ai' });
 
-            // 메모리 누수 방지: 대화 이력 최대 50개 반턱으로 제한
-            const MAX_HISTORY = 50;
-            if (this._chatHistory.length > MAX_HISTORY + 1) {
-                this._chatHistory = [this._chatHistory[0], ...this._chatHistory.slice(-(MAX_HISTORY))];
-            }
-            if (this._displayMessages.length > MAX_HISTORY) {
-                this._displayMessages = this._displayMessages.slice(-MAX_HISTORY);
-            }
+            this._pruneHistory();
             this._saveHistory();
 
         } catch (error: any) {
@@ -1924,11 +2274,16 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             const isLM = ollamaBase.includes('1234') || ollamaBase.includes('v1');
             const targetName = isLM ? "LM Studio" : "Ollama";
             
-            let errMsg = error.code === 'ECONNREFUSED'
-                ? `⚠️ ${targetName} 서버에 연결할 수 없습니다.\n앱에서 로컬 서버가 켜져 있는지(Start Server) 확인해주세요.`
-                : (error.response?.status === 400 || error.response?.status === 413)
-                    ? `⚠️ 컨텍스트 용량 초과: 입력이 너무 깁니다. 새 대화(+)를 시작하거나 질문을 줄여주세요.`
-                    : `⚠️ 오류: ${error.message}`;
+            let errMsg: string;
+            if (error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET') {
+                errMsg = `⚠️ ${targetName}에 연결할 수 없어요.\n앱이 켜져 있고 Start Server가 눌러져 있는지 확인해주세요.`;
+            } else if (error.response?.status === 413) {
+                errMsg = `⚠️ 대화가 너무 길어졌어요.\n• 헤더의 + 버튼으로 새 대화를 시작하세요\n${isLM ? '• 또는 LM Studio에서 모델 로드 시 Context Length를 8192 이상으로 늘려주세요' : ''}`;
+            } else if (error.response?.status === 400) {
+                errMsg = `⚠️ AI가 요청을 이해하지 못했어요. 다른 모델을 선택해보거나, 질문을 짧게 줄여보세요.`;
+            } else {
+                errMsg = `⚠️ 오류: ${error.message}`;
+            }
             
             this._view.webview.postMessage({ type: 'error', value: errMsg });
 
@@ -1941,7 +2296,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                         const parsed = JSON.parse(buf);
                         let detail = parsed.error?.message || parsed.error || '';
                         if (detail.includes('greater than the context length')) {
-                            detail = '프로젝트 정보가 모델의 Context Length(기억력 한계)를 초과합니다.\n💡 해결책: LM Studio에서 모델을 불러올 때 오른쪽 설정 패널에서 [Context Length] 슬라이더를 8192 수정 후 리로드하세요.';
+                            detail = '프로젝트 정보가 모델의 기억 용량(Context Length)을 초과했어요.\n💡 LM Studio에서 모델을 다시 로드할 때, 오른쪽 패널의 [Context Length] 슬라이더를 8192 이상으로 올려주세요.';
                         }
                         if (detail) {
                             this._view!.webview.postMessage({ type: 'error', value: `💡 가이드: ${detail}` });
@@ -1981,7 +2336,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         while ((match = createRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
             let content = match[2].trim();
-            
+
             // Strip markdown code fences if AI accidentally wrapped the content inside the xml
             if (content.startsWith('```')) {
                 const lines = content.split('\n');
@@ -1990,8 +2345,12 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 content = lines.join('\n').trim();
             }
 
+            const absPath = safeResolveInside(rootPath, relPath);
+            if (!absPath) {
+                report.push(`❌ 생성 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
+                continue;
+            }
             try {
-                const absPath = path.resolve(rootPath, relPath);
                 const dir = path.dirname(absPath);
                 if (!fs.existsSync(dir)) {
                     fs.mkdirSync(dir, { recursive: true });
@@ -2007,7 +2366,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         // Open first created file
         if (firstCreatedFile) {
-            vscode.window.showTextDocument(vscode.Uri.file(firstCreatedFile), { preview: false });
+            await vscode.window.showTextDocument(vscode.Uri.file(firstCreatedFile), { preview: false });
         }
 
         // ACTION 2: Edit files
@@ -2015,10 +2374,9 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         while ((match = editRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
             const body = match[2];
-            const absPath = path.resolve(rootPath, relPath);
-
-            if (!fs.existsSync(absPath)) {
-                report.push(`❌ 편집 실패: ${relPath} — 파일이 존재하지 않습니다.`);
+            const absPath = safeResolveInside(rootPath, relPath);
+            if (!absPath) {
+                report.push(`❌ 편집 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
                 continue;
             }
 
@@ -2044,10 +2402,14 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     if (absPath.startsWith(_getBrainDir())) brainModified = true;
                     report.push(`✏️ 편집 완료: ${relPath} (${editCount}건 수정)`);
                     // Open edited file
-                    vscode.window.showTextDocument(vscode.Uri.file(absPath), { preview: false });
+                    await vscode.window.showTextDocument(vscode.Uri.file(absPath), { preview: false });
                 }
             } catch (err: any) {
-                report.push(`❌ 편집 실패: ${relPath} — ${err.message}`);
+                if (err.code === 'ENOENT') {
+                    report.push(`❌ 편집 실패: ${relPath} — 파일이 존재하지 않습니다.`);
+                } else {
+                    report.push(`❌ 편집 실패: ${relPath} — ${err.message}`);
+                }
             }
         }
 
@@ -2055,7 +2417,11 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const deleteRegex = /<(?:delete_file|delete)\s+(?:path|file|name)=['"]?([^'"\/\>]+)['"]?\s*\/?>(?:<\/(?:delete_file|delete)>)?/gi;
         while ((match = deleteRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
-            const absPath = path.resolve(rootPath, relPath);
+            const absPath = safeResolveInside(rootPath, relPath);
+            if (!absPath) {
+                report.push(`❌ 삭제 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
+                continue;
+            }
             try {
                 if (fs.existsSync(absPath)) {
                     const stat = fs.statSync(absPath);
@@ -2078,7 +2444,11 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const readRegex = /<(?:read_file|read)\s+(?:path|file|name)=['"]?([^'">]+)['"]?\s*\/?>(?:<\/(?:read_file|read)>)?/gi;
         while ((match = readRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
-            const absPath = path.resolve(rootPath, relPath);
+            const absPath = safeResolveInside(rootPath, relPath);
+            if (!absPath) {
+                report.push(`❌ 읽기 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
+                continue;
+            }
             try {
                 if (fs.existsSync(absPath)) {
                     const content = fs.readFileSync(absPath, 'utf-8');
@@ -2097,7 +2467,11 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const listRegex = /<(?:list_files|list_dir|ls)\s+(?:path|dir|name)=['"]?([^'"\/\>]*)['"]?\s*\/?>(?:<\/(?:list_files|list_dir|ls)>)?/gi;
         while ((match = listRegex.exec(aiMessage)) !== null) {
             const relDir = match[1].trim() || '.';
-            const absDir = path.resolve(rootPath, relDir);
+            const absDir = safeResolveInside(rootPath, relDir);
+            if (!absDir) {
+                report.push(`❌ 목록 차단: ${relDir} — 워크스페이스 밖으로 나가는 경로입니다.`);
+                continue;
+            }
             try {
                 if (fs.existsSync(absDir) && fs.statSync(absDir).isDirectory()) {
                     const entries = fs.readdirSync(absDir, { withFileTypes: true });
@@ -2174,8 +2548,12 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 const relPath = match[1].trim();
                 const content = match[2].trim();
                 if (relPath && content && relPath.includes('.')) {
+                    const absPath = safeResolveInside(rootPath, relPath);
+                    if (!absPath) {
+                        report.push(`❌ 생성 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
+                        continue;
+                    }
                     try {
-                        const absPath = path.join(rootPath, relPath);
                         const dir = path.dirname(absPath);
                         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
                         fs.writeFileSync(absPath, content, 'utf-8');
@@ -2187,7 +2565,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 }
             }
             if (firstCreatedFile) {
-                vscode.window.showTextDocument(vscode.Uri.file(firstCreatedFile), { preview: false });
+                await vscode.window.showTextDocument(vscode.Uri.file(firstCreatedFile), { preview: false });
             }
         }
 
@@ -2315,6 +2693,9 @@ select:hover,select:focus{border-color:var(--accent);box-shadow:0 0 12px var(--a
 .welcome-title{font-size:22px;font-weight:900;letter-spacing:-1px;color:var(--text-bright);margin-bottom:8px}
 @keyframes gradText{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
 .welcome-sub{color:var(--text-dim);font-size:12px;line-height:1.7;margin-bottom:18px;letter-spacing:-.2px}
+.quick-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:14px;padding:0 10px}
+.qa-btn{background:var(--surface);border:1px solid var(--border2);color:var(--text);padding:7px 12px;border-radius:18px;font-size:11px;cursor:pointer;font-family:inherit;transition:all .25s;backdrop-filter:blur(8px)}
+.qa-btn:hover{color:var(--text-bright);border-color:var(--accent);background:var(--surface2);transform:translateY(-1px);box-shadow:0 4px 12px var(--accent-glow)}
 
 /* LOADING */
 .loading-wrap{padding-left:29px;padding-top:6px;display:flex;align-items:center;gap:10px}
@@ -2390,20 +2771,16 @@ body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;tr
 .msg-body pre .op{color:#89ddff}
 .msg-body pre .type{color:#ffcb6b}
 </style></head><body class="init">
-<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="internetBtn" title="Internet Access: OFF (Click to toggle)" style="opacity: 0.4; filter: grayscale(1);">🌐</button><button class="btn-icon" id="brainBtn" title="Neural Construct 🧠">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="Settings">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="New Chat">+</button></div></div>
+<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="internetBtn" title="인터넷 검색 켜기 (현재: OFF)" style="opacity: 0.4; filter: grayscale(1);">🌐</button><button class="btn-icon" id="brainBtn" title="내 지식 관리">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="설정">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="새 대화 시작">+</button></div></div>
 <div class="thinking-bar" id="thinkingBar"></div>
 <div class="main-view" id="mainView">
 <div class="chat" id="chat">
-<div class="welcome">
-<div class="welcome-logo">\u2726</div>
-<div class="welcome-title">Connect AI</div>
-<div class="welcome-sub">\ubcf4\uc548 \u00b7 \ube44\uc6a9\ucd5c\uc801\ud654 \u00b7 \uc9c0\uc2dd\uc5f0\uacb0<br>\ud504\ub85c\uc81d\ud2b8\ub97c \uc774\ud574\ud558\uace0, \ucf54\ub4dc\ub97c \uc791\uc131\ud558\uace0, \uc2e4\ud589\ud569\ub2c8\ub2e4.</div>
-</div></div>
+<div id="welcomeRoot"></div></div>
 <div class="input-wrap"><div class="input-box">
 <div class="attach-preview" id="attachPreview"></div>
 <textarea id="input" rows="1" placeholder="\ubb34\uc5c7\uc744 \ub9cc\ub4e4\uc5b4 \ub4dc\ub9b4\uae4c\uc694?"></textarea>
 <div class="input-footer"><span class="input-hint">Enter \uc804\uc1a1 \u00b7 Shift+Enter \uc904\ubc14\uafc8</span>
-<div class="input-btns"><button class="attach-btn" id="attachBtn" title="\ud30c\uc77c \ucca8\ubd80">+</button><button class="attach-btn" id="injectLocalBtn" title="Inject Brain Pack \ud83d\udc89">⚡</button><button class="stop-btn" id="stopBtn">\u25a0</button><button class="send-btn" id="sendBtn">\u2191</button></div></div></div>
+<div class="input-btns"><button class="attach-btn" id="attachBtn" title="\ud30c\uc77c \ucca8\ubd80 (AI\uc5d0\uac8c \ubcf4\uc5ec\uc8fc\uae30)">+</button><button class="attach-btn" id="injectLocalBtn" title="\ucca8\ubd80 \ud30c\uc77c\uc744 \ub0b4 \uc9c0\uc2dd\uc5d0 \uc601\uad6c \uc800\uc7a5">⚡</button><button class="stop-btn" id="stopBtn" title="\uc0dd\uc131 \uc911\ub2e8">\u25a0</button><button class="send-btn" id="sendBtn" title="\uc804\uc1a1 (Enter)">\u2191</button></div></div></div>
 <input type="file" id="fileInput" multiple accept="image/*,audio/*,.txt,.md,.csv,.json,.js,.ts,.html,.css,.py,.java,.rs,.go,.yaml,.yml,.xml,.toml" hidden></div>
 </div>
 <script>
@@ -2420,6 +2797,17 @@ modelSel=document.getElementById('modelSel'),newChatBtn=document.getElementById(
 internetBtn=document.getElementById('internetBtn'),attachBtn=document.getElementById('attachBtn'),injectLocalBtn=document.getElementById('injectLocalBtn'),fileInput=document.getElementById('fileInput'),attachPreview=document.getElementById('attachPreview'),
 thinkingBar=document.getElementById('thinkingBar');
 let loader=null,sending=false,pendingFiles=[],internetEnabled=false;
+function welcomeHtml(){
+  return '<div class="welcome"><div class="welcome-logo">✦</div>'
+    + '<div class="welcome-title">안녕하세요! 무엇을 도와드릴까요?</div>'
+    + '<div class="welcome-sub">100% 로컬에서 동작하는 AI 코딩 도우미.<br>인터넷 없이, API 비용 없이, 내 PC에서 바로 실행됩니다.</div>'
+    + '<div class="quick-actions">'
+    + '<button class="qa-btn" data-prompt="현재 열린 파일에 대해 설명해줘">📖 코드 설명해줘</button>'
+    + '<button class="qa-btn" data-prompt="이 프로젝트에서 버그나 개선점을 찾아줘">🐛 버그 찾아줘</button>'
+    + '<button class="qa-btn" data-prompt="이 코드에 대한 단위 테스트를 작성해줘">🧪 테스트 만들어줘</button>'
+    + '<button class="qa-btn" data-prompt="이 코드를 더 깔끔하게 리팩터링해줘">✨ 리팩터링해줘</button>'
+    + '</div></div>';
+}
 
 internetBtn.addEventListener('click', ()=>{
   internetEnabled=!internetEnabled;
@@ -2470,6 +2858,8 @@ input.addEventListener('paste',(e)=>{
 });
 vscode.postMessage({type:'getModels'});
 setTimeout(()=>vscode.postMessage({type:'ready'}),300);
+// Initial welcome render
+const _wr=document.getElementById('welcomeRoot'); if(_wr) _wr.outerHTML=welcomeHtml();
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,150)+'px'});
 function getTime(){return new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}
 function esc(s){const d=document.createElement('div');d.innerText=s;return d.innerHTML}
@@ -2502,8 +2892,27 @@ function addMsg(text,role){
   if(isUser){body.innerText=text}else{body.innerHTML=fmt(text)}
   el.appendChild(head);el.appendChild(body);chat.appendChild(el);chat.scrollTop=chat.scrollHeight;
 }
-function showLoader(){loader=document.createElement('div');loader.className='msg';loader.innerHTML='<div class="msg-head"><div class="av av-ai">\u2726</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div><div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><span class="loading-text">\uc0dd\uac01\ud558\ub294 \uc911...</span></div>';chat.appendChild(loader);chat.scrollTop=chat.scrollHeight;thinkingBar.classList.add('active')}
-function hideLoader(){if(loader&&loader.parentNode)loader.parentNode.removeChild(loader);loader=null;thinkingBar.classList.remove('active')}
+const LOADING_PHASES=[
+  '\ud83d\udcc2 \ud504\ub85c\uc81d\ud2b8 \ud30c\uc77c \uc0b4\ud3b4\ubcf4\ub294 \uc911...',
+  '\ud83e\udde0 \uad00\ub828 \uc815\ubcf4 \ubaa8\uc73c\ub294 \uc911...',
+  '\ud83e\udd14 \ub2f5\ubcc0 \uad6c\uc131\ud558\ub294 \uc911...',
+  '\u270d\ufe0f \ub2f5\ubcc0 \uc791\uc131\ud558\ub294 \uc911...'
+];
+let _loaderTimer=null;
+function showLoader(){
+  loader=document.createElement('div');loader.className='msg';
+  loader.innerHTML='<div class="msg-head"><div class="av av-ai">\u2726</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div><div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><span class="loading-text" id="loadingTextEl">'+LOADING_PHASES[0]+'</span></div>';
+  chat.appendChild(loader);chat.scrollTop=chat.scrollHeight;thinkingBar.classList.add('active');
+  // \ub2e8\uacc4\ubcc4 \uba54\uc2dc\uc9c0 \uc21c\ucc28 \uc804\ud658 (\uc0ac\uc6a9\uc790\uac00 \uc9c4\ud589 \uc0c1\ud669\uc744 \uc778\uc9c0\ud560 \uc218 \uc788\ub3c4\ub85d)
+  let phase=0;
+  if(_loaderTimer) clearInterval(_loaderTimer);
+  _loaderTimer=setInterval(()=>{
+    phase=(phase+1)%LOADING_PHASES.length;
+    const el=document.getElementById('loadingTextEl');
+    if(el) el.textContent=LOADING_PHASES[phase];
+  },2500);
+}
+function hideLoader(){if(_loaderTimer){clearInterval(_loaderTimer);_loaderTimer=null;}if(loader&&loader.parentNode)loader.parentNode.removeChild(loader);loader=null;thinkingBar.classList.remove('active')}
 function setSending(v){sending=v;sendBtn.disabled=v;stopBtn.classList.toggle('visible',v);input.disabled=v;if(!v){input.focus();thinkingBar.classList.remove('active')}}
 function send(){
   const text=input.value.trim();
@@ -2600,7 +3009,7 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
   case 'modelsList':modelSel.innerHTML='';msg.value.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;modelSel.appendChild(o)});break;
   case 'clearChat':
     document.body.classList.add('init');
-    chat.innerHTML='<div class="welcome"><div class="welcome-logo">\u2726</div><div class="welcome-title">Connect AI</div><div class="welcome-sub">\ubcf4\uc548 \u00b7 \ube44\uc6a9\ucd5c\uc801\ud654 \u00b7 \uc9c0\uc2dd\uc5f0\uacb0<br>\ud504\ub85c\uc81d\ud2b8\ub97c \uc774\ud574\ud558\uace0, \ucf54\ub4dc\ub97c \uc791\uc131\ud558\uace0, \uc2e4\ud589\ud569\ub2c8\ub2e4.</div></div>';
+    chat.innerHTML=welcomeHtml();
     break;
   case 'restoreMessages':
     chat.innerHTML='';
@@ -2609,7 +3018,7 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
       msg.value.forEach(m=>addMsg(m.text,m.role));
     } else {
       document.body.classList.add('init');
-      chat.innerHTML='<div class="welcome"><div class="welcome-logo">\u2726</div><div class="welcome-title">Connect AI</div><div class="welcome-sub">\ubcf4\uc548 \u00b7 \ube44\uc6a9\ucd5c\uc801\ud654 \u00b7 \uc9c0\uc2dd\uc5f0\uacb0<br>\ud504\ub85c\uc81d\ud2b8\ub97c \uc774\ud574\ud558\uace0, \ucf54\ub4dc\ub97c \uc791\uc131\ud558\uace0, \uc2e4\ud589\ud569\ub2c8\ub2e4.</div></div>';
+      chat.innerHTML=welcomeHtml();
     }
     break;
   case 'focusInput':input.focus();break;

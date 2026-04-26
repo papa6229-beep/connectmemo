@@ -1165,7 +1165,7 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
     <div class="row"><div class="swatch" style="background:#B4B4C8;opacity:.5"></div><span>같은 태그</span></div>
     <div class="row synapse" style="margin-top:6px"><div class="swatch" style="background:#5DE0E6"></div><span>🧠 검색 중</span></div>
     <div class="row"><div class="swatch" style="background:#FFB266"></div><span>이미 사용함</span></div>
-    <div class="row" style="margin-top:8px;font-size:10px;color:#5a5d68;line-height:1.55"><span>💡 클릭 → 인접만 강조<br>&nbsp;&nbsp;&nbsp;&nbsp;더블클릭 → 파일 열기<br>&nbsp;&nbsp;&nbsp;&nbsp;빈 곳 클릭 → 해제<br>&nbsp;&nbsp;&nbsp;&nbsp;<kbd style="background:#1a1a1f;padding:1px 5px;border-radius:3px;border:1px solid #2a2a30;font-family:SF Mono,monospace;font-size:9px">/</kbd> → 검색</span></div>
+    <div class="row" style="margin-top:8px;font-size:10px;color:#5a5d68;line-height:1.55"><span>💡 클릭 → 인접만 강조<br>&nbsp;&nbsp;&nbsp;&nbsp;더블클릭 → 파일 열기<br>&nbsp;&nbsp;&nbsp;&nbsp;빈 곳 클릭 → 해제<br>&nbsp;&nbsp;&nbsp;&nbsp;빈 곳 더블클릭 → 전체 줌<br>&nbsp;&nbsp;&nbsp;&nbsp;<kbd style="background:#1a1a1f;padding:1px 5px;border-radius:3px;border:1px solid #2a2a30;font-family:SF Mono,monospace;font-size:9px">/</kbd> → 검색</span></div>
   </div>
   <div id="empty">
     <div class="big">📂 아직 지식이 없어요</div>
@@ -1394,7 +1394,16 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
       }
     });
 
+    let lastBgClickT = 0;
     Graph.onBackgroundClick(() => {
+      const now = Date.now();
+      if (now - lastBgClickT < 400) {
+        // Background double-click → reset zoom to fit the whole graph
+        Graph.zoomToFit(800, 60);
+        lastBgClickT = 0;
+        return;
+      }
+      lastBgClickT = now;
       if (searchActive) closeSearch();
       else if (stickyNode) unpinNode();
     });
@@ -1756,8 +1765,18 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
             });
           }
           hideThinkingOverlay();
-          // Re-fit so user sees the full thinking trail
-          setTimeout(() => Graph.zoomToFit(1000, 80), 400);
+          // Auto-frame the cluster of cited notes — "this answer came from
+          // these notes" — so the trail isn't lost in a sea of unrelated nodes.
+          // Falls back to full-graph fit when nothing was cited.
+          setTimeout(() => {
+            if (thinkingDoneOrder.size > 0) {
+              try {
+                Graph.zoomToFit(1200, 120, n => thinkingDoneOrder.has(n.id));
+              } catch(e){ Graph.zoomToFit(1000, 80); }
+            } else {
+              Graph.zoomToFit(1000, 80);
+            }
+          }, 400);
           break;
         }
         case 'highlight_node': {

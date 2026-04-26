@@ -207,33 +207,59 @@ export function activate(context: vscode.ExtensionContext) {
     const _safeGitAutoSync = (brainDir: string, commitMsg: string, provider: any = null) => {
         try {
             const { execSync } = require('child_process');
+            const GIT_TIMEOUT = 15000; // 15초 타임아웃 (credential 무한대기 방지)
             
             // Check if git is initialized
-            try { execSync(`git status`, { cwd: brainDir, stdio: 'ignore' }); } 
+            try { execSync(`git status`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT }); } 
             catch { return; /* Not a git repo, silently skip */ }
 
-            execSync(`git branch -M main`, { cwd: brainDir, stdio: 'ignore' });
-            execSync(`git add .`, { cwd: brainDir, stdio: 'ignore' });
+            // remote origin이 등록되어 있는지 확인, 없으면 설정에서 가져와서 등록
+            try {
+                const remoteCheck = execSync(`git remote get-url origin`, { cwd: brainDir, encoding: 'utf-8', timeout: GIT_TIMEOUT }).trim();
+                if (!remoteCheck) throw new Error('empty');
+            } catch {
+                // remote가 없음 → secondBrainRepo 설정에서 가져와서 등록
+                const repoUrl = vscode.workspace.getConfiguration('connectAiLab').get<string>('secondBrainRepo', '');
+                if (!repoUrl) {
+                    // 깃허브 URL이 아예 설정 안 됨 → 로컬에만 커밋하고 리턴
+                    try {
+                        execSync(`git add .`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
+                        execSync(`git commit -m "${commitMsg}"`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
+                    } catch(e) {}
+                    if (provider && provider.injectSystemMessage) {
+                        setTimeout(() => {
+                            provider.injectSystemMessage(`✅ 지식이 로컬에 안전하게 저장되었습니다.\n\n💡 **Tip:** 깃허브 백업을 원하시면 🧠 메뉴 → '깃허브 동기화'를 눌러주세요!`);
+                        }, 3000);
+                    }
+                    return;
+                }
+                const cleanRepo = repoUrl.replace(/[;&|$()]/g, '');
+                try { execSync(`git remote remove origin`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT }); } catch(e){}
+                execSync(`git remote add origin ${cleanRepo}`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
+            }
+
+            execSync(`git branch -M main`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
+            execSync(`git add .`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
             
             try {
-                execSync(`git commit -m "${commitMsg}"`, { cwd: brainDir, stdio: 'ignore' });
+                execSync(`git commit -m "${commitMsg}"`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
             } catch (e) { /* Ignore empty commit */ }
 
             // Pull with auto-resolve conflicts (prefer local on conflict)
             try {
-                execSync(`git pull origin main --no-edit --allow-unrelated-histories -s recursive -X ours`, { cwd: brainDir, stdio: 'ignore' });
+                execSync(`git pull origin main --no-edit --allow-unrelated-histories -s recursive -X ours`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
             } catch (e) {
-                try { execSync(`git merge --abort`, { cwd: brainDir, stdio: 'ignore' }); } catch(err){}
+                try { execSync(`git merge --abort`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT }); } catch(err){}
                 try {
-                    execSync(`git pull origin master --no-edit --allow-unrelated-histories -s recursive -X ours`, { cwd: brainDir, stdio: 'ignore' });
+                    execSync(`git pull origin master --no-edit --allow-unrelated-histories -s recursive -X ours`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
                 } catch (e) {
-                    try { execSync(`git merge --abort`, { cwd: brainDir, stdio: 'ignore' }); } catch(err){}
+                    try { execSync(`git merge --abort`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT }); } catch(err){}
                 }
             }
 
             // Push
             try {
-                execSync(`git push -u origin main`, { cwd: brainDir, stdio: 'ignore' });
+                execSync(`git push -u origin main`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
                 if (provider && provider.injectSystemMessage) {
                     setTimeout(() => {
                         provider.injectSystemMessage(`✅ **[GitHub Sync]** 글로벌 뇌(Second Brain)에 지식이 성공적으로 자동 백업되었습니다!`);
@@ -241,8 +267,12 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             } catch (e) {
                 try {
-                    // 원격 리포지토리가 비어있거나 push가 실패할 경우 강제 푸시 시도
-                    execSync(`git push -u origin main -f`, { cwd: brainDir, stdio: 'ignore' });
+                    execSync(`git push -u origin main -f`, { cwd: brainDir, stdio: 'ignore', timeout: GIT_TIMEOUT });
+                    if (provider && provider.injectSystemMessage) {
+                        setTimeout(() => {
+                            provider.injectSystemMessage(`✅ **[GitHub Sync]** 글로벌 뇌에 지식이 강제 동기화 되었습니다!`);
+                        }, 5000);
+                    }
                 } catch(e2) {
                     if (provider && provider.injectSystemMessage) {
                         setTimeout(() => {
@@ -977,10 +1007,21 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     private async _handleInjectLocalBrain(files: any[]) {
         if (!this._view) return;
         
-        const brainDir = _getBrainDir();
+        // 폴더 미설정 시 먼저 폴더 선택 강제
+        let brainDir: string;
+        if (!_isBrainDirExplicitlySet()) {
+            const ensured = await _ensureBrainDir();
+            if (!ensured) {
+                vscode.window.showWarningMessage("📁 지식을 저장할 폴더를 먼저 선택해주세요!");
+                return;
+            }
+            brainDir = ensured;
+        } else {
+            brainDir = _getBrainDir();
+        }
+        
         if (!fs.existsSync(brainDir)) {
-            vscode.window.showErrorMessage("Second Brain이 연동되지 않았습니다. 채팅창 ⚙버튼이나 헤더에서 🧠버튼을 누른 후 깃허브 레포지토리를 먼저 연동해주세요.");
-            return;
+            fs.mkdirSync(brainDir, { recursive: true });
         }
         const today = new Date();
         const dateStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
@@ -1123,6 +1164,25 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     await vscode.workspace.getConfiguration('connectAiLab').update('localBrainPath', selectedPath, vscode.ConfigurationTarget.Global);
                     this._brainEnabled = true;
                     this._ctx.globalState.update('brainEnabled', true);
+                    
+                    // 새 폴더에 git이 없으면 자동 초기화 + 기존 깃허브 URL로 remote 재연결
+                    const newGitDir = path.join(selectedPath, '.git');
+                    if (!fs.existsSync(newGitDir)) {
+                        try {
+                            const { execSync } = require('child_process');
+                            execSync(`git init`, { cwd: selectedPath, stdio: 'ignore' });
+                            execSync(`git branch -M main`, { cwd: selectedPath, stdio: 'ignore' });
+                            
+                            const existingRepo = vscode.workspace.getConfiguration('connectAiLab').get<string>('secondBrainRepo', '');
+                            if (existingRepo) {
+                                const cleanRepo = existingRepo.replace(/[;&|$()]/g, '');
+                                execSync(`git remote add origin ${cleanRepo}`, { cwd: selectedPath, stdio: 'ignore' });
+                            }
+                        } catch(e) {
+                            console.warn('Git init on new brain folder failed:', e);
+                        }
+                    }
+                    
                     const newFiles = this._findBrainFiles(selectedPath);
                     vscode.window.showInformationMessage(`✅ 뇌 폴더가 변경되었습니다! (${newFiles.length}개 지식 파일 발견)`);
                     this._view.webview.postMessage({ type: 'response', value: `🧠 **뇌 폴더 연결 완료!**\n📁 ${selectedPath}\n📄 ${newFiles.length}개의 지식 파일을 읽어들이고 있습니다.` });

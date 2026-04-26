@@ -2,7 +2,7 @@
   "name": "connect-ai-lab",
   "displayName": "Connect AI",
   "description": "100% 로컬 AI 코딩 에이전트 — 파일 생성, 코드 편집, 터미널 실행을 오프라인으로. Ollama + Gemma/Llama/DeepSeek 지원.",
-  "version": "2.2.16",
+  "version": "2.2.17",
   "publisher": "connectailab",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -115,6 +115,11 @@
           "type": "string",
           "default": "",
           "description": "📁 내 지식 폴더 경로 — 내 PC의 특정 폴더(예: 바탕화면/MyBrain)를 지정하면, 그 안의 .md 파일들이 AI의 지식이 됩니다. 비워두면 기본 폴더를 자동 생성합니다."
+        },
+        "connectAiLab.secondBrainRepo": {
+          "type": "string",
+          "default": "",
+          "description": "🔗 깃허브 저장소 URL — 내 지식을 클라우드에 백업하고 동기화할 깃허브 저장소 주소입니다. (예: https://github.com/사용자/memory)"
         }
       }
     }

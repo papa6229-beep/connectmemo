@@ -1047,11 +1047,12 @@ function buildKnowledgeGraph(brainDir: string): BrainGraph {
 }
 
 async function showBrainNetwork(_context: vscode.ExtensionContext) {
+    const assetsRoot = vscode.Uri.file(path.join(_context.extensionPath, 'assets'));
     const panel = vscode.window.createWebviewPanel(
         'brainTopology',
         'Neural Construct (Brain)',
         vscode.ViewColumn.One,
-        { enableScripts: true, retainContextWhenHidden: true }
+        { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [assetsRoot] }
     );
 
     const brainDir = _getBrainDir();
@@ -1077,11 +1078,11 @@ async function showBrainNetwork(_context: vscode.ExtensionContext) {
         links: graph.links
     });
 
-    panel.webview.html = _RENDER_GRAPH_HTML(graphJson, isEmpty, _context.extensionPath);
+    panel.webview.html = _RENDER_GRAPH_HTML(graphJson, isEmpty, _context.extensionPath, panel.webview.cspSource);
 }
 
 /** Returns the full graph webview HTML. Reused by showBrainNetwork + ThinkingPanel. */
-function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, extensionPath?: string): string {
+function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, extensionPath: string, cspSource: string): string {
     // force-graph 라이브러리를 로컬 번들에서 인라인으로 로드 (CDN 차단 문제 해결)
     let forceGraphScript = '';
     try {
@@ -1097,6 +1098,7 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, extensionPath?:
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} data:; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline'; font-src ${cspSource};">
   <title>Connect AI — 지식 네트워크</title>
   <style>
     body { margin: 0; padding: 0; background: #131419; overflow: hidden; width: 100vw; height: 100vh; font-family: 'SF Pro Display', -apple-system, sans-serif; color: #d8d9de; }
@@ -1697,16 +1699,17 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const brainDir = _getBrainDir();
         const graph = buildKnowledgeGraph(brainDir);
 
+        const assetsRoot = vscode.Uri.file(path.join(this._ctx.extensionPath, 'assets'));
         const panel = vscode.window.createWebviewPanel(
             'connectAiThinking',
             '🎬 Thinking Mode — AI 사고 시각화',
             { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-            { enableScripts: true, retainContextWhenHidden: true }
+            { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [assetsRoot] }
         );
 
         // Inject the same graph HTML used by showBrainNetwork — it already listens
         // for thinking events via window.message and is fully reusable.
-        panel.webview.html = this._buildThinkingHtml(graph);
+        panel.webview.html = this._buildThinkingHtml(graph, panel.webview.cspSource);
 
         panel.webview.onDidReceiveMessage(async (msg) => {
             if (msg.type === 'graph_ready') {
@@ -1845,7 +1848,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     }
 
     /** Build the same HTML that showBrainNetwork uses — kept inline for reuse. */
-    private _buildThinkingHtml(graph: BrainGraph): string {
+    private _buildThinkingHtml(graph: BrainGraph, cspSource: string): string {
         const graphJson = JSON.stringify({
             nodes: graph.nodes.map(n => ({
                 id: n.id, name: n.name, folder: n.folder, tags: n.tags,
@@ -1854,7 +1857,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             links: graph.links
         });
         const isEmpty = graph.nodes.length === 0;
-        return _RENDER_GRAPH_HTML(graphJson, isEmpty, this._ctx.extensionPath);
+        return _RENDER_GRAPH_HTML(graphJson, isEmpty, this._ctx.extensionPath, cspSource);
     }
 
     /** 메모리 누수 방지: 대화 이력 길이 제한 (최근 50건만 유지, 시스템 프롬프트는 보존) */

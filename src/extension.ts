@@ -402,6 +402,846 @@ CRITICAL RULES:
 10. The [WORKSPACE INFO] section tells you exactly which folder is open and what files exist. USE this information.`;
 
 // ============================================================
+// 1인 기업 모드 — Multi-Agent Corporate System
+// ------------------------------------------------------------
+// CEO + 5 specialist agents share a "Company" subtree under
+// the existing brain folder:
+//   ~/.connect-ai-brain/Company/
+//     _shared/        ← 공동 목표, 회사 정체성 (모두 매번 읽음)
+//     _agents/<id>/   ← 각 에이전트 개인 메모리 (자기만 읽고 씀)
+//     sessions/<ts>/  ← 세션별 산출물 + CEO 종합 보고
+// ============================================================
+interface AgentDef {
+  id: string;
+  name: string;
+  role: string;
+  emoji: string;
+  color: string;
+  specialty: string;
+}
+
+const AGENTS: Record<string, AgentDef> = {
+  ceo: {
+    id: 'ceo',
+    name: 'CEO',
+    role: 'Chief Executive Agent',
+    emoji: '🧭',
+    color: '#F8FAFC',
+    specialty: '오케스트레이션, 작업 분해, 종합 판단, 다음 액션 결정'
+  },
+  youtube: {
+    id: 'youtube',
+    name: 'YouTube',
+    role: 'Head of YouTube',
+    emoji: '📺',
+    color: '#FF4444',
+    specialty: '유튜브 채널 운영, 영상 기획서(제목·후크·구조), 트렌드 분석, 썸네일 브리프, 업로드 메타데이터, 시청자 유지율 전략'
+  },
+  instagram: {
+    id: 'instagram',
+    name: 'Instagram',
+    role: 'Head of Instagram',
+    emoji: '📷',
+    color: '#E1306C',
+    specialty: '인스타그램 릴스/피드 콘셉트, 캡션, 해시태그 전략, 게시 시간, 스토리, 팔로워 인게이지먼트'
+  },
+  designer: {
+    id: 'designer',
+    name: 'Designer',
+    role: 'Lead Designer',
+    emoji: '🎨',
+    color: '#A78BFA',
+    specialty: '브랜드 디자인 브리프(컬러·타이포·레퍼런스), 썸네일 컨셉 3안, 비주얼 시스템, 디자인 가이드'
+  },
+  developer: {
+    id: 'developer',
+    name: 'Developer',
+    role: 'Lead Engineer',
+    emoji: '💻',
+    color: '#22D3EE',
+    specialty: '코드, 자동화 스크립트, API 통합, 웹사이트/봇, 데이터 파이프라인, 디버깅'
+  },
+  business: {
+    id: 'business',
+    name: 'Business',
+    role: 'Head of Business',
+    emoji: '💰',
+    color: '#F5C518',
+    specialty: '수익화 모델, 가격 전략, 시장·경쟁 분석, ROI/KPI 설계, 비즈니스 의사결정'
+  },
+  secretary: {
+    id: 'secretary',
+    name: 'Secretary',
+    role: 'Personal Assistant',
+    emoji: '📱',
+    color: '#84CC16',
+    specialty: '일정·할 일 관리, 다른 에이전트 작업 요약·텔레그램 보고, 데일리 브리핑, 알림'
+  },
+  editor: {
+    id: 'editor',
+    name: 'Editor',
+    role: 'Video & Content Editor',
+    emoji: '✂️',
+    color: '#F472B6',
+    specialty: '영상 편집 디렉션, 컷 구성, B-roll 제안, 자막·타이틀, 스크립트 다듬기, 콘텐츠 폴리싱'
+  },
+  writer: {
+    id: 'writer',
+    name: 'Writer',
+    role: 'Copywriter',
+    emoji: '✍️',
+    color: '#FBBF24',
+    specialty: '카피라이팅, 영상 스크립트 초안, 인스타 캡션, 블로그 글, 메일 톤앤매너, 후크 작성'
+  },
+  researcher: {
+    id: 'researcher',
+    name: 'Researcher',
+    role: 'Trend & Data Researcher',
+    emoji: '🔍',
+    color: '#60A5FA',
+    specialty: '트렌드 리서치, 경쟁사 분석, 데이터 수집·요약, 인용 자료 정리, 사실 확인'
+  }
+};
+
+const AGENT_ORDER = ['ceo', 'youtube', 'instagram', 'designer', 'developer', 'business', 'secretary', 'editor', 'writer', 'researcher'];
+const SPECIALIST_IDS = ['youtube', 'instagram', 'designer', 'developer', 'business', 'secretary', 'editor', 'writer', 'researcher'];
+
+interface RoomDef {
+  id: string;
+  name: string;
+  emoji: string;
+  agents: string[];
+  homePos: Record<string, { x: number; y: number }>;
+  // LimeZu Modern Interiors 6_Home_Designs subfolder + layer file prefix.
+  // Empty layerFolder = use the bundled `assets/pixel/interior/{floor,furniture}.png`.
+  layerFolder: string;
+  layerPrefix: string;
+  // Optional ambient animations layered on top of the room. Each entry refers
+  // to a GIF in LimeZu 3_Animated_objects/48x48/gif/ — `gifName` is the file
+  // name without the `animated_` prefix and without the `_48x48.gif` suffix
+  // (so `TV_reportage`, `coffee`, `control_room_server` etc.). x/y are
+  // percentages of the bg image (anchored at the GIF center). w is the GIF
+  // width as % of the bg image (defaults to ~9% which matches one 48px tile
+  // on a 528px-wide design).
+  animations?: Array<{ gifName: string; x: number; y: number; w?: number }>;
+}
+
+// Phase-1 connected-office layout — each agent has ONE primary room (their
+// "desk"). Auto-walk and visitLocationStep can take them anywhere; this map
+// defines where they default to when idle and after work completes.
+const PRIMARY_ROOM: Record<string, string> = {
+  ceo:        'ceo-office',
+  secretary:  'ceo-office',
+  youtube:    'media-studio',
+  instagram:  'media-studio',
+  designer:   'design-studio',
+  developer:  'dev-pit',
+  business:   'dev-pit',
+  editor:     'media-studio',
+  writer:     'design-studio',
+  researcher: 'lounge',
+};
+
+const ROOMS: RoomDef[] = [
+  {
+    id: 'media-studio',
+    name: '미디어룸',
+    emoji: '📺',
+    agents: ['youtube', 'instagram'],
+    homePos: {
+      youtube:   { x: 32, y: 60 },
+      instagram: { x: 68, y: 60 },
+    },
+    layerFolder: 'TV_Studio_Designs',
+    layerPrefix: 'Tv_Studio_Design',
+    animations: [
+      { gifName: 'TV_reportage', x: 28, y: 14, w: 11 },
+      { gifName: 'TV_reportage', x: 50, y: 14, w: 11 },
+      { gifName: 'TV_reportage', x: 72, y: 14, w: 11 },
+      { gifName: 'coffee', x: 12, y: 88, w: 9 },
+    ],
+  },
+  {
+    id: 'ceo-office',
+    name: '대표방',
+    emoji: '🧭',
+    agents: ['ceo', 'secretary'],
+    homePos: {
+      ceo:       { x: 40, y: 55 },
+      secretary: { x: 68, y: 65 },
+    },
+    layerFolder: 'Generic_Home_Designs',
+    layerPrefix: 'Generic_Home_1',
+    animations: [
+      { gifName: 'cuckoo_clock', x: 80, y: 18, w: 7 },
+      { gifName: 'old_tv', x: 18, y: 30, w: 10 },
+    ],
+  },
+  {
+    id: 'design-studio',
+    name: '디자인 스튜디오',
+    emoji: '🎨',
+    agents: ['designer'],
+    homePos: {
+      designer:  { x: 50, y: 60 },
+    },
+    layerFolder: 'Museum_Designs',
+    layerPrefix: 'Museum_room_1',
+  },
+  {
+    id: 'dev-pit',
+    name: '개발실',
+    emoji: '💻',
+    agents: ['developer', 'business'],
+    homePos: {
+      developer: { x: 35, y: 60 },
+      business:  { x: 68, y: 60 },
+    },
+    layerFolder: 'Museum_Designs',
+    layerPrefix: 'Museum_room_2',
+    animations: [
+      { gifName: 'control_room_screens', x: 30, y: 22, w: 13 },
+      { gifName: 'control_room_server', x: 70, y: 22, w: 9 },
+      { gifName: 'control_room_facebook_scrolling', x: 50, y: 35, w: 11 },
+    ],
+  },
+  {
+    id: 'lounge',
+    name: '휴게실',
+    emoji: '🛋️',
+    agents: ['ceo', 'youtube', 'instagram', 'designer', 'developer', 'business', 'secretary'],
+    homePos: {
+      ceo:       { x: 30, y: 50 },
+      youtube:   { x: 50, y: 45 },
+      instagram: { x: 70, y: 50 },
+      designer:  { x: 25, y: 75 },
+      developer: { x: 50, y: 75 },
+      business:  { x: 75, y: 75 },
+      secretary: { x: 50, y: 88 },
+    },
+    layerFolder: 'Condominium_Designs',
+    layerPrefix: 'Condominium_Design',
+    animations: [
+      { gifName: 'TV_reportage', x: 50, y: 16, w: 12 },
+      { gifName: 'coffee', x: 12, y: 60, w: 9 },
+      { gifName: 'coffee', x: 88, y: 60, w: 9 },
+    ],
+  },
+  {
+    id: 'tea-room',
+    name: '다실',
+    emoji: '🍵',
+    agents: ['ceo', 'secretary'],
+    homePos: {
+      ceo:       { x: 45, y: 55 },
+      secretary: { x: 65, y: 65 },
+    },
+    layerFolder: 'Japanese_Interiors_Home_Designs',
+    layerPrefix: 'Japanese_Home_1',
+  },
+];
+
+const DEFAULT_ROOM_ID = 'media-studio';
+
+// ───────────────────────────────────────────────────────────────────────────
+// Connected campus world (Phase B-1 — multi-zone layout).
+//
+// One big virtual campus: Office building + Cafe + outdoor Garden, all on
+// a single coord space so characters walk freely between zones. Each
+// "building" is a pre-built bg PNG/GIF placed at a fixed pixel position in
+// the world. Decorations (trees, flowers, benches) are scattered tiles on
+// the garden grass.
+// ───────────────────────────────────────────────────────────────────────────
+interface DeskPos { x: number; y: number; }
+interface WorldZone { id: string; name: string; emoji: string; x: number; y: number; }
+interface BuildingDef {
+  id: string;
+  layer1: string;
+  layer2?: string;
+  x: number; y: number;       // world pixel position (top-left)
+  width: number; height: number;
+}
+interface DecorDef {
+  file: string;               // path under assets/pixel/office/garden/
+  x: number; y: number;       // world % (anchor at bottom-center for natural layering)
+  w?: number;                 // optional % width override (defaults to 48px)
+}
+interface AgentDeskRef {
+  building: string;
+  localX: number;             // % of building width
+  localY: number;             // % of building height
+}
+
+const WORLD_LAYOUT = {
+  // World canvas — characters use % of these dims as their coordinate space.
+  worldWidth: 1400,
+  worldHeight: 700,
+
+  // Pre-built scene PNGs/GIFs anchored at fixed world pixel positions.
+  // Single office building — cafe + garden were rolled back. User will add
+  // back / build new maps themselves.
+  buildings: [
+    {
+      id: 'office', layer1: 'Office_Design_2.gif',
+      x: 560, y: 90, width: 512, height: 544,
+    },
+  ] as BuildingDef[],
+
+  // Walkways — empty for now. Add back once buildings are placed and paths make sense.
+  paths: [],
+
+  // Garden decorations — empty (rolled back).
+  decorations: [] as DecorDef[],
+
+  // Each agent's primary desk — building-local % coords.
+  // Top cubicle row chairs at office y≈30%; agents stand in aisle at y=38%.
+  // Middle row chairs at y≈47%; agents stand at y=58%.
+  // CEO's private office has a baked-in character at the desk — our CEO
+  // stands in the open area of the room (right side, not overlapping).
+  agents: {
+    youtube:   { building: 'office', localX: 28, localY: 38 },
+    instagram: { building: 'office', localX: 46, localY: 38 },
+    designer:  { building: 'office', localX: 64, localY: 38 },
+    business:  { building: 'office', localX: 82, localY: 38 },
+    developer: { building: 'office', localX: 28, localY: 58 },
+    secretary: { building: 'office', localX: 82, localY: 58 },
+    ceo:       { building: 'office', localX: 88, localY: 88 },
+    editor:    { building: 'office', localX: 18, localY: 78 },
+    writer:    { building: 'office', localX: 50, localY: 78 },
+    researcher:{ building: 'office', localX: 70, localY: 78 },
+  } as Record<string, AgentDeskRef>,
+
+  // Visit-zones for idle wandering / autonomous behavior. Office-only.
+  // Cafe + garden zones were rolled back along with their assets.
+  zones: [
+    { id: 'office-meeting', name: '회의실',  emoji: '📊',  x: 49, y: 78 },  // office bottom-left meeting room
+    { id: 'office-copier',  name: '복사실',  emoji: '🖨️', x: 70, y: 18 },  // office top printer
+  ] as WorldZone[],
+};
+
+/** Hand-tuned agent positions for the user's AI-generated office map at
+ *  `assets/map.jpeg`. Coordinates are % of the world canvas — each places the
+ *  agent at a real desk/seat in their room, avoiding walls and furniture.
+ *  The y values anchor agent FEET (sprite is 96px tall, feet at bottom). */
+const CUSTOM_MAP_DESKS: Record<string, DeskPos> = {
+  // Top-left CEO solo office (glass-walled, "Connect AI" sign on wall)
+  ceo:        { x: 8,  y: 22 },
+  // Front desk just outside CEO's office — Secretary station
+  secretary:  { x: 18, y: 33 },
+  // Top-right twin workstation pairs
+  youtube:    { x: 87, y: 18 },
+  instagram:  { x: 87, y: 32 },
+  // Mid-left small glass meeting pod (used as Designer's focused space)
+  designer:   { x: 13, y: 47 },
+  // Center cubicle cluster (6 desks, agents at 4 of them)
+  developer:  { x: 41, y: 53 },
+  business:   { x: 51, y: 53 },
+  editor:     { x: 41, y: 63 },
+  writer:     { x: 51, y: 63 },
+  // Bottom-center small admin desks — Researcher
+  researcher: { x: 33, y: 82 },
+};
+
+/** Convert each agent's building-local desk into world % coords. */
+function buildWorldDeskPositions(): Record<string, DeskPos> {
+  const out: Record<string, DeskPos> = {};
+  for (const [id, ref] of Object.entries(WORLD_LAYOUT.agents)) {
+    const b = WORLD_LAYOUT.buildings.find(bb => bb.id === ref.building);
+    if (!b) continue;
+    const worldPxX = b.x + (ref.localX / 100) * b.width;
+    const worldPxY = b.y + (ref.localY / 100) * b.height;
+    out[id] = {
+      x: (worldPxX / WORLD_LAYOUT.worldWidth) * 100,
+      y: (worldPxY / WORLD_LAYOUT.worldHeight) * 100,
+    };
+  }
+  return out;
+}
+
+// Company folder is unified with the brain folder — `_shared/`, `_agents/`,
+// `sessions/` live directly under the brain dir instead of in a separate
+// `Company/` subfolder. This eliminates the `companyDir is not a registered
+// configuration` failure mode entirely.
+const COMPANY_INTERNAL_DIRS = new Set(['_shared', '_agents', 'sessions', '_cache', '_tmp']);
+
+function getCompanyDir(): string {
+  return _getBrainDir();
+}
+
+async function setCompanyDir(absPath: string) {
+  // Redirects to localBrainPath: choosing a company location now means
+  // choosing where the brain (and therefore the company) lives.
+  try {
+    const cfg = vscode.workspace.getConfiguration('connectAiLab');
+    await cfg.update('localBrainPath', absPath, vscode.ConfigurationTarget.Global);
+  } catch {
+    if (_extCtx) {
+      try { await _extCtx.globalState.update('localBrainPath', absPath); } catch {}
+    }
+  }
+}
+
+// One-time migration from the old `<brain>/Company/...` (or custom
+// `companyDir`) layout to the unified flat layout. Called once on activate.
+function _migrateCompanyToBrain() {
+  try {
+    const brain = _getBrainDir();
+    if (fs.existsSync(path.join(brain, '_shared'))) return; // already unified
+
+    const cfg = vscode.workspace.getConfiguration('connectAiLab');
+    let legacy = ((cfg.get('companyDir') as string | undefined) || '').trim();
+    if (!legacy && _extCtx) {
+      legacy = (_extCtx.globalState.get<string>('companyDir') || '').trim();
+    }
+    if (legacy.startsWith('~/')) legacy = path.join(os.homedir(), legacy.slice(2));
+    if (!legacy) legacy = path.join(brain, 'Company');
+
+    if (!fs.existsSync(path.join(legacy, '_shared'))) return; // nothing to migrate
+
+    fs.mkdirSync(brain, { recursive: true });
+    for (const name of fs.readdirSync(legacy)) {
+      const src = path.join(legacy, name);
+      const dst = path.join(brain, name);
+      if (fs.existsSync(dst)) continue; // never overwrite user data
+      try { fs.renameSync(src, dst); } catch { /* skip on cross-device */ }
+    }
+    if (legacy === path.join(brain, 'Company')) {
+      try { fs.rmdirSync(legacy); } catch {}
+    }
+    try { cfg.update('companyDir', undefined, vscode.ConfigurationTarget.Global); } catch {}
+    if (_extCtx) {
+      try { _extCtx.globalState.update('companyDir', undefined); } catch {}
+    }
+    console.log(`Connect AI: migrated ${legacy} → ${brain}`);
+  } catch (e) {
+    console.error('Connect AI: company → brain migration failed', e);
+  }
+}
+
+function _extractCompanyName(idMd: string): string {
+  const m = idMd.match(/회사\s*이름\s*[:：]\s*(.+)/);
+  if (!m || !m[1]) return '';
+  let v = m[1].trim().replace(/\*+/g, '').replace(/^_+|_+$/g, '').trim();
+  if (!v) return '';
+  if (/\(여기에|\(아직 미설정|\(미설정|미설정$|^_자가학습/.test(v)) return '';
+  return v;
+}
+
+function isCompanyConfigured(): boolean {
+  const dir = getCompanyDir();
+  const idPath = path.join(dir, '_shared', 'identity.md');
+  if (!fs.existsSync(idPath)) return false;
+  return _extractCompanyName(_safeReadText(idPath)).length > 0;
+}
+
+function readCompanyName(): string {
+  const dir = getCompanyDir();
+  const idPath = path.join(dir, '_shared', 'identity.md');
+  return _extractCompanyName(_safeReadText(idPath));
+}
+
+function readTelegramConfig(): { token: string; chatId: string } {
+  const cfgPath = path.join(getCompanyDir(), '_agents', 'secretary', 'config.md');
+  const txt = _safeReadText(cfgPath);
+  const tokenM = txt.match(/TELEGRAM_BOT_TOKEN\s*[:：=]\s*([A-Za-z0-9:_\-]+)/);
+  const chatM = txt.match(/TELEGRAM_CHAT_ID\s*[:：=]\s*(-?\d+)/);
+  return {
+    token: tokenM ? tokenM[1].trim() : '',
+    chatId: chatM ? chatM[1].trim() : ''
+  };
+}
+
+async function sendTelegramReport(text: string): Promise<boolean> {
+  const { token, chatId } = readTelegramConfig();
+  if (!token || !chatId) return false;
+  try {
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    await axios.post(url, {
+      chat_id: chatId,
+      text: text.slice(0, 4000),
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true
+    }, { timeout: 8000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readAgentCustomPrompt(agentId: string): string {
+  const dir = getCompanyDir();
+  const promptPath = path.join(dir, '_agents', agentId, 'prompt.md');
+  const configPath = path.join(dir, '_agents', agentId, 'config.md');
+  const customPrompt = _safeReadText(promptPath).trim();
+  const config = _safeReadText(configPath).trim();
+  let extra = '';
+  if (customPrompt && !customPrompt.startsWith('# ')) {
+    extra += `\n\n[사용자가 추가한 페르소나 디테일]\n${customPrompt.slice(0, 2000)}`;
+  } else if (customPrompt) {
+    // 헤더 시작이면 그대로 — placeholder 인지 검사
+    const stripped = customPrompt.replace(/^#.*$/gm, '').replace(/_여기에.*?_/gs, '').trim();
+    if (stripped.length > 30) {
+      extra += `\n\n[사용자가 추가한 페르소나 디테일]\n${customPrompt.slice(0, 2000)}`;
+    }
+  }
+  if (config) {
+    // config.md에서 비밀 토큰은 마스킹 후 컨텍스트로 주입 (에이전트는 자기 어떤 도구 쓸 수 있는지 알아야 함)
+    const masked = config.replace(/(TOKEN|API_KEY|SECRET)([:：=])\s*\S+/gi, '$1$2 ***SET***');
+    if (masked.replace(/^#.*$/gm, '').trim().length > 30) {
+      extra += `\n\n[당신의 도구·설정 (시크릿 마스킹됨)]\n${masked.slice(0, 1500)}`;
+    }
+  }
+  return extra;
+}
+
+function _safeReadText(p: string): string {
+  try { return fs.readFileSync(p, 'utf-8'); } catch { return ''; }
+}
+
+function ensureCompanyStructure(): string {
+  const dir = getCompanyDir();
+  fs.mkdirSync(path.join(dir, '_shared'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '_agents'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true });
+  AGENT_ORDER.forEach(id => {
+    fs.mkdirSync(path.join(dir, '_agents', id), { recursive: true });
+  });
+
+  const goalsPath = path.join(dir, '_shared', 'goals.md');
+  if (!fs.existsSync(goalsPath)) {
+    fs.writeFileSync(goalsPath,
+`# 🎯 공동 목표 (Company Goals)
+
+_이 파일은 **모든 에이전트가 매번 읽는** 회사의 북극성입니다. 자유롭게 편집하세요._
+
+## 장기 목표 (1년)
+- [ ] (예) 유튜브 구독자 10만 달성
+- [ ] (예) 인스타그램 팔로워 5만
+- [ ] (예) 월 수익 500만원
+
+## 단기 목표 (1개월)
+- [ ] (예) 영상 4개 업로드
+- [ ] (예) 릴스 12개 게시
+`);
+  }
+  const idPath = path.join(dir, '_shared', 'identity.md');
+  if (!fs.existsSync(idPath)) {
+    fs.writeFileSync(idPath,
+`# 🏢 회사 정체성 / 톤앤매너
+
+_브랜드 보이스, 톤, 절대 금지어 등을 적으세요. 모든 에이전트가 매번 참조합니다._
+
+- **회사 이름:**
+- **대표자:**
+- **타깃 청중:**
+- **핵심 가치:**
+- **브랜드 톤:**
+- **금기 (절대 하지 말 것):**
+`);
+  }
+  AGENT_ORDER.forEach(id => {
+    const memPath = path.join(dir, '_agents', id, 'memory.md');
+    if (!fs.existsSync(memPath)) {
+      fs.writeFileSync(memPath,
+`# ${AGENTS[id].emoji} ${AGENTS[id].name} (${AGENTS[id].role}) 개인 메모리
+
+_${AGENTS[id].name} 에이전트만 읽고 쓰는 개인 노트. 학습·교훈·자주 쓰는 패턴이 누적됩니다._
+
+## 학습 기록
+`);
+    }
+    const promptPath = path.join(dir, '_agents', id, 'prompt.md');
+    if (!fs.existsSync(promptPath)) {
+      fs.writeFileSync(promptPath,
+`# ${AGENTS[id].emoji} ${AGENTS[id].name} 페르소나 디테일
+
+_여기에 ${AGENTS[id].name} 에이전트에게 주고 싶은 추가 지시·말투·취향·예시 등을 자유롭게 적으세요._
+_매 호출 시 시스템 프롬프트에 자동 주입됩니다. (git에 동기화됨)_
+
+`);
+    }
+    const configPath = path.join(dir, '_agents', id, 'config.md');
+    if (!fs.existsSync(configPath)) {
+      let presets = '';
+      if (id === 'secretary') {
+        presets = `\n## 텔레그램 봇\n_BotFather에서 봇을 만들고 토큰을 받으세요. https://t.me/BotFather_\n_그리고 본인 채팅 ID를 알아내려면 https://t.me/userinfobot 에 메시지를 보내세요._\n\n- TELEGRAM_BOT_TOKEN: \n- TELEGRAM_CHAT_ID: \n`;
+      } else if (id === 'youtube') {
+        presets = `\n## YouTube Data API\n- YOUTUBE_API_KEY: \n- YOUTUBE_CHANNEL_ID: \n`;
+      } else if (id === 'instagram') {
+        presets = `\n## Meta Graph API\n- META_ACCESS_TOKEN: \n- INSTAGRAM_BUSINESS_ID: \n`;
+      } else if (id === 'designer') {
+        presets = `\n## 디자인 도구\n- FIGMA_TOKEN: \n- STITCH_API_KEY: \n`;
+      }
+      fs.writeFileSync(configPath,
+`# ${AGENTS[id].emoji} ${AGENTS[id].name} 설정 (시크릿)
+
+_이 파일은 \`.gitignore\`에 의해 깃 동기화에서 제외됩니다. API 키·토큰을 자유롭게 적으세요._
+${presets}
+`);
+    }
+  });
+
+  // .gitignore — 시크릿과 캐시 보호
+  const giPath = path.join(dir, '.gitignore');
+  if (!fs.existsSync(giPath)) {
+    fs.writeFileSync(giPath,
+`# 자동 생성 — Connect AI 1인 기업 모드
+# 시크릿·API 키 보호
+_agents/*/config.md
+
+# 외부 API 응답 캐시 (재현 가능)
+_cache/
+
+# 대용량 임시 산출물
+_tmp/
+*.log
+`);
+  }
+
+  // _system.md — 시스템 자가 매뉴얼 (사람도 읽고 LLM도 컨텍스트로)
+  const sysPath = path.join(dir, '_shared', '_system.md');
+  if (!fs.existsSync(sysPath)) {
+    fs.writeFileSync(sysPath,
+`# 🧬 1인 기업 OS — 자가 매뉴얼
+
+## 이 폴더는 무엇인가요?
+당신의 1인 기업의 두뇌입니다. 7명의 AI 에이전트가 여기서 일합니다.
+
+## 폴더 구조
+- \`_shared/\` — 모든 에이전트가 매번 읽는 공동 메모리
+  - \`identity.md\` — 회사 정체성 (이름, 톤, 가치)
+  - \`goals.md\` — 목표
+  - \`decisions.md\` — 의사결정 로그 (자가학습이 자동 누적)
+  - \`_system.md\` — 이 파일
+- \`_agents/<id>/\` — 각 에이전트 개인 공간
+  - \`memory.md\` — 자가학습 (자동, append-only)
+  - \`prompt.md\` — 페르소나 디테일 (사용자가 편집)
+  - \`config.md\` — API 키·시크릿 (\`.gitignore\`로 보호)
+- \`sessions/<ts>/\` — 세션별 산출물 (자동)
+- \`_cache/\` — API 응답 캐시 (sync 제외)
+
+## 메모리 위계 (충돌 시 우선순위)
+1. \`decisions.md\` — 가장 강한 신뢰
+2. \`identity.md\`
+3. \`goals.md\`
+4. 개인 메모리
+5. 지식 베이스 (\`10_Wiki/\`)
+
+## 다른 PC로 옮길 때
+1. 새 PC에 Connect AI 설치
+2. 👔 모드 ON → "📥 다른 PC에서 가져오기" 선택
+3. GitHub URL 입력 → 자동 clone
+4. 끝.
+
+## 동기화 정책
+- \`_shared/\`, \`_agents/*/memory.md\`, \`_agents/*/prompt.md\`, \`sessions/\` → git sync ✅
+- \`_agents/*/config.md\`, \`_cache/\` → git sync ❌ (시크릿·캐시)
+
+## 7명의 에이전트
+${AGENT_ORDER.map(id => `- ${AGENTS[id].emoji} **${AGENTS[id].name}** (${AGENTS[id].role}): ${AGENTS[id].specialty}`).join('\n')}
+`);
+  }
+
+  return dir;
+}
+
+function readAgentSharedContext(agentId: string): string {
+  const dir = getCompanyDir();
+  const identity = _safeReadText(path.join(dir, '_shared', 'identity.md'));
+  const goals = _safeReadText(path.join(dir, '_shared', 'goals.md'));
+  const decisions = _safeReadText(path.join(dir, '_shared', 'decisions.md'));
+  const memory = _safeReadText(path.join(dir, '_agents', agentId, 'memory.md'));
+  let ctx = '';
+  if (identity.trim()) ctx += `\n\n[회사 정체성 (가장 신뢰)]\n${identity.slice(0, 2000)}`;
+  if (decisions.trim()) ctx += `\n\n[지난 의사결정 로그]\n${decisions.slice(-3000)}`;
+  if (goals.trim()) ctx += `\n\n[공동 목표]\n${goals.slice(0, 4000)}`;
+  if (memory.trim()) ctx += `\n\n[${AGENTS[agentId]?.name} 개인 메모리]\n${memory.slice(0, 4000)}`;
+  ctx += readAgentCustomPrompt(agentId);
+  return ctx;
+}
+
+function appendAgentMemory(agentId: string, line: string) {
+  try {
+    const p = path.join(getCompanyDir(), '_agents', agentId, 'memory.md');
+    const stamp = new Date().toISOString().slice(0, 10);
+    fs.appendFileSync(p, `\n- [${stamp}] ${line.replace(/\n/g, ' ').slice(0, 300)}`);
+  } catch { /* ignore */ }
+}
+
+/** Resolve the conversation log directory inside the user's brain folder.
+ *  Lives at `<brain>/00_Raw/conversations/` so it joins the existing
+ *  Second-Brain raw-knowledge convention — visible to the brain graph,
+ *  synced by GitHub auto-sync, browsable in the user's note-taking app. */
+function getConversationsDir(): string {
+  const brain = getCompanyDir(); // unified with brain folder
+  return path.join(brain, '00_Raw', 'conversations');
+}
+
+/** Append one entry to the day's running conversation log. Living transcript
+ *  of every interaction in the company — user commands, CEO briefs, each
+ *  agent's output, confer turns, final reports. Stored in 00_Raw alongside
+ *  other raw knowledge so it participates in brain queries. */
+function appendConversationLog(entry: { speaker: string; emoji?: string; section?: string; body: string }) {
+  try {
+    const convDir = getConversationsDir();
+    fs.mkdirSync(convDir, { recursive: true });
+    const today = new Date().toISOString().slice(0, 10);
+    const dayFile = path.join(convDir, `${today}.md`);
+    if (!fs.existsSync(dayFile)) {
+      fs.writeFileSync(dayFile, `# 📜 ${today} 회사 대화록\n\n_모든 명령·분배·산출물·대화가 시간순으로 누적됩니다. 두뇌가 자동 인덱싱·동기화합니다._\n`);
+    }
+    const ts = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const emoji = entry.emoji || '🗨️';
+    const sectionLine = entry.section ? ` · _${entry.section}_` : '';
+    const block = `\n## [${ts}] ${emoji} **${entry.speaker}**${sectionLine}\n\n${entry.body}\n`;
+    fs.appendFileSync(dayFile, block);
+  } catch { /* logging must never break the flow */ }
+}
+
+/** Read the last N chars (across today + yesterday) of the conversation log
+ *  for use as system-prompt context. Lets CEO recall what the company has
+ *  recently been working on without needing the full file. */
+function readRecentConversations(maxChars = 2500): string {
+  try {
+    const convDir = getConversationsDir();
+    if (!fs.existsSync(convDir)) return '';
+    const today = new Date().toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    let combined = '';
+    for (const day of [yesterday, today]) {
+      const f = path.join(convDir, `${day}.md`);
+      if (fs.existsSync(f)) {
+        try { combined += fs.readFileSync(f, 'utf-8'); } catch { /* ignore */ }
+      }
+    }
+    if (!combined) return '';
+    const tail = combined.slice(-maxChars);
+    return `\n\n[최근 회사 대화 요약 (참고용)]\n${tail}\n`;
+  } catch {
+    return '';
+  }
+}
+
+function makeSessionDir(): string {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16);
+  const dir = path.join(getCompanyDir(), 'sessions', ts);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+const CEO_PLANNER_PROMPT = `당신은 "JAY CORP"의 CEO입니다. 1인 AI 기업의 사령관이자 오케스트레이터입니다.
+
+당신의 팀(전문 에이전트):
+- youtube   (Head of YouTube)         : 유튜브 채널 운영, 영상 기획, 트렌드, 썸네일 브리프
+- instagram (Head of Instagram)       : 릴스/피드, 캡션, 해시태그, 게시 시간, 인게이지먼트
+- designer  (Lead Designer)           : 디자인 브리프, 썸네일·브랜드 비주얼, 컬러/타이포
+- developer (Lead Engineer)           : 코드, 자동화, API, 웹사이트, 데이터 파이프라인
+- business  (Head of Business)        : 수익화, 가격, 비즈니스 전략·분석, KPI
+- secretary (Personal Assistant)      : 일정·할 일, 작업 요약, 텔레그램 보고, 데일리 브리핑
+- editor    (Video & Content Editor)  : 영상 편집, 컷 구성, B-roll, 자막·타이틀, 폴리싱
+- writer    (Copywriter)              : 카피라이팅, 영상 스크립트, 캡션, 블로그, 후크
+- researcher(Trend & Data Researcher) : 트렌드/경쟁사 리서치, 데이터 수집·요약, 사실 확인
+
+사용자가 한 줄 명령을 내리면, 당신은 어떤 에이전트들을 어떤 순서로 동원할지 결정합니다.
+
+⚠️ 반드시 아래 JSON 형식으로만 출력하세요. 다른 텍스트(설명, \`\`\`json 펜스, 머리말, 꼬리말)는 절대 포함 금지.
+
+{
+  "brief": "이번 작업이 무엇인지 2~3줄 한국어 요약",
+  "tasks": [
+    {"agent": "youtube", "task": "구체적이고 실행 가능한 한국어 지시"},
+    {"agent": "designer", "task": "..."}
+  ]
+}
+
+규칙:
+1. 필요한 에이전트만 호출 (1~5명).
+2. 논리적 순서로 정렬 (예: business 전략 → designer 비주얼 → youtube 영상 기획).
+3. 각 task는 모호함 없이 구체적·실행가능하게.
+4. JSON 외 텍스트는 단 한 글자도 출력 금지.`;
+
+const CEO_REPORT_PROMPT = `당신은 JAY CORP의 CEO입니다. 방금 팀이 작업을 끝냈습니다.
+각 에이전트의 산출물을 읽고 사장님께 올릴 종합 보고서를 작성하세요.
+
+형식 (한국어 마크다운, 정확히 이대로):
+
+## ✅ 완료된 작업
+- (에이전트별 핵심 산출물 1줄씩, 굵은 글씨로 에이전트명)
+
+## 🚀 다음 액션 (Top 3)
+1. **(에이전트명)** — 무엇을
+2. **(에이전트명)** — 무엇을
+3. **(에이전트명)** — 무엇을
+
+## 💡 인사이트
+- 이번 작업에서 발견한 핵심 통찰 1~2개
+
+규칙: 간결, 사족 금지, 사과·면책 금지. 200자 이내가 이상적.`;
+
+const CONFER_PROMPT = `당신은 JAY CORP의 회의 시뮬레이터입니다. 방금 specialist 에이전트들이 각자 산출물을 냈습니다.
+각 산출물을 보고, 에이전트들이 자기 책상에서 옆 동료에게 짧게 confer하는 자연스러운 대화 3~5턴을 생성하세요.
+
+⚠️ 반드시 아래 JSON 형식으로만 출력. 다른 텍스트(설명, 마크다운 펜스, 머리말, 꼬리말)는 절대 금지.
+
+{
+  "turns": [
+    {"from": "에이전트id", "to": "에이전트id", "text": "30자 이내 한국어 한 마디"},
+    {"from": "에이전트id", "to": "에이전트id", "text": "..."}
+  ]
+}
+
+규칙:
+1. 모든 from/to는 specialist id 중 하나 (youtube/instagram/designer/developer/business/secretary). CEO 제외.
+2. 각 turn 텍스트는 30자 이내. 짧게, 자연스럽게.
+3. 최소 3턴, 최대 5턴.
+4. 산출물 사이의 협업·확인·피드백 흐름이 보이게. 일반론·인사 X.
+5. JSON 외 단 한 글자도 출력 금지.
+
+예시:
+{"turns":[
+  {"from":"designer","to":"youtube","text":"썸네일 빨강 톤 OK?"},
+  {"from":"youtube","to":"designer","text":"OK, 글자 더 크게"},
+  {"from":"business","to":"instagram","text":"릴스 광고 단가 검토했어"}
+]}`;
+
+const DECISIONS_EXTRACT_PROMPT = `당신은 회사 의사결정 추출기입니다. 방금 끝난 작업의 산출물·대화·CEO 보고서에서 \"앞으로 회사가 따를 결정·원칙\"을 뽑아내세요.
+
+⚠️ 반드시 아래 JSON으로만 출력. 다른 텍스트 금지.
+
+{
+  "decisions": [
+    "한 줄로 명확한 의사결정 (예: '썸네일 배경은 빨강 사용')",
+    "..."
+  ]
+}
+
+규칙:
+1. 약한 시그널(추측, 일반론, 사담)은 제외. 명시적 결정만.
+2. 0~3개. 없으면 빈 배열.
+3. 각 항목은 60자 이내, 명령형 또는 단정형.
+4. JSON 외 텍스트 금지.`;
+
+function buildSpecialistPrompt(agentId: string): string {
+  const a = AGENTS[agentId];
+  return `당신은 JAY CORP의 ${a.emoji} ${a.name} (${a.role}) 에이전트입니다.
+
+[전문 영역]
+${a.specialty}
+
+[작업 환경]
+- 시스템 컨텍스트에 회사 공동 목표·정체성·당신의 개인 메모리가 함께 주입됩니다. 항상 참조하세요.
+- 같은 세션에서 다른 에이전트들이 먼저 만든 산출물도 함께 제공됩니다 (있을 경우).
+- 당신의 산출물은 자동으로 sessions/ 폴더에 저장되어 다음 세션에서 다시 참조됩니다.
+
+[출력 규칙]
+- 한국어 마크다운으로 작성
+- 첫 줄: 한 줄 시작 신호 (예: "${a.emoji} ${a.name}: 작업 시작합니다.")
+- 본문: 구체적인 산출물. 추상적·일반론 금지. 바로 실행 가능한 결과물.
+- 마지막 줄: \`📝 다음 단계 제안: ...\` 한 줄
+- 사족·사과·면책·자기검열 금지. 가성비 있게.`;
+}
+
+// ============================================================
 // Robust Git Auto-Sync (module scope)
 // ------------------------------------------------------------
 // Auto-sync runs silently in the background after every brain
@@ -519,11 +1359,64 @@ async function _safeGitAutoSync(brainDir: string, commitMsg: string, provider: a
 // register externally-opened graph panels with the provider for thinking
 // event broadcasts.
 let _activeChatProvider: SidebarChatProvider | null = null;
+let _extCtx: vscode.ExtensionContext | null = null;
+
+// One-time recovery for users upgrading from <=2.22.5, where the first-run
+// auto-detect wrote the engine URL to a typo'd config key (`ollamaBase`) that
+// VS Code silently dropped. Symptom: defaultModel is set to an LM Studio name
+// but ollamaUrl still points at Ollama (or vice versa) → 404 on every chat.
+function _recoverEngineUrlIfMismatched(context: vscode.ExtensionContext) {
+    if (context.globalState.get('engineUrlRecovered')) return;
+    (async () => {
+        try {
+            const cfg = vscode.workspace.getConfiguration('connectAiLab');
+            const url = (cfg.get<string>('ollamaUrl') || '').trim();
+            const model = (cfg.get<string>('defaultModel') || '').trim();
+            if (!model) {
+                await context.globalState.update('engineUrlRecovered', true);
+                return;
+            }
+            // Heuristics for which engine the model name belongs to.
+            const looksLMStudio = /\//.test(model) || /gguf/i.test(model);
+            const urlIsOllama = !url || url.includes('11434');
+            const urlIsLM = url.includes('1234') || url.includes('/v1');
+            const mismatched = (looksLMStudio && urlIsOllama) || (!looksLMStudio && urlIsLM);
+            if (!mismatched) {
+                await context.globalState.update('engineUrlRecovered', true);
+                return;
+            }
+            // Probe both engines to find one that actually has the model.
+            const probe = async (base: string, isLM: boolean): Promise<boolean> => {
+                try {
+                    if (isLM) {
+                        const r = await axios.get(`${base}/v1/models`, { timeout: 1500 });
+                        return Array.isArray(r.data?.data) && r.data.data.some((m: any) => m.id === model);
+                    }
+                    const r = await axios.get(`${base}/api/tags`, { timeout: 1500 });
+                    return Array.isArray(r.data?.models) && r.data.models.some((m: any) => m.name === model);
+                } catch { return false; }
+            };
+            let target = '';
+            if (await probe('http://127.0.0.1:1234', true)) target = 'http://127.0.0.1:1234';
+            else if (await probe('http://127.0.0.1:11434', false)) target = 'http://127.0.0.1:11434';
+            if (target && target !== url) {
+                await cfg.update('ollamaUrl', target, vscode.ConfigurationTarget.Global);
+                console.log(`Connect AI: engine URL recovered → ${target} (model: ${model})`);
+            }
+            await context.globalState.update('engineUrlRecovered', true);
+        } catch (e) {
+            console.error('Connect AI: engine URL recovery failed', e);
+        }
+    })();
+}
 
 export function activate(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage('🔥 Connect AI V2 활성화 완료!');
     console.log('Connect AI extension activated.');
 
+    _extCtx = context;
+    _migrateCompanyToBrain();
+    _recoverEngineUrlIfMismatched(context);
     const provider = new SidebarChatProvider(context.extensionUri, context);
     _activeChatProvider = provider;
 
@@ -543,7 +1436,7 @@ export function activate(context: vscode.ExtensionContext) {
                     if (lmRes.data?.data?.length > 0) {
                         engineName = 'LM Studio';
                         modelName = lmRes.data.data[0].id;
-                        await vscode.workspace.getConfiguration('connectAiLab').update('ollamaBase', 'http://127.0.0.1:1234', vscode.ConfigurationTarget.Global);
+                        await vscode.workspace.getConfiguration('connectAiLab').update('ollamaUrl', 'http://127.0.0.1:1234', vscode.ConfigurationTarget.Global);
                         await vscode.workspace.getConfiguration('connectAiLab').update('defaultModel', modelName, vscode.ConfigurationTarget.Global);
                     }
                 } catch {}
@@ -554,7 +1447,7 @@ export function activate(context: vscode.ExtensionContext) {
                         if (ollamaRes.data?.models?.length > 0) {
                             engineName = 'Ollama';
                             modelName = ollamaRes.data.models[0].name;
-                            await vscode.workspace.getConfiguration('connectAiLab').update('ollamaBase', 'http://127.0.0.1:11434', vscode.ConfigurationTarget.Global);
+                            await vscode.workspace.getConfiguration('connectAiLab').update('ollamaUrl', 'http://127.0.0.1:11434', vscode.ConfigurationTarget.Global);
                             await vscode.workspace.getConfiguration('connectAiLab').update('defaultModel', modelName, vscode.ConfigurationTarget.Global);
                         }
                     } catch {}
@@ -915,6 +1808,13 @@ export function activate(context: vscode.ExtensionContext) {
             showBrainNetwork(context);
         })
     );
+
+    // 🏢 Open virtual office (스몰빌식 가상 사무실)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('connect-ai-lab.openOffice', () => {
+            OfficePanel.createOrShow(context, provider);
+        })
+    );
 }
 
 // ============================================================
@@ -959,6 +1859,7 @@ function buildKnowledgeGraph(brainDir: string): BrainGraph {
         catch { return; }
         for (const e of entries) {
             if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+            if (COMPANY_INTERNAL_DIRS.has(e.name)) continue;
             const full = path.join(dir, e.name);
             if (e.isDirectory()) { walk(full); continue; }
             if (!e.isFile() || !full.endsWith('.md')) continue;
@@ -1967,6 +2868,2197 @@ function _RENDER_GRAPH_HTML(graphJson: string, isEmpty: boolean, forceGraphSrc: 
 export function deactivate() {}
 
 // ============================================================
+// 🏢 OfficePanel — Smallville-style virtual office (full-screen)
+// ============================================================
+class OfficePanel {
+    public static current?: OfficePanel;
+    private static readonly viewType = 'connectAiOffice';
+
+    private readonly _panel: vscode.WebviewPanel;
+    private readonly _ctx: vscode.ExtensionContext;
+    private readonly _provider: SidebarChatProvider;
+    private _disposables: vscode.Disposable[] = [];
+
+    static createOrShow(ctx: vscode.ExtensionContext, provider: SidebarChatProvider) {
+        if (OfficePanel.current) {
+            OfficePanel.current._panel.reveal(vscode.ViewColumn.Active);
+            return;
+        }
+        try { provider.broadcastOfficeState(true); } catch { /* ignore */ }
+        const userAssets = OfficePanel._resolveUserAssetsPath();
+        const localResourceRoots: vscode.Uri[] = [ctx.extensionUri];
+        if (userAssets) {
+            localResourceRoots.push(vscode.Uri.file(userAssets));
+        }
+        // Allow loading user's custom map PNG from the brain folder
+        try {
+            const brain = getCompanyDir();
+            if (brain && fs.existsSync(brain)) {
+                localResourceRoots.push(vscode.Uri.file(brain));
+            }
+        } catch { /* ignore */ }
+        const panel = vscode.window.createWebviewPanel(
+            OfficePanel.viewType,
+            '🏢 가상 사무실',
+            vscode.ViewColumn.Active,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots
+            }
+        );
+        OfficePanel.current = new OfficePanel(panel, ctx, provider);
+    }
+
+    private constructor(panel: vscode.WebviewPanel, ctx: vscode.ExtensionContext, provider: SidebarChatProvider) {
+        this._panel = panel;
+        this._ctx = ctx;
+        this._provider = provider;
+
+        provider.registerCorporateBroadcastTarget(panel.webview);
+
+        panel.onDidDispose(() => this.dispose(), null, this._disposables);
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            switch (msg.type) {
+                case 'officeReady':
+                    this._sendInit();
+                    break;
+                case 'officePrompt': {
+                    const prompt = String(msg.value || '').trim();
+                    if (!prompt) return;
+                    const model = provider.getDefaultModel();
+                    provider.runCorporatePromptExternal(prompt, model).catch((e) => {
+                        try { panel.webview.postMessage({ type: 'error', value: `⚠️ ${e?.message || e}` }); } catch { /* ignore */ }
+                    });
+                    break;
+                }
+                case 'runChatter': {
+                    const model = provider.getDefaultModel();
+                    provider.runAutonomousChatter(model).catch(() => { /* silent */ });
+                    break;
+                }
+                case 'loadConversations': {
+                    try {
+                        const convDir = getConversationsDir();
+                        const today = new Date().toISOString().slice(0, 10);
+                        const f = path.join(convDir, `${today}.md`);
+                        const content = fs.existsSync(f) ? fs.readFileSync(f, 'utf-8') : `_아직 오늘 대화가 없습니다._\n\n경로: ${convDir.replace(os.homedir(), '~')}/${today}.md`;
+                        panel.webview.postMessage({ type: 'conversationsLoaded', date: today, content });
+                    } catch (e: any) {
+                        panel.webview.postMessage({ type: 'conversationsLoaded', date: '', content: `_읽기 실패: ${e?.message || e}_` });
+                    }
+                    break;
+                }
+                case 'setRoom': {
+                    const roomId = String(msg.roomId || '').trim();
+                    if (!ROOMS.find(r => r.id === roomId)) break;
+                    try { await this._ctx.globalState.update('officeRoomId', roomId); } catch { /* ignore */ }
+                    this._broadcastRoom(roomId);
+                    break;
+                }
+                case 'openCompanyFolder':
+                    try {
+                        const dir = ensureCompanyStructure();
+                        const sub = msg.sub || '';
+                        const target = sub ? path.join(dir, sub) : dir;
+                        vscode.env.openExternal(vscode.Uri.file(target));
+                    } catch { /* ignore */ }
+                    break;
+                case 'pickCompanyFolder': {
+                    try {
+                        const picked = await vscode.window.showOpenDialog({
+                            canSelectFolders: true,
+                            canSelectFiles: false,
+                            canSelectMany: false,
+                            openLabel: '회사 폴더로 선택',
+                            title: '회사 폴더 선택 — 에이전트들의 작업/메모리/세션이 여기에 저장됩니다'
+                        });
+                        if (!picked || picked.length === 0) break;
+                        const newDir = picked[0].fsPath;
+                        await setCompanyDir(newDir);
+                        ensureCompanyStructure();
+                        this._sendInit();
+                        this._panel.webview.postMessage({ type: 'companyFolderChanged', dir: newDir.replace(os.homedir(), '~') });
+                        vscode.window.showInformationMessage(`🏢 회사 폴더 변경됨: ${newDir}`);
+                    } catch (e: any) {
+                        vscode.window.showErrorMessage(`폴더 변경 실패: ${e?.message || e}`);
+                    }
+                    break;
+                }
+                case 'agentProfileRequest': {
+                    try {
+                        const id = String(msg.agent || '');
+                        const dir = ensureCompanyStructure();
+                        const agentDir = path.join(dir, '_agents', id);
+                        const memoryPath = path.join(agentDir, 'memory.md');
+                        const decisionsPath = path.join(agentDir, 'decisions.md');
+                        const memory = fs.existsSync(memoryPath) ? fs.readFileSync(memoryPath, 'utf-8').slice(0, 4000) : '_메모리 없음_';
+                        const decisions = fs.existsSync(decisionsPath) ? fs.readFileSync(decisionsPath, 'utf-8').slice(-3000) : '_의사결정 기록 없음_';
+                        /* count session files mentioning this agent */
+                        const sessionsRoot = path.join(dir, 'sessions');
+                        let sessionCount = 0;
+                        let recentSessions: string[] = [];
+                        if (fs.existsSync(sessionsRoot)) {
+                            const entries = fs.readdirSync(sessionsRoot).filter(n => fs.statSync(path.join(sessionsRoot, n)).isDirectory());
+                            recentSessions = entries.sort().slice(-5).reverse();
+                            sessionCount = entries.length;
+                        }
+                        this._panel.webview.postMessage({
+                            type: 'agentProfile',
+                            agent: id,
+                            memory, decisions,
+                            sessionCount,
+                            recentSessions,
+                            agentDir: agentDir.replace(os.homedir(), '~')
+                        });
+                    } catch (e: any) {
+                        this._panel.webview.postMessage({ type: 'agentProfile', agent: msg.agent, error: e?.message || String(e) });
+                    }
+                    break;
+                }
+                case 'agentConfigRequest': {
+                    try {
+                        const id = String(msg.agent || '');
+                        const dir = ensureCompanyStructure();
+                        const connPath = path.join(dir, '_agents', id, 'connections.md');
+                        const values: Record<string, string> = {};
+                        if (fs.existsSync(connPath)) {
+                            const text = fs.readFileSync(connPath, 'utf-8');
+                            /* Parse simple "- key: value" lines (also tolerates "key: value") */
+                            text.split('\n').forEach(line => {
+                                const m2 = line.match(/^[\s-]*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.+?)\s*$/);
+                                if (m2) values[m2[1]] = m2[2];
+                            });
+                        }
+                        this._panel.webview.postMessage({ type: 'agentConfig', agent: id, values });
+                    } catch (e: any) {
+                        this._panel.webview.postMessage({ type: 'agentConfig', agent: msg.agent, values: {}, error: e?.message || String(e) });
+                    }
+                    break;
+                }
+                case 'saveAgentConfig': {
+                    try {
+                        const id = String(msg.agent || '');
+                        const dir = ensureCompanyStructure();
+                        const agentDir = path.join(dir, '_agents', id);
+                        if (!fs.existsSync(agentDir)) fs.mkdirSync(agentDir, { recursive: true });
+                        const connPath = path.join(agentDir, 'connections.md');
+                        const values = (msg.values || {}) as Record<string, string>;
+                        const ts = new Date().toISOString().replace('T', ' ').slice(0, 16);
+                        const lines = [
+                            `# ${id} — 외부 연결 / API 설정`,
+                            ``,
+                            `> 마지막 수정: ${ts}`,
+                            `> 이 파일은 ${id} 에이전트가 작업할 때 자동으로 읽힙니다. 민감한 토큰은 git에서 제외(.gitignore)되도록 주의하세요.`,
+                            ``,
+                            `## 연결 정보`,
+                            ``
+                        ];
+                        Object.keys(values).forEach(k => {
+                            const v = (values[k] || '').trim();
+                            if (v) lines.push(`- ${k}: ${v}`);
+                        });
+                        fs.writeFileSync(connPath, lines.join('\n') + '\n', 'utf-8');
+                        this._panel.webview.postMessage({ type: 'agentConfigSaved', agent: id });
+                    } catch (e: any) {
+                        this._panel.webview.postMessage({ type: 'agentConfigSaved', agent: msg.agent, error: e?.message || String(e) });
+                    }
+                    break;
+                }
+            }
+        }, null, this._disposables);
+
+        panel.webview.html = this._renderHtml();
+    }
+
+    /** 사용자가 설정에 명시적으로 추가 자산 경로를 지정한 경우만 사용. 그 외엔 vsix 번들 자산 사용. */
+    private static _resolveUserAssetsPath(): string {
+        const cfg = vscode.workspace.getConfiguration('connectAiLab');
+        const explicit = (cfg.get<string>('assetsPath') || '').trim();
+        if (explicit && fs.existsSync(explicit)) return explicit;
+        // Dev mode: extension repo includes the LimeZu pack at
+        // `assets/pixel/moderninteriors-win` (excluded from vsix via .vscodeignore).
+        if (_extCtx) {
+            const dev = path.join(_extCtx.extensionPath, 'assets', 'pixel', 'moderninteriors-win');
+            if (fs.existsSync(dev)) return dev;
+        }
+        return '';
+    }
+
+    /** 캐릭터 sprite를 결정. 우선순위: 사용자 LimeZu 폴더 > 번들 자산 > 빈 문자열(이모지 폴백) */
+    private _resolveCharacterSprite(agentId: string): { uri: string; source: 'user' | 'bundled' | 'none' } {
+        const userPath = OfficePanel._resolveUserAssetsPath();
+        if (userPath) {
+            const idx: Record<string, number> = {
+                ceo: 1, youtube: 2, instagram: 3, designer: 4,
+                developer: 5, business: 6, secretary: 7
+            };
+            const num = idx[agentId];
+            if (num) {
+                const padded = String(num).padStart(2, '0');
+                const candidates = [
+                    // Real LimeZu folder structure
+                    path.join(userPath, '2_Characters', 'Character_Generator', '0_Premade_Characters', '48x48', `Premade_Character_48x48_${padded}.png`),
+                    // Legacy/flattened layout
+                    path.join(userPath, 'modern-interiors', 'characters', `Premade_Character_48x48_${padded}.png`),
+                ];
+                for (const file of candidates) {
+                    if (fs.existsSync(file)) {
+                        return { uri: this._panel.webview.asWebviewUri(vscode.Uri.file(file)).toString(), source: 'user' };
+                    }
+                }
+            }
+        }
+        // 번들 자산 (vsix에 포함, 모든 사용자에게 동작)
+        const bundled = vscode.Uri.joinPath(this._ctx.extensionUri, 'assets', 'pixel', 'characters', `${agentId}.png`);
+        if (fs.existsSync(bundled.fsPath)) {
+            return { uri: this._panel.webview.asWebviewUri(bundled).toString(), source: 'bundled' };
+        }
+        return { uri: '', source: 'none' };
+    }
+
+    /** Resolve all WORLD_LAYOUT scene + decoration assets to webview URIs.
+     *  Returns the data shape the webview officeInit handler expects. */
+    private _resolveWorld(): {
+        worldWidth: number;
+        worldHeight: number;
+        grassUri: string;
+        pathUri: string;
+        paths: Array<{ x: number; y: number; w: number; h: number; }>;
+        buildings: Array<{ id: string; layer1Uri: string; layer2Uri: string; x: number; y: number; width: number; height: number; }>;
+        decorations: Array<{ uri: string; x: number; y: number; w?: number; }>;
+        desks: Record<string, DeskPos>;
+        zones: WorldZone[];
+    } {
+        const officeDir = vscode.Uri.joinPath(this._ctx.extensionUri, 'assets', 'pixel', 'office');
+        const gardenDir = vscode.Uri.joinPath(officeDir, 'garden');
+        const toUri = (root: vscode.Uri, file: string) => {
+            if (!file) return '';
+            const fp = vscode.Uri.joinPath(root, file);
+            if (!fs.existsSync(fp.fsPath)) return '';
+            return this._panel.webview.asWebviewUri(fp).toString();
+        };
+        const buildings = WORLD_LAYOUT.buildings.map(b => ({
+            id: b.id,
+            layer1Uri: toUri(officeDir, b.layer1),
+            layer2Uri: toUri(officeDir, b.layer2 || ''),
+            x: b.x, y: b.y, width: b.width, height: b.height,
+        }));
+        const decorations = WORLD_LAYOUT.decorations
+            .map(d => ({ uri: toUri(gardenDir, d.file), x: d.x, y: d.y, w: d.w }))
+            .filter(d => !!d.uri);
+        return {
+            worldWidth: WORLD_LAYOUT.worldWidth,
+            worldHeight: WORLD_LAYOUT.worldHeight,
+            grassUri: toUri(gardenDir, 'grass_base.png'),
+            pathUri: toUri(gardenDir, 'path_stone.png'),
+            paths: WORLD_LAYOUT.paths,
+            buildings,
+            decorations,
+            desks: buildWorldDeskPositions(),
+            zones: WORLD_LAYOUT.zones,
+        };
+    }
+
+    /** 룸의 floor/furniture PNG URI를 결정. (Phase-2 단일 오피스 모드에선 미사용 — 레거시 setRoom 핸들러용으로만 남겨둠.) */
+    private _resolveRoomAssets(room: RoomDef): { floorUri: string; furnitureUri: string } {
+        const userPath = OfficePanel._resolveUserAssetsPath();
+        if (userPath && room.layerFolder) {
+            const dir = path.join(userPath, '6_Home_Designs', room.layerFolder, '48x48');
+            if (fs.existsSync(dir)) {
+                try {
+                    const files = fs.readdirSync(dir);
+                    const findLayer = (n: number): string => {
+                        const re = new RegExp(`^${room.layerPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*_layer_${n}_48x48\\.png$`, 'i');
+                        return files.find(f => re.test(f)) || '';
+                    };
+                    const f1 = findLayer(1);
+                    const f2 = findLayer(2);
+                    if (f1) {
+                        const floorUri = this._panel.webview.asWebviewUri(vscode.Uri.file(path.join(dir, f1))).toString();
+                        const furnitureUri = f2
+                            ? this._panel.webview.asWebviewUri(vscode.Uri.file(path.join(dir, f2))).toString()
+                            : '';
+                        return { floorUri, furnitureUri };
+                    }
+                } catch { /* fall through to bundled */ }
+            }
+        }
+        // 번들 폴백 — TV 스튜디오 단일 룸. 모든 사용자에게 최소한의 룸 보장.
+        const floorBundled = vscode.Uri.joinPath(this._ctx.extensionUri, 'assets', 'pixel', 'interior', 'floor.png');
+        const furnitureBundled = vscode.Uri.joinPath(this._ctx.extensionUri, 'assets', 'pixel', 'interior', 'furniture.png');
+        return {
+            floorUri: fs.existsSync(floorBundled.fsPath) ? this._panel.webview.asWebviewUri(floorBundled).toString() : '',
+            furnitureUri: fs.existsSync(furnitureBundled.fsPath) ? this._panel.webview.asWebviewUri(furnitureBundled).toString() : '',
+        };
+    }
+
+    /** Resolve LimeZu animated GIF URIs for a room. Each entry returns a uri
+     *  the webview can render, plus its position metadata. Animations live in
+     *  `<userPath>/3_Animated_objects/48x48/gif/animated_<name>_48x48.gif`. */
+    private _resolveAnimationUris(room: RoomDef): Array<{ src: string; x: number; y: number; w: number }> {
+        if (!room.animations || room.animations.length === 0) return [];
+        const userPath = OfficePanel._resolveUserAssetsPath();
+        if (!userPath) return [];
+        const dir = path.join(userPath, '3_Animated_objects', '48x48', 'gif');
+        if (!fs.existsSync(dir)) return [];
+        const out: Array<{ src: string; x: number; y: number; w: number }> = [];
+        for (const a of room.animations) {
+            const file = path.join(dir, `animated_${a.gifName}_48x48.gif`);
+            if (!fs.existsSync(file)) continue;
+            out.push({
+                src: this._panel.webview.asWebviewUri(vscode.Uri.file(file)).toString(),
+                x: a.x,
+                y: a.y,
+                w: a.w || 9.1,
+            });
+        }
+        return out;
+    }
+
+    private _activeRoomId(): string {
+        const saved = (this._ctx.globalState.get<string>('officeRoomId') || '').trim();
+        if (saved && ROOMS.find(r => r.id === saved)) return saved;
+        return DEFAULT_ROOM_ID;
+    }
+
+    /** Detect a user-supplied office map (PNG/JPG/JPEG). If present, the webview
+     *  replaces the procedural WORLD_LAYOUT (grass + buildings + decor) with this
+     *  single full-stage image. Useful for AI-generated or hand-drawn full-floor maps.
+     *  Search order: brain dir _world/, brain dir root, then extension assets/. */
+    private _resolveCustomOfficeMap(): string {
+        try {
+            const brain = getCompanyDir();
+            const extAssets = vscode.Uri.joinPath(this._ctx.extensionUri, 'assets').fsPath;
+            const candidates = [
+                path.join(brain, '_world', 'office-map.png'),
+                path.join(brain, '_world', 'office-map.jpg'),
+                path.join(brain, '_world', 'office-map.jpeg'),
+                path.join(brain, 'office-map.png'),
+                path.join(brain, 'office-map.jpg'),
+                path.join(brain, 'office-map.jpeg'),
+                path.join(extAssets, 'office-map.png'),
+                path.join(extAssets, 'office-map.jpg'),
+                path.join(extAssets, 'office-map.jpeg'),
+                path.join(extAssets, 'map.png'),
+                path.join(extAssets, 'map.jpg'),
+                path.join(extAssets, 'map.jpeg'),
+            ];
+            for (const file of candidates) {
+                if (fs.existsSync(file)) {
+                    return this._panel.webview.asWebviewUri(vscode.Uri.file(file)).toString();
+                }
+            }
+        } catch { /* ignore */ }
+        return '';
+    }
+
+    private _availableRooms(): RoomDef[] {
+        // Always return all 6 rooms so the floor-plan grid always has 6 cells.
+        // Rooms whose LimeZu PNG can't be resolved fall back to the bundled
+        // TV-studio image — repeated visuals are a clear hint to set assetsPath.
+        return ROOMS;
+    }
+
+    /** Each agent's primary room. PRIMARY_ROOM map wins; fall back to first
+     *  room in `rooms` that lists the agent; final fallback = rooms[0]. */
+    private _buildAgentRoomMap(rooms: RoomDef[]): Record<string, string> {
+        const ids = new Set(rooms.map(r => r.id));
+        const map: Record<string, string> = {};
+        for (const id of AGENT_ORDER) {
+            const preferred = PRIMARY_ROOM[id];
+            if (preferred && ids.has(preferred)) { map[id] = preferred; continue; }
+            for (const r of rooms) {
+                if (r.agents.includes(id)) { map[id] = r.id; break; }
+            }
+            if (!map[id]) map[id] = rooms[0].id;
+        }
+        return map;
+    }
+
+    /** Convert per-room home positions into a single global %-of-floor coord
+     *  space, based on each room's slot in the 3×2 floor-plan grid. */
+    private _buildGlobalHomePos(
+        rooms: RoomDef[],
+        agentRoomMap: Record<string, string>,
+    ): Record<string, { x: number; y: number }> {
+        const COLS = 3, ROWS = 2;
+        const COL_W = 100 / COLS;
+        const ROW_H = 100 / ROWS;
+        const out: Record<string, { x: number; y: number }> = {};
+        for (const id of AGENT_ORDER) {
+            const roomId = agentRoomMap[id];
+            const idx = rooms.findIndex(r => r.id === roomId);
+            if (idx < 0) { out[id] = { x: 50, y: 50 }; continue; }
+            const col = idx % COLS;
+            const row = Math.floor(idx / COLS);
+            const local = (rooms[idx].homePos || {})[id] || { x: 50, y: 60 };
+            out[id] = {
+                x: col * COL_W + (local.x / 100) * COL_W,
+                y: row * ROW_H + (local.y / 100) * ROW_H,
+            };
+        }
+        return out;
+    }
+
+    /** Full floor-plan data: every available room with floor/furniture/animation URIs and home positions. */
+    private _buildAllRoomsData() {
+        const rooms = this._availableRooms();
+        return rooms.map(r => {
+            const { floorUri, furnitureUri } = this._resolveRoomAssets(r);
+            const animations = this._resolveAnimationUris(r);
+            return {
+                id: r.id,
+                name: r.name,
+                emoji: r.emoji,
+                floorUri,
+                furnitureUri,
+                animations,
+                agents: r.agents,
+                homePos: r.homePos,
+            };
+        });
+    }
+
+    private _sendInit() {
+        const characterUris: Record<string, string> = {};
+        const sources: Record<string, string> = {};
+        let firstUri = '';
+        const missing: string[] = [];
+        for (const id of AGENT_ORDER) {
+            const r = this._resolveCharacterSprite(id);
+            if (r.uri) {
+                characterUris[id] = r.uri;
+                sources[id] = r.source;
+                if (!firstUri) firstUri = r.uri;
+            } else {
+                missing.push(id);
+            }
+        }
+        const agents = AGENT_ORDER.map(id => ({
+            id,
+            name: AGENTS[id].name,
+            role: AGENTS[id].role,
+            emoji: AGENTS[id].emoji,
+            color: AGENTS[id].color,
+            specialty: AGENTS[id].specialty,
+            sprite: characterUris[id] || ''
+        }));
+        const dir = getCompanyDir();
+        const userPath = OfficePanel._resolveUserAssetsPath();
+        const bundledCount = Object.values(sources).filter(s => s === 'bundled').length;
+        const userCount = Object.values(sources).filter(s => s === 'user').length;
+        // Phase-B-1 connected campus: Office + Cafe + Garden in one world.
+        // If user dropped a custom full-stage map (e.g. assets/map.jpeg),
+        // that single PNG replaces the procedural world (grass + buildings + decor)
+        // AND we override desk positions with hand-tuned CUSTOM_MAP_DESKS so each
+        // agent sits in the right room on the AI-generated map.
+        const world = this._resolveWorld();
+        const customMapUri = this._resolveCustomOfficeMap();
+        if (customMapUri) {
+            world.desks = { ...world.desks, ...CUSTOM_MAP_DESKS };
+        }
+        this._panel.webview.postMessage({
+            type: 'officeInit',
+            agents,
+            companyName: readCompanyName() || '1인 기업',
+            companyDir: dir.replace(os.homedir(), '~'),
+            assetsAvailable: Object.keys(characterUris).length > 0,
+            world,
+            customMapUri,
+            debug: {
+                userPath,
+                bundledCount,
+                userCount,
+                missing,
+                firstSpriteUri: firstUri,
+                buildingsLoaded: world.buildings.filter(b => b.layer1Uri).length,
+                decorationsLoaded: world.decorations.length,
+                customMap: customMapUri ? 'OK' : 'none',
+            }
+        });
+    }
+
+    private _broadcastRoom(roomId: string) {
+        const room = ROOMS.find(r => r.id === roomId);
+        if (!room) return;
+        const { floorUri, furnitureUri } = this._resolveRoomAssets(room);
+        const animations = this._resolveAnimationUris(room);
+        this._panel.webview.postMessage({
+            type: 'roomChanged',
+            roomId: room.id,
+            name: room.name,
+            emoji: room.emoji,
+            floorUri,
+            furnitureUri,
+            animations,
+            roomAgents: room.agents,
+            roomHomePos: room.homePos,
+        });
+    }
+
+    public dispose() {
+        try { this._provider.unregisterCorporateBroadcastTarget(this._panel.webview); } catch { /* ignore */ }
+        OfficePanel.current = undefined;
+        try { this._provider.broadcastOfficeState(false); } catch { /* ignore */ }
+        this._panel.dispose();
+        while (this._disposables.length) {
+            const d = this._disposables.pop();
+            try { d?.dispose(); } catch { /* ignore */ }
+        }
+    }
+
+    private _renderHtml(): string {
+        const csp = this._panel.webview.cspSource;
+        return `<!DOCTYPE html><html lang="ko"><head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${csp} data: blob: https: vscode-resource: vscode-webview-resource:; style-src ${csp} 'unsafe-inline'; script-src 'unsafe-inline'; font-src ${csp} data:;">
+<title>🏢 가상 사무실</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'SF Pro Display',-apple-system,'Segoe UI',sans-serif}
+:root{--accent:#00FF41;--accent2:#008F11;--accent-glow:rgba(0,255,65,.25);--bg:#070A0F;--bg2:#0B0E14;--surface:rgba(15,18,24,.85);--border:rgba(255,255,255,.08);--text:#E5E7EB;--text-dim:#9CA3AF}
+html,body{width:100%;height:100%;background:var(--bg);color:var(--text);overflow:hidden}
+body{display:flex;flex-direction:column}
+
+/* ===== Top bar ===== */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:rgba(8,10,15,.92);border-bottom:1px solid var(--border);flex-shrink:0;backdrop-filter:blur(10px);z-index:10}
+.topbar::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent) 50%,transparent);opacity:.4;animation:lineGlow 4s infinite alternate}
+@keyframes lineGlow{0%{opacity:.2}100%{opacity:.6}}
+.topbar h1{font-size:13px;font-weight:700;color:var(--text);letter-spacing:.3px}
+.topbar h1 span{color:var(--accent);text-shadow:0 0 8px var(--accent-glow)}
+.topbar .meta{font-family:'SF Mono',monospace;font-size:10px;color:var(--text-dim)}
+.topbar .topbtn{background:var(--surface);border:1px solid var(--border);color:var(--text-dim);padding:5px 12px;border-radius:7px;cursor:pointer;font-size:10px;letter-spacing:.5px;text-transform:uppercase;font-family:'SF Mono',monospace;transition:all .25s}
+.topbar .topbtn:hover{color:var(--accent);border-color:var(--accent);box-shadow:0 0 10px var(--accent-glow)}
+.topbar .topbtn-mini{background:transparent;border:1px solid var(--border);color:var(--text-dim);width:22px;height:22px;border-radius:6px;cursor:pointer;font-size:11px;display:inline-flex;align-items:center;justify-content:center;margin-left:4px;vertical-align:middle;transition:all .25s;padding:0}
+.topbar .topbtn-mini:hover{color:var(--accent);border-color:var(--accent);box-shadow:0 0 8px var(--accent-glow)}
+
+/* HUD stat chips — DAY / OUTPUT / IDLE-WORKING / TIME */
+.hud{display:flex;align-items:center;gap:6px;font-family:'SF Mono',monospace;font-size:9.5px}
+.hud .stat{display:flex;flex-direction:column;align-items:center;padding:3px 9px;background:rgba(0,255,65,.04);border:1px solid rgba(0,255,65,.18);border-radius:6px;min-width:54px;line-height:1.2}
+.hud .stat .lbl{color:var(--text-dim);font-size:7.5px;letter-spacing:1.5px;text-transform:uppercase;opacity:.7}
+.hud .stat .val{color:var(--accent);font-weight:700;font-size:11px;text-shadow:0 0 6px var(--accent-glow)}
+.hud .stat.live .val::after{content:'';display:inline-block;width:5px;height:5px;background:#ef4444;border-radius:50%;margin-left:5px;animation:liveBlink 1.4s infinite;vertical-align:middle;box-shadow:0 0 4px #ef4444}
+@keyframes liveBlink{0%,49%{opacity:1}50%,100%{opacity:.3}}
+.hud .stat.warn{border-color:rgba(255,171,64,.3)}
+.hud .stat.warn .val{color:#ffab40;text-shadow:0 0 6px rgba(255,171,64,.4)}
+
+/* ===== Office Floor — unified office (single Office_Design_2.gif bg) =====
+   Legacy TV-studio dual-layer rules (bg-stack, office-fg, office-anims) and
+   the conflicting office-bg transform translate(-50%, -50%) shorthand have
+   been removed — they were pulling the bg image off-screen by half its own
+   size. */
+.office-wrap{flex:1;display:flex;min-height:0}
+.office-floor{flex:1;position:relative;overflow:hidden;border-right:1px solid var(--border);background:#070A0F}
+
+/* === Unified office stage — ONE pre-built office bg fills the floor area ===
+   stageInner has a fixed aspect-ratio matching the bg image (512×544).
+   Agents are children of stageInner and use % coords that map directly to
+   the bg image, so a character at (78,80)% lands inside the CEO office
+   regardless of panel size. */
+.office-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:0;background:#070A0F}
+/* stageInner sized inline by fitStage() to maintain world aspect ratio (1400/700). */
+.office-stage-inner{position:relative;--char-scale:1.5;overflow:hidden;border-radius:6px;box-shadow:0 0 0 1px rgba(0,255,65,.18),0 8px 32px rgba(0,0,0,.6)}
+
+/* Garden grass — tiled LimeZu grass texture (base layer of world canvas).
+   Tile size set inline by JS based on world scale so pixels stay crisp. */
+.world-grass{position:absolute;inset:0;background-repeat:repeat;image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:none;z-index:0}
+/* Stone walkway paths between buildings — same tiled texture pattern */
+.world-paths{position:absolute;inset:0;pointer-events:none;z-index:1}
+.world-paths .path-strip{position:absolute;background-repeat:repeat;image-rendering:pixelated;image-rendering:crisp-edges;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+/* Buildings layer — pre-built scene PNGs/GIFs at fixed world pixel positions */
+.world-buildings{position:absolute;inset:0;pointer-events:none;z-index:2}
+.world-buildings img{position:absolute;image-rendering:pixelated;image-rendering:crisp-edges;display:block}
+/* Decorations layer — single garden tiles (trees, benches, flowers) */
+.world-decorations{position:absolute;inset:0;pointer-events:none;z-index:3}
+.world-decorations img{position:absolute;image-rendering:pixelated;image-rendering:crisp-edges;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5));display:block;transform:translate(-50%,-100%)}
+.office-bg{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:none;display:block}
+.office-zones{position:absolute;inset:0;pointer-events:none;z-index:2}
+.office-zones .zone-label{position:absolute;font-family:'SF Mono',monospace;font-size:8px;letter-spacing:1px;color:var(--accent);text-transform:uppercase;text-shadow:0 0 6px rgba(0,255,65,.7),0 1px 2px rgba(0,0,0,.95);opacity:.55;transform:translate(-50%,-100%);white-space:nowrap;padding:1px 4px;border-radius:2px;background:rgba(0,8,4,.45)}
+/* Hide legacy single-room overlay UI in unified-office mode. */
+body.floorplan .conf-room,body.floorplan .location{display:none!important}
+.office-vignette{position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.45) 100%);pointer-events:none;z-index:3}
+
+/* Floating particles drifting up — feels alive */
+.particles{position:absolute;inset:0;pointer-events:none;z-index:4;overflow:hidden}
+.particles span{position:absolute;width:2px;height:2px;border-radius:50%;background:rgba(0,255,65,.45);box-shadow:0 0 4px rgba(0,255,65,.7);animation:floatUp 14s linear infinite;opacity:0}
+@keyframes floatUp{0%{transform:translateY(0);opacity:0}10%{opacity:.8}90%{opacity:.6}100%{transform:translateY(-100vh);opacity:0}}
+
+/* Conference room — glass-walled boardroom with holographic projection */
+.conf-room{position:absolute;left:50%;top:3%;transform:translateX(-50%);width:42%;min-width:340px;max-width:560px;height:20%;min-height:130px;
+  background:
+    linear-gradient(180deg,rgba(0,255,65,.07),rgba(0,143,17,.02)),
+    radial-gradient(ellipse at 50% 100%,rgba(0,255,65,.12),transparent 60%);
+  border:1px solid rgba(0,255,65,.5);border-radius:14px;
+  box-shadow:
+    inset 0 0 40px rgba(0,255,65,.1),
+    inset 0 0 0 1px rgba(0,0,0,.5),
+    0 8px 28px rgba(0,255,65,.18),
+    0 0 60px rgba(0,255,65,.08);
+  z-index:4;
+  backdrop-filter:blur(2px)}
+/* corner brackets — futuristic frame */
+.conf-room::before{content:'';position:absolute;top:0;left:0;width:18px;height:18px;border-top:2px solid var(--accent);border-left:2px solid var(--accent);border-radius:14px 0 0 0;opacity:.7}
+.conf-room::after{content:'';position:absolute;top:0;right:0;width:18px;height:18px;border-top:2px solid var(--accent);border-right:2px solid var(--accent);border-radius:0 14px 0 0;opacity:.7}
+.conf-label{position:absolute;top:6px;left:50%;transform:translateX(-50%);font-family:'SF Mono',monospace;font-size:8px;letter-spacing:4px;color:var(--accent);opacity:.85;text-shadow:0 0 8px var(--accent-glow);z-index:5}
+.conf-label::before{content:'◆ ';opacity:.6}
+.conf-label::after{content:' ◆';opacity:.6}
+
+/* glass holographic projection — shows brief during commands */
+.whiteboard{position:absolute;top:20px;left:50%;transform:translateX(-50%);width:82%;max-width:420px;height:54px;
+  background:linear-gradient(180deg,rgba(0,30,15,.92),rgba(0,15,8,.95));
+  border:1px solid rgba(0,255,65,.3);border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'SF Mono',monospace;font-size:10.5px;color:var(--text-dim);text-align:center;padding:8px;line-height:1.4;overflow:hidden;
+  box-shadow:inset 0 0 14px rgba(0,255,65,.06),0 0 0 1px rgba(0,0,0,.5)}
+.whiteboard::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,255,65,.05) 2px 3px);pointer-events:none}
+.whiteboard.active{border-color:var(--accent);background:linear-gradient(180deg,rgba(0,40,20,.95),rgba(0,20,10,.98));color:var(--text);box-shadow:inset 0 0 22px rgba(0,255,65,.18),0 0 24px var(--accent-glow);animation:wbPulse 2.4s ease-in-out infinite}
+@keyframes wbPulse{0%,100%{box-shadow:inset 0 0 22px rgba(0,255,65,.18),0 0 24px var(--accent-glow)}50%{box-shadow:inset 0 0 28px rgba(0,255,65,.28),0 0 38px var(--accent-glow)}}
+.whiteboard .wb-line{display:block;animation:wbType .4s ease-out backwards;position:relative;z-index:1}
+@keyframes wbType{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
+
+/* conference table with holographic glow on top */
+.conf-table{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);width:78%;height:26%;
+  background:linear-gradient(180deg,#1a2028 0%,#0c1218 100%);
+  border:1px solid rgba(0,255,65,.25);border-radius:50px;
+  box-shadow:
+    0 6px 14px rgba(0,0,0,.6),
+    inset 0 1px 0 rgba(0,255,65,.15),
+    inset 0 0 20px rgba(0,255,65,.06)}
+.conf-table::before{content:'';position:absolute;left:8%;right:8%;top:30%;bottom:30%;background:radial-gradient(ellipse,rgba(0,255,65,.15),transparent 70%);border-radius:50%;animation:tablePulse 3s ease-in-out infinite}
+@keyframes tablePulse{0%,100%{opacity:.5}50%{opacity:1}}
+
+/* Workstations — proper desk with dual monitors, LED strip, PC tower */
+.desk{position:absolute;width:108px;height:78px;transform:translate(-50%,-50%);z-index:3;pointer-events:none}
+.desk .ds-top{position:absolute;left:0;right:0;top:24px;height:32px;
+  background:linear-gradient(180deg,#1a2028 0%,#0c1218 100%);
+  border:1px solid rgba(0,255,65,.2);border-radius:4px;
+  box-shadow:0 4px 8px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.04)}
+/* desk LED strip — glows in agent color */
+.desk .ds-top::before{content:'';position:absolute;left:6px;right:6px;bottom:1px;height:1.5px;background:var(--ag-color,var(--accent));box-shadow:0 0 6px var(--ag-color,var(--accent));opacity:.8;border-radius:1px;animation:ledStripPulse 3s ease-in-out infinite}
+@keyframes ledStripPulse{0%,100%{opacity:.5}50%{opacity:1}}
+/* PC tower under desk */
+.desk .ds-top::after{content:'';position:absolute;right:4px;bottom:-12px;width:9px;height:14px;background:linear-gradient(135deg,#1c2228,#0a0e14);border:1px solid rgba(255,255,255,.06);border-radius:1.5px;box-shadow:0 0 4px rgba(0,255,65,.2)}
+
+/* Dual monitor frame */
+.desk .ds-monitor{position:absolute;left:50%;top:0;transform:translateX(-50%);width:80px;height:30px;display:flex;gap:2px;justify-content:center}
+.desk .ds-screen{flex:0 0 38px;height:26px;background:#000;border:1.2px solid #2a3038;border-radius:2px;
+  box-shadow:0 0 10px rgba(0,255,65,.18),inset 0 0 0 1px rgba(0,0,0,.5);
+  overflow:hidden;position:relative}
+/* monitor stand */
+.desk .ds-monitor::after{content:'';position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);width:14px;height:4px;background:#1a1f26;border-radius:0 0 4px 4px;box-shadow:0 1px 2px rgba(0,0,0,.6)}
+/* scanline overlay on each screen */
+.desk .ds-screen::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 1px,rgba(0,0,0,.25) 1px 2px);pointer-events:none;z-index:3}
+.desk .ds-screen::before{content:'';position:absolute;inset:0;z-index:1}
+
+/* Per-agent screen content */
+/* CEO: command graph with sweeping radar arm */
+.desk[data-agent="ceo"] .ds-screen::before{background:radial-gradient(circle at 50% 50%,rgba(0,255,65,.4) 0%,rgba(0,255,65,0) 1px,rgba(0,255,65,.1) 2px,rgba(0,255,65,0) 3px,rgba(0,255,65,.1) 6px,rgba(0,255,65,0) 7px,rgba(0,255,65,.08) 12px,rgba(0,255,65,0) 13px),conic-gradient(from 0deg,rgba(0,255,65,.5),transparent 70%);animation:radarSweep 4s linear infinite}
+@keyframes radarSweep{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+/* Developer: scrolling code lines */
+.desk[data-agent="developer"] .ds-screen::before{background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(34,211,238,.7) 3px 4px,transparent 4px 7px,rgba(34,211,238,.4) 7px 8px,transparent 8px 12px,rgba(34,211,238,.55) 12px 13px,transparent 13px 16px,rgba(34,211,238,.3) 16px 17px,transparent 17px 22px);background-size:100% 22px;animation:codeScroll 3s linear infinite}
+@keyframes codeScroll{from{background-position:0 0}to{background-position:0 22px}}
+
+/* Designer: rotating color swatches */
+.desk[data-agent="designer"] .ds-screen::before{background:conic-gradient(from 0deg,#FF0033 0deg 60deg,#FBBF24 60deg 120deg,#22D3EE 120deg 180deg,#A78BFA 180deg 240deg,#34D399 240deg 300deg,#E1306C 300deg 360deg);filter:saturate(.85) brightness(.7);animation:colorSpin 8s linear infinite;border-radius:50%;margin:6px}
+@keyframes colorSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+/* YouTube: red bars rising/falling like audio meter */
+.desk[data-agent="youtube"] .ds-screen::before{background:linear-gradient(90deg,
+  rgba(255,0,51,.7) 0%,rgba(255,0,51,.7) 8%,transparent 8% 12%,
+  rgba(255,0,51,.5) 12% 20%,transparent 20% 24%,
+  rgba(255,0,51,.8) 24% 32%,transparent 32% 36%,
+  rgba(255,0,51,.4) 36% 44%,transparent 44% 48%,
+  rgba(255,0,51,.6) 48% 56%,transparent 56% 60%,
+  rgba(255,0,51,.7) 60% 68%,transparent 68% 72%,
+  rgba(255,0,51,.5) 72% 80%,transparent 80% 84%,
+  rgba(255,0,51,.6) 84% 92%,transparent 92% 100%);background-size:100% 100%;animation:audioBars .6s ease-in-out infinite alternate;mask-image:linear-gradient(0deg,#000 0%,#000 100%)}
+@keyframes audioBars{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(20deg) brightness(1.2)}}
+
+/* Instagram: pink heart pulse + grid */
+.desk[data-agent="instagram"] .ds-screen::before{background:radial-gradient(circle at 50% 55%,rgba(225,48,108,.85) 0%,rgba(225,48,108,.5) 20%,transparent 35%),repeating-linear-gradient(0deg,rgba(247,119,55,.15) 0 4px,transparent 4px 8px),repeating-linear-gradient(90deg,rgba(247,119,55,.15) 0 4px,transparent 4px 8px);animation:igPulse 1.6s ease-in-out infinite}
+@keyframes igPulse{0%,100%{transform:scale(.95);opacity:.7}50%{transform:scale(1.05);opacity:1}}
+
+/* Business: bar chart growing */
+.desk[data-agent="business"] .ds-screen::before{background:linear-gradient(0deg,rgba(251,191,36,.7) 0%,rgba(251,191,36,.7) 30%,transparent 30%) 0 100%/12% 100% no-repeat,linear-gradient(0deg,rgba(251,191,36,.7) 0%,rgba(251,191,36,.7) 50%,transparent 50%) 16% 100%/12% 100% no-repeat,linear-gradient(0deg,rgba(251,191,36,.7) 0%,rgba(251,191,36,.7) 70%,transparent 70%) 32% 100%/12% 100% no-repeat,linear-gradient(0deg,rgba(251,191,36,.7) 0%,rgba(251,191,36,.7) 45%,transparent 45%) 48% 100%/12% 100% no-repeat,linear-gradient(0deg,rgba(251,191,36,.7) 0%,rgba(251,191,36,.7) 85%,transparent 85%) 64% 100%/12% 100% no-repeat,linear-gradient(0deg,rgba(251,191,36,.7) 0%,rgba(251,191,36,.7) 60%,transparent 60%) 80% 100%/12% 100% no-repeat;animation:barsRise 2.4s ease-in-out infinite alternate}
+@keyframes barsRise{from{filter:brightness(.7)}to{filter:brightness(1.2)}}
+
+/* Secretary: scrolling event list */
+.desk[data-agent="secretary"] .ds-screen::before{background:repeating-linear-gradient(0deg,rgba(52,211,153,.55) 0 2px,transparent 2px 4px,rgba(52,211,153,.3) 4px 5px,transparent 5px 8px);background-size:100% 16px;animation:listScroll 4s linear infinite}
+@keyframes listScroll{from{background-position:0 0}to{background-position:0 16px}}
+
+/* second screen — slightly dimmer secondary feed */
+.desk .ds-screen.s2{opacity:.65}
+
+.desk .ds-chair{position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:30px;height:18px;
+  background:linear-gradient(180deg,#1a2030,#0c1220);
+  border:1px solid rgba(0,255,65,.18);border-radius:5px 5px 9px 9px;
+  box-shadow:0 2px 4px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.04)}
+.desk[data-side="bottom"] .ds-chair{top:0;bottom:auto;border-radius:9px 9px 5px 5px}
+.desk[data-side="bottom"] .ds-monitor{top:auto;bottom:0}
+.desk[data-side="bottom"] .ds-top{top:auto;bottom:24px}
+
+.desk-label{position:absolute;left:50%;bottom:-12px;transform:translateX(-50%);font-family:'SF Mono',monospace;font-size:7px;letter-spacing:1.5px;color:var(--ag-color,var(--text-dim));opacity:.6;white-space:nowrap;text-transform:uppercase;text-shadow:0 0 4px var(--ag-color-glow,transparent)}
+.desk[data-side="bottom"] .desk-label{bottom:auto;top:-12px}
+
+/* Decor — emoji icons with subtle float */
+.decor{position:absolute;pointer-events:none;z-index:3;font-size:24px;filter:drop-shadow(0 3px 5px rgba(0,0,0,.7));animation:decorFloat 5s ease-in-out infinite}
+.decor:nth-of-type(odd){animation-delay:-2s}
+@keyframes decorFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+
+/* ===== Locations — Smallville routine destinations (JS positions to bg-image %) ===== */
+.location{position:absolute;transform:translate(-50%,-50%);z-index:5;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:2px;background:rgba(0,0,0,.65);border:1px solid rgba(0,255,65,.4);border-radius:8px;padding:4px 8px;backdrop-filter:blur(2px)}
+.location .loc-icon{font-size:18px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.8))}
+.location .loc-label{font-family:'SF Mono',monospace;font-size:7px;letter-spacing:1.5px;color:var(--accent);opacity:.85;white-space:nowrap;text-transform:uppercase;text-shadow:0 0 4px var(--accent-glow)}
+.location.active{animation:locPulse 1.5s ease-in-out infinite;border-color:var(--accent);box-shadow:0 0 14px var(--accent-glow)}
+@keyframes locPulse{0%,100%{box-shadow:0 0 14px var(--accent-glow)}50%{box-shadow:0 0 22px var(--accent-glow)}}
+.loc-brain{border-color:rgba(167,139,250,.6)}
+.loc-brain .loc-label{color:#A78BFA;text-shadow:0 0 4px rgba(167,139,250,.5)}
+.loc-brain.active{border-color:#A78BFA;box-shadow:0 0 16px rgba(167,139,250,.6)}
+
+/* ===== Status icon above each agent (mood/state) ===== */
+.ag-status{position:absolute;top:-22px;left:50%;transform:translateX(-50%);font-size:11px;background:rgba(8,10,15,.92);border:1px solid var(--ag-color,var(--accent));border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;line-height:1;z-index:8;box-shadow:0 0 6px var(--ag-color-glow,var(--accent-glow));transition:all .3s;animation:statusPop .35s cubic-bezier(.16,1,.3,1)}
+@keyframes statusPop{from{transform:translateX(-50%) scale(0)}to{transform:translateX(-50%) scale(1)}}
+.ag-status.fade{opacity:0;transform:translateX(-50%) scale(.8)}
+
+/* Thought bubble (small dotted bubble for inner monologue) */
+.thought{position:absolute;left:50%;bottom:calc(100% + 22px);transform:translateX(-50%);background:rgba(8,10,15,.94);border:1px dashed var(--ag-color,var(--accent));border-radius:14px;padding:5px 11px;font-size:9.5px;font-style:italic;color:var(--text-dim);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;font-family:'SF Mono',monospace;z-index:19;box-shadow:0 4px 12px rgba(0,0,0,.6);animation:thoughtIn .4s cubic-bezier(.16,1,.3,1)}
+.thought::after{content:'';position:absolute;left:50%;top:100%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;background:rgba(8,10,15,.94);border:1px dashed var(--ag-color,var(--accent));margin-top:2px}
+.thought::before{content:'';position:absolute;left:calc(50% - 9px);top:calc(100% + 7px);width:3px;height:3px;border-radius:50%;background:rgba(8,10,15,.94);border:1px dashed var(--ag-color,var(--accent))}
+@keyframes thoughtIn{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* ===== Agent profile modal — centered overlay with backdrop, on top of everything ===== */
+.agent-modal-backdrop{position:fixed;inset:0;background:rgba(0,5,10,.65);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:center;justify-content:center;animation:amdBdIn .25s ease-out}
+.agent-modal-backdrop[hidden]{display:none}
+@keyframes amdBdIn{from{opacity:0}to{opacity:1}}
+.agent-modal{position:relative;width:min(420px,92vw);max-height:88vh;background:linear-gradient(180deg,rgba(10,14,22,.98),rgba(8,10,15,.99));border:1px solid rgba(0,255,65,.5);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:11px;box-shadow:0 20px 60px rgba(0,0,0,.85),0 0 40px var(--accent-glow);overflow-y:auto;animation:amdIn .35s cubic-bezier(.16,1,.3,1)}
+@keyframes amdIn{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+.agent-modal::-webkit-scrollbar{width:5px}
+.agent-modal::-webkit-scrollbar-thumb{background:var(--accent);opacity:.4;border-radius:2px}
+.amd-head{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid rgba(0,255,65,.18)}
+.amd-emoji{font-size:24px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;background:rgba(0,255,65,.06);border:1px solid rgba(0,255,65,.3);border-radius:8px}
+.amd-title{flex:1;min-width:0}
+.amd-name{font-size:13px;font-weight:700;color:var(--accent);letter-spacing:.3px}
+.amd-role{font-size:9.5px;color:var(--text-dim);font-family:'SF Mono',monospace;letter-spacing:1px;text-transform:uppercase;margin-top:2px}
+.amd-close{background:transparent;border:1px solid var(--border);color:var(--text-dim);width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:12px;line-height:1;transition:all .2s}
+.amd-close:hover{color:#ef4444;border-color:#ef4444;box-shadow:0 0 6px rgba(239,68,68,.4)}
+.amd-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.amd-stat{background:rgba(0,255,65,.04);border:1px solid rgba(0,255,65,.18);border-radius:6px;padding:6px 8px;text-align:center}
+.amd-stat-lbl{font-family:'SF Mono',monospace;font-size:7px;color:var(--text-dim);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px}
+.amd-stat-val{font-size:13px;font-weight:700;color:var(--accent);text-shadow:0 0 6px var(--accent-glow);font-family:'SF Mono',monospace}
+.amd-section{display:flex;flex-direction:column;gap:5px;flex:1;min-height:80px}
+.amd-section-head{font-family:'SF Mono',monospace;font-size:9px;letter-spacing:1.5px;color:var(--text-dim);text-transform:uppercase;opacity:.8}
+.amd-content{background:rgba(0,255,65,.025);border:1px solid rgba(0,255,65,.12);border-radius:6px;padding:8px 10px;font-size:10.5px;color:var(--text);font-family:'SF Mono',monospace;line-height:1.55;max-height:160px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin:0}
+.amd-content::-webkit-scrollbar{width:4px}
+.amd-content::-webkit-scrollbar-thumb{background:var(--accent);opacity:.4;border-radius:2px}
+.amd-sessions{display:flex;flex-direction:column;gap:3px;font-size:10px;font-family:'SF Mono',monospace;color:var(--text-dim)}
+.amd-sessions .amd-sess{padding:3px 8px;background:rgba(0,255,65,.03);border:1px solid rgba(0,255,65,.1);border-radius:4px}
+.amd-foot{padding-top:8px;border-top:1px solid rgba(0,255,65,.18);display:flex;gap:6px}
+.amd-btn{flex:1;background:rgba(0,255,65,.06);border:1px solid rgba(0,255,65,.3);color:var(--accent);padding:7px 10px;border-radius:6px;cursor:pointer;font-size:10px;font-family:'SF Mono',monospace;letter-spacing:.5px;transition:all .2s}
+.amd-btn:hover{background:rgba(0,255,65,.12);box-shadow:0 0 10px var(--accent-glow)}
+.amd-btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000;border-color:transparent;font-weight:700}
+.amd-btn.primary:hover{filter:brightness(1.15);box-shadow:0 4px 14px var(--accent-glow)}
+
+/* Per-agent settings form fields */
+.amd-form{display:flex;flex-direction:column;gap:8px}
+.amd-field{display:flex;flex-direction:column;gap:3px}
+.amd-field-lbl{font-family:'SF Mono',monospace;font-size:8.5px;letter-spacing:1.2px;color:var(--text-dim);text-transform:uppercase;opacity:.85}
+.amd-field-help{font-size:9px;color:var(--text-dim);opacity:.6;margin-top:1px;font-style:italic}
+.amd-input{background:rgba(0,255,65,.04);border:1px solid rgba(0,255,65,.18);border-radius:5px;padding:7px 9px;font-size:11px;color:var(--text);font-family:'SF Mono',monospace;outline:none;transition:all .2s}
+.amd-input:focus{border-color:var(--accent);box-shadow:0 0 8px var(--accent-glow);background:rgba(0,255,65,.08)}
+textarea.amd-input{resize:vertical;min-height:50px;line-height:1.45}
+.amd-save-status{font-size:9.5px;font-family:'SF Mono',monospace;letter-spacing:.5px;text-align:center;padding:4px;border-radius:4px;opacity:0;transition:opacity .3s}
+.amd-save-status.show{opacity:1}
+.amd-save-status.success{color:var(--accent);background:rgba(0,255,65,.08)}
+.amd-save-status.error{color:#ef4444;background:rgba(239,68,68,.08)}
+
+/* ===== Corporate Gate — cinematic centered access modal ===== */
+.cg-backdrop{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(0,12,6,.55) 0%,rgba(0,0,0,.9) 80%);backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2);animation:cgBdIn .35s ease-out}
+.cg-backdrop[hidden]{display:none}
+@keyframes cgBdIn{from{opacity:0;backdrop-filter:blur(0)}to{opacity:1;backdrop-filter:blur(10px)}}
+.cg-backdrop::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,255,65,.025) 0px,rgba(0,255,65,.025) 1px,transparent 1px,transparent 3px);pointer-events:none;animation:cgScan 8s linear infinite;mix-blend-mode:screen}
+@keyframes cgScan{from{background-position:0 0}to{background-position:0 100px}}
+
+.cg-modal{position:relative;width:min(380px,90vw);background:linear-gradient(180deg,rgba(6,12,8,.98),rgba(2,6,3,.99));border:1px solid rgba(0,255,65,.55);border-radius:14px;padding:28px 26px 22px;box-shadow:0 0 0 1px rgba(0,255,65,.08) inset,0 30px 80px rgba(0,0,0,.85),0 0 60px rgba(0,255,65,.25),0 0 120px rgba(0,255,65,.12);animation:cgIn .55s cubic-bezier(.16,1,.3,1);transform-origin:center}
+.cg-modal.shake{animation:cgShake .45s cubic-bezier(.36,.07,.19,.97);border-color:rgba(239,68,68,.7);box-shadow:0 0 0 1px rgba(239,68,68,.18) inset,0 30px 80px rgba(0,0,0,.85),0 0 60px rgba(239,68,68,.4),0 0 120px rgba(239,68,68,.18)}
+@keyframes cgIn{0%{opacity:0;transform:translateY(20px) scale(.92);filter:blur(6px)}60%{opacity:1;transform:translateY(-2px) scale(1.01);filter:blur(0)}100%{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}}
+@keyframes cgShake{0%,100%{transform:translateX(0)}10%{transform:translateX(-8px)}20%{transform:translateX(7px)}30%{transform:translateX(-6px)}40%{transform:translateX(5px)}50%{transform:translateX(-4px)}60%{transform:translateX(3px)}70%{transform:translateX(-2px)}80%{transform:translateX(1px)}}
+
+/* corner brackets */
+.cg-modal::before,.cg-modal::after,.cg-corner{position:absolute;width:18px;height:18px;border:2px solid var(--accent);pointer-events:none;filter:drop-shadow(0 0 4px var(--accent-glow))}
+.cg-modal::before{content:'';top:-1px;left:-1px;border-right:none;border-bottom:none;border-top-left-radius:14px}
+.cg-modal::after{content:'';top:-1px;right:-1px;border-left:none;border-bottom:none;border-top-right-radius:14px}
+.cg-corner.bl{bottom:-1px;left:-1px;border-right:none;border-top:none;border-bottom-left-radius:14px}
+.cg-corner.br{bottom:-1px;right:-1px;border-left:none;border-top:none;border-bottom-right-radius:14px}
+
+.cg-lock-wrap{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:14px}
+.cg-lock{font-size:42px;line-height:1;filter:drop-shadow(0 0 12px var(--accent-glow));animation:cgLockPulse 2.4s ease-in-out infinite}
+@keyframes cgLockPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 12px var(--accent-glow))}50%{transform:scale(1.06);filter:drop-shadow(0 0 20px var(--accent-glow)) drop-shadow(0 0 32px var(--accent-glow))}}
+.cg-tag{font-family:'SF Mono','JetBrains Mono',monospace;font-size:9px;letter-spacing:3px;color:var(--accent);opacity:.7;text-transform:uppercase;padding:2px 8px;border:1px solid rgba(0,255,65,.3);border-radius:3px;background:rgba(0,255,65,.05)}
+
+.cg-title{text-align:center;font-size:15px;font-weight:700;letter-spacing:1.5px;color:#F8FAFC;text-shadow:0 0 8px rgba(0,255,65,.5);margin-bottom:4px;font-family:'SF Mono',monospace}
+.cg-sub{text-align:center;font-size:11px;color:var(--text-dim);line-height:1.55;margin-bottom:18px;font-family:'SF Mono',monospace;letter-spacing:.3px}
+
+.cg-input-wrap{position:relative;margin-bottom:8px}
+.cg-input{width:100%;background:rgba(0,16,4,.7);border:1px solid rgba(0,255,65,.35);border-radius:8px;padding:14px 16px;font-size:18px;color:var(--accent);font-family:'SF Mono','JetBrains Mono',monospace;letter-spacing:8px;text-align:center;outline:none;transition:all .25s;text-shadow:0 0 8px var(--accent-glow);box-sizing:border-box;caret-color:var(--accent)}
+.cg-input::placeholder{color:rgba(0,255,65,.25);letter-spacing:4px;font-size:13px}
+.cg-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,255,65,.12),0 0 18px rgba(0,255,65,.35);background:rgba(0,28,8,.85)}
+
+.cg-err{min-height:16px;text-align:center;font-size:10px;color:#ef4444;font-family:'SF Mono',monospace;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px;opacity:0;transition:opacity .2s;text-shadow:0 0 6px rgba(239,68,68,.5)}
+.cg-err.show{opacity:1}
+
+.cg-actions{display:flex;gap:8px}
+.cg-btn{flex:1;padding:10px 14px;border-radius:7px;font-family:'SF Mono',monospace;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;transition:all .2s;font-weight:700}
+.cg-btn.cancel{background:transparent;border:1px solid rgba(255,255,255,.12);color:var(--text-dim)}
+.cg-btn.cancel:hover{border-color:rgba(255,255,255,.25);color:#fff;background:rgba(255,255,255,.04)}
+.cg-btn.ok{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#000;box-shadow:0 4px 18px rgba(0,255,65,.35)}
+.cg-btn.ok:hover{filter:brightness(1.15);box-shadow:0 6px 24px rgba(0,255,65,.55),0 0 20px rgba(0,255,65,.4);transform:translateY(-1px)}
+.cg-btn.ok:active{transform:translateY(0)}
+
+/* Agent piece — inline-SVG character + nameplate. Furniture is CSS-drawn behind. */
+.agent{position:absolute;width:60px;display:flex;flex-direction:column;align-items:center;gap:3px;transition:left .9s cubic-bezier(.16,1,.3,1),top .9s cubic-bezier(.16,1,.3,1);z-index:6;filter:drop-shadow(0 4px 6px rgba(0,0,0,.65));transform:scale(var(--char-scale,1));transform-origin:50% 96px}
+.agent .ag-led{position:absolute;top:-4px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--text-dim);opacity:.4;transition:all .3s;z-index:7}
+.agent.thinking .ag-led{background:#ffab40;animation:ledBlink 1s infinite;box-shadow:0 0 6px #ffab40;opacity:1}
+.agent.working .ag-led{background:var(--ag-color,var(--accent));animation:ledBlink .7s infinite;box-shadow:0 0 8px var(--ag-color,var(--accent));opacity:1}
+.agent.done .ag-led{background:#00cc77;box-shadow:0 0 6px #00cc77;opacity:1}
+@keyframes ledBlink{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Sprite character — LimeZu Premade_Character_48x48 atlas (2688×1968).
+   CRITICAL: each character cell is 48 wide × 96 tall (TILE × CHAR_HEIGHT, where CHAR_HEIGHT = TILE*2).
+   Rendering this as 48×48 (the bug we hit before) shows only the head/hair.
+   Idle frame: row 1, col 0 → background-position: 0 -96px
+   Walking row: row 2 (y=-192), 6 frames per direction (down 0–5, left 6–11, right 12–17, up 18–23) */
+.character{width:48px;height:96px;position:relative;overflow:hidden;image-rendering:pixelated;cursor:default;background-repeat:no-repeat;background-position:0 -96px;background-size:auto;filter:drop-shadow(0 6px 8px rgba(0,0,0,.65));animation:charBob 2.4s ease-in-out infinite;transform:scale(0.8);transform-origin:center bottom}
+@keyframes charBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1px)}}
+
+/* State glow under character */
+.character::before{content:'';position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);width:36px;height:6px;border-radius:50%;background:radial-gradient(ellipse,var(--ag-color-glow,rgba(0,0,0,.4)) 0%,transparent 70%);opacity:0;transition:opacity .3s;pointer-events:none;z-index:-1}
+.agent.working .character::before,.agent.thinking .character::before{opacity:1}
+
+.ag-plate{font-family:'SF Mono','JetBrains Mono',monospace;font-size:8.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-bright);padding:2px 7px;background:rgba(0,0,0,.85);border:1px solid var(--ag-color,var(--border));border-radius:5px;text-shadow:0 0 4px var(--ag-color-glow,transparent);white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+.agent.idle .ag-plate{opacity:.7}
+.agent.working .ag-plate{color:var(--ag-color,var(--accent));box-shadow:0 0 10px var(--ag-color-glow,var(--accent-glow)),0 2px 6px rgba(0,0,0,.5)}
+
+/* Speech bubble above character (task toast / chat) */
+.bubble{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);background:rgba(8,10,15,.96);border:1px solid var(--ag-color,var(--accent));border-radius:8px;padding:5px 10px;font-size:10px;color:var(--text-bright);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;font-family:'SF Mono',monospace;z-index:20;box-shadow:0 4px 14px rgba(0,0,0,.7),0 0 14px var(--ag-color-glow,var(--accent-glow));animation:bubbleIn .35s cubic-bezier(.16,1,.3,1)}
+.bubble::after{content:'';position:absolute;left:50%;top:100%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--ag-color,var(--accent))}
+@keyframes bubbleIn{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* SVG dispatch beams */
+.beams{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;opacity:0;transition:opacity .3s}
+body.dispatching .beams{opacity:1}
+.beams .beam{stroke-dasharray:6 8;fill:none;animation:beamFlow 1.4s linear}
+@keyframes beamFlow{0%{stroke-dashoffset:80;opacity:0}20%{opacity:1}100%{stroke-dashoffset:0;opacity:.7}}
+
+/* ===== Side panel (activity log + report) — collapsed by default to maximize map ===== */
+.side{width:260px;flex-shrink:0;background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0;transition:width .25s ease,border-left-width .25s ease}
+.side.collapsed{width:0;border-left-width:0;overflow:hidden}
+.side-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.side-tab{flex:1;padding:7px;background:transparent;border:none;color:var(--text-dim);cursor:pointer;font-family:'SF Mono',monospace;font-size:9px;letter-spacing:.8px;text-transform:uppercase;border-bottom:2px solid transparent;transition:all .2s}
+.side-tab:hover{color:var(--text)}
+.side-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.side-pane{flex:1;overflow-y:auto;padding:10px;display:none}
+.side-pane.active{display:block}
+.side-pane::-webkit-scrollbar{width:4px}
+.side-pane::-webkit-scrollbar-thumb{background:var(--accent);opacity:.5;border-radius:2px}
+
+/* Activity log entries — tighter packing */
+.log-entry{display:flex;gap:6px;padding:4px 6px;margin-bottom:3px;background:var(--surface);border-left:2px solid var(--ag-color,var(--accent));border-radius:0 5px 5px 0;font-size:10px;animation:logIn .3s ease-out}
+@keyframes logIn{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:translateX(0)}}
+.log-time{font-family:'SF Mono',monospace;font-size:8px;color:var(--text-dim);flex-shrink:0;width:34px}
+.log-emoji{flex-shrink:0;font-size:11px}
+.log-text{color:var(--text);font-size:9.5px;line-height:1.4}
+.log-text strong{color:var(--ag-color,var(--accent))}
+
+/* Output stream cards (per agent) */
+.out-card{background:var(--surface);border:1px solid var(--ag-color,var(--border));border-left:3px solid var(--ag-color,var(--accent));border-radius:6px;padding:10px 12px;margin-bottom:10px;animation:logIn .35s ease-out}
+.out-head{font-family:'SF Mono',monospace;font-size:10px;letter-spacing:.5px;font-weight:700;color:var(--ag-color,var(--accent));margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.out-head .oh-task{color:var(--text-dim);font-weight:400;font-size:9px}
+.out-body{font-size:11px;color:var(--text);line-height:1.55;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto}
+.out-body::-webkit-scrollbar{width:4px}.out-body::-webkit-scrollbar-thumb{background:var(--ag-color,var(--accent));opacity:.4}
+.report-block{background:linear-gradient(135deg,rgba(0,255,65,.05),rgba(0,143,17,.02));border:1px solid rgba(0,255,65,.3);border-radius:8px;padding:14px;margin-top:10px;color:var(--text);font-size:11.5px;line-height:1.65;white-space:pre-wrap;animation:logIn .4s ease-out;box-shadow:0 0 14px rgba(0,255,65,.08)}
+.report-block .rb-head{font-family:'SF Mono',monospace;font-size:10px;letter-spacing:1.5px;color:var(--accent);margin-bottom:8px;text-transform:uppercase}
+
+/* ===== Bottom command bar ===== */
+.cmdbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(8,10,15,.96);border-top:1px solid var(--border);flex-shrink:0;z-index:10}
+.cmdbar input{flex:1;background:rgba(0,10,2,.7);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-family:inherit;font-size:13px;outline:none;transition:all .2s}
+.cmdbar input:focus{border-color:var(--accent);box-shadow:0 0 14px var(--accent-glow)}
+.cmdbar button{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px;transition:all .2s}
+.cmdbar button:hover{transform:translateY(-1px);box-shadow:0 4px 14px var(--accent-glow)}
+.cmdbar button:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+
+/* ===== Empty state ===== */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-dim);font-size:12px;text-align:center;padding:40px 20px;line-height:1.7}
+.empty .empty-icon{font-size:48px;margin-bottom:12px;opacity:.6}
+.empty code{background:var(--surface);border:1px solid var(--border);padding:2px 6px;border-radius:4px;color:var(--accent);font-family:'SF Mono',monospace}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🏢 <span id="topCompany">Loading...</span> · <span style="color:var(--text-dim);font-weight:400">Virtual Office</span> <button class="topbtn-mini" id="pickFolderBtn" title="회사 폴더 변경">⚙️</button></h1>
+  <div class="hud">
+    <div class="stat live"><div class="lbl">DAY</div><div class="val" id="hudDay">1</div></div>
+    <div class="stat"><div class="lbl">TIME</div><div class="val" id="hudTime">09:00</div></div>
+    <div class="stat"><div class="lbl">OUTPUT</div><div class="val" id="hudOutput">0</div></div>
+    <div class="stat" id="hudWorkingStat"><div class="lbl">WORKING</div><div class="val" id="hudWorking">0/7</div></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <select class="topbtn" id="roomSelect" title="룸 전환" style="appearance:none;-webkit-appearance:none;padding-right:24px;background-image:linear-gradient(45deg,transparent 50%,var(--text-dim) 50%),linear-gradient(135deg,var(--text-dim) 50%,transparent 50%);background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat"></select>
+    <button class="topbtn" id="autoBtn">🚶 자율 ON</button>
+    <button class="topbtn" id="chatterBtn" title="에이전트들끼리 즉석 대화 한 라운드">💬 자율 대화</button>
+    <button class="topbtn" id="toggleSideBtn" title="활동 로그 패널 토글">📋 로그</button>
+    <button class="topbtn" id="folderBtn">📁 폴더 열기</button>
+  </div>
+</div>
+
+<div class="office-wrap">
+  <div class="office-floor" id="floor">
+
+    <!-- Connected campus world (Phase B-1) — Office + Cafe buildings on a
+         garden grass canvas. Single coord space (% of stageInner) so agents
+         walk freely between zones. -->
+    <div class="office-stage" id="officeStage">
+      <div class="office-stage-inner" id="stageInner">
+        <div class="world-grass" id="worldGrass"></div>
+        <div class="world-paths" id="worldPaths"></div>
+        <div class="world-buildings" id="worldBuildings"></div>
+        <div class="world-decorations" id="worldDecor"></div>
+        <div class="office-zones" id="officeZones"></div>
+        <!-- agents inserted here by JS — coords resolve % of stageInner -->
+      </div>
+    </div>
+
+    <!-- Floating particles for ambient feel -->
+    <div class="particles" id="particles"></div>
+
+    <!-- Conference area (CEO + whiteboard at top of studio, where wall monitors are) -->
+    <div class="conf-room">
+      <div class="conf-label">CONFERENCE</div>
+      <div class="whiteboard" id="whiteboard">대기 중 — 명령을 내리면 팀이 움직입니다</div>
+    </div>
+
+    <!-- Smallville locations — emoji markers (no heavy CSS furniture, image bg provides studio look) -->
+    <div class="location loc-coffee"     data-loc="coffee"><div class="loc-icon">☕</div><div class="loc-label">COFFEE</div></div>
+    <div class="location loc-whiteboard" data-loc="whiteboard"><div class="loc-icon">📊</div><div class="loc-label">BOARD</div></div>
+    <div class="location loc-lounge"     data-loc="lounge"><div class="loc-icon">🛋️</div><div class="loc-label">LOUNGE</div></div>
+    <div class="location loc-server"     data-loc="server"><div class="loc-icon">🖥️</div><div class="loc-label">SERVERS</div></div>
+    <div class="location loc-brain"      data-loc="brain"><div class="loc-icon">🧠</div><div class="loc-label">SECOND BRAIN</div></div>
+
+    <div class="office-vignette"></div>
+    <svg class="beams" id="beams" preserveAspectRatio="none"></svg>
+    <!-- agents injected by JS -->
+
+  </div>
+
+  <!-- Agent profile modal — centered overlay above everything -->
+  <div class="agent-modal-backdrop" id="agentModalBackdrop" hidden>
+    <div class="agent-modal" id="agentModal" role="dialog" aria-modal="true">
+      <div class="amd-head">
+        <span class="amd-emoji" id="amdEmoji"></span>
+        <div class="amd-title"><div class="amd-name" id="amdName">—</div><div class="amd-role" id="amdRole">—</div></div>
+        <button class="amd-close" id="amdClose">✕</button>
+      </div>
+      <div class="amd-stats">
+        <div class="amd-stat"><div class="amd-stat-lbl">SESSIONS</div><div class="amd-stat-val" id="amdSessions">0</div></div>
+        <div class="amd-stat"><div class="amd-stat-lbl">STATE</div><div class="amd-stat-val" id="amdState">IDLE</div></div>
+        <div class="amd-stat"><div class="amd-stat-lbl">SPECIALTY</div><div class="amd-stat-val" id="amdSpecialty" style="font-size:9px">—</div></div>
+      </div>
+      <div class="amd-section">
+        <div class="amd-section-head">⚙️ 외부 연결 / API</div>
+        <div class="amd-form" id="amdConfigForm"><span style="font-size:10px;color:var(--text-dim)">이 에이전트는 별도 설정이 없습니다.</span></div>
+        <div class="amd-save-status" id="amdSaveStatus"></div>
+      </div>
+      <div class="amd-section">
+        <div class="amd-section-head">🧠 메모리 (memory.md)</div>
+        <pre class="amd-content" id="amdMemory">불러오는 중…</pre>
+      </div>
+      <div class="amd-section">
+        <div class="amd-section-head">📜 의사결정 로그 (decisions.md)</div>
+        <pre class="amd-content" id="amdDecisions">불러오는 중…</pre>
+      </div>
+      <div class="amd-section">
+        <div class="amd-section-head">📁 최근 세션</div>
+        <div id="amdSessionList" class="amd-sessions">—</div>
+      </div>
+      <div class="amd-foot">
+        <button class="amd-btn primary" id="amdSaveConfig">💾 저장</button>
+        <button class="amd-btn" id="amdOpenFolder">📁 폴더</button>
+      </div>
+    </div>
+  </div>
+  <div class="side">
+    <div class="side-tabs">
+      <button class="side-tab active" data-pane="logPane">활동 로그</button>
+      <button class="side-tab" data-pane="outPane">산출물</button>
+      <button class="side-tab" data-pane="convPane">📜 대화록</button>
+    </div>
+    <div class="side-pane active" id="logPane"></div>
+    <div class="side-pane" id="outPane"><div class="empty"><span class="empty-icon">📭</span>아직 산출물이 없어요.<br>아래 명령창에 일을 던져주세요.</div></div>
+    <div class="side-pane" id="convPane"><div style="padding:10px;font-family:'SF Mono',monospace;font-size:9.5px;color:var(--text);white-space:pre-wrap;line-height:1.5"><div id="convDate" style="font-size:8px;color:var(--text-dim);margin-bottom:8px;letter-spacing:1px">오늘 대화록 로딩 중…</div><div id="convBody"></div><div style="margin-top:14px;text-align:center"><button class="topbtn" id="reloadConvBtn">🔄 새로고침</button></div></div></div>
+  </div>
+</div>
+
+<!-- 명령창은 사이드바에 통합됨. 사무실 패널은 시각화 전용. -->
+<div class="cmdbar" style="display:none">
+  <input id="cmdInput" type="hidden" />
+  <button id="cmdSend" style="display:none">전송 ↑</button>
+</div>
+
+<script>
+const vscode = acquireVsCodeApi();
+const floor = document.getElementById('floor');
+const beams = document.getElementById('beams');
+const whiteboard = document.getElementById('whiteboard');
+const cmdInput = document.getElementById('cmdInput');
+const cmdSend = document.getElementById('cmdSend');
+const logPane = document.getElementById('logPane');
+const outPane = document.getElementById('outPane');
+const topCompany = document.getElementById('topCompany');
+const topMeta = document.getElementById('topMeta');
+const folderBtn = document.getElementById('folderBtn');
+
+let agents = [];
+let agentMap = {};
+let deskEls = {};   /* alias: agent elements */
+let outCardEls = {};
+let currentTasks = [];
+/* Home desk positions are % of the WORLD canvas (1400×700 campus).
+   Replaced by world.desks at officeInit time; placeholder below covers
+   the brief moment before the message arrives. Office is at world
+   x=540..1052, y=90..634, so each agent's office-local % maps to world. */
+let HOME_POS = {
+  youtube:   { x: 49, y: 41 },
+  instagram: { x: 56, y: 41 },
+  designer:  { x: 63, y: 41 },
+  business:  { x: 69, y: 41 },
+  developer: { x: 49, y: 57 },
+  secretary: { x: 69, y: 57 },
+  ceo:       { x: 64, y: 77 }
+};
+
+function getHomeXY(agentId){
+  const p = HOME_POS[agentId] || { x: 50, y: 50 };
+  return { x: p.x, y: p.y };
+}
+
+
+
+
+function makeAgent(a){
+  const home = getHomeXY(a.id);
+  const d = document.createElement('div');
+  d.className = 'agent idle';
+  d.dataset.agent = a.id;
+  d.dataset.homeX = home.x;
+  d.dataset.homeY = home.y;
+  d.dataset.dir = 'down';
+  d.style.setProperty('--ag-color', a.color);
+  d.style.setProperty('--ag-color-glow', a.color + '55');
+  positionAgentToImageCoord(d, home.x, home.y);
+  
+  /* Sprite character */
+  const character = document.createElement('div');
+  character.className = 'character';
+  if (a.sprite) {
+    character.style.backgroundImage = 'url(' + a.sprite + ')';
+  } else {
+    /* Fallback to CEO sprite if missing */
+    character.style.background = 'rgba(255,255,255,0.1)';
+  }
+  
+  const led = document.createElement('span'); led.className = 'ag-led'; d.appendChild(led);
+  d.appendChild(character);
+  const nm = document.createElement('div'); nm.className = 'ag-plate'; nm.textContent = a.emoji + ' ' + a.name; d.appendChild(nm);
+  d.title = a.role + ' — ' + a.specialty;
+  d.addEventListener('click', () => openAgentProfile(a.id));
+  return d;
+}
+
+/** Position agent at (xPct, yPct) as % of stageInner — which has the same
+    bounds as the office bg image (CSS aspect-ratio), so coords map 1:1.
+    Higher y = renders in front (depth-sort), so agents farther down the
+    office naturally occlude ones above them. */
+function positionAgentToImageCoord(el, xPct, yPct){
+  el.style.left = 'calc(' + xPct + '% - 24px)';
+  el.style.top  = 'calc(' + yPct + '% - 96px)';
+  el.style.zIndex = String(10 + Math.floor(yPct * 10));
+}
+
+function repositionAllAgents(){
+  agents.forEach(a => {
+    const el = deskEls[a.id]; if (!el) return;
+    const x = parseFloat(el.dataset.homeX), y = parseFloat(el.dataset.homeY);
+    positionAgentToImageCoord(el, x, y);
+  });
+  /* Re-anchor location markers to image coords too */
+  positionLocations();
+}
+
+function positionLocations(){
+  const bgEl = document.getElementById('officeBg');
+  const fr = floor.getBoundingClientRect();
+  if (!bgEl || !bgEl.complete || !bgEl.naturalWidth) return;
+  const iw = bgEl.clientWidth, ih = bgEl.clientHeight;
+  const ix = (fr.width - iw) / 2;
+  const iy = (fr.height - ih) / 2;
+  Object.keys(LOCATIONS).forEach(id => {
+    const def = LOCATIONS[id];
+    const el = document.querySelector('[data-loc="'+id+'"]');
+    if (!el) return;
+    const px = ix + (def.x / 100) * iw;
+    const py = iy + (def.y / 100) * ih;
+    el.style.left = px + 'px';
+    el.style.top  = py + 'px';
+  });
+}
+
+function setDeskState(agentId, state, task){
+  const d = deskEls[agentId]; if (!d) return;
+  d.classList.remove('idle','thinking','working','done');
+  d.classList.add(state);
+  const old = d.querySelector('.bubble'); if (old) old.remove();
+  if (task && (state === 'working' || state === 'thinking')) {
+    const b = document.createElement('div'); b.className = 'bubble'; b.textContent = task;
+    d.appendChild(b);
+    setTimeout(() => { try { b.style.opacity = '0'; setTimeout(() => b.remove(), 350); } catch{} }, 3500);
+  }
+}
+
+function showBubbleOn(agentId, text, ms){
+  const d = deskEls[agentId]; if (!d) return;
+  const old = d.querySelector('.bubble'); if (old) old.remove();
+  const b = document.createElement('div'); b.className = 'bubble'; b.textContent = text;
+  d.appendChild(b);
+  const dur = ms || 2500;
+  setTimeout(() => { try { b.style.opacity = '0'; setTimeout(() => b.remove(), 350); } catch{} }, dur);
+}
+
+function resetAllDesks(){
+  Object.keys(deskEls).forEach(id => setDeskState(id, 'idle'));
+  if (beams) beams.innerHTML = '';
+  whiteboard.classList.remove('active');
+  whiteboard.innerHTML = '대기 중 — 명령을 내리면 팀이 움직입니다';
+}
+
+/* ==== Auto-walking + idle chat ==== */
+let autoWalkActive = false;
+const IDLE_CHATS = [
+  '커피 한잔?', '오늘 진도 어때?', '아 그거 봤어?', '점심 뭐 먹지', '와 대박',
+  '확인해볼게', '체크', '오케이', '굿', '음...', '잠깐만', '나중에 얘기하자'
+];
+function pickRandom(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+
+function walkToward(agentId, targetXPct, targetYPct, durationMs){
+  const el = deskEls[agentId]; if (!el) return Promise.resolve();
+  const currentX = parseFloat(el.style.left.replace(/[^-0-9.]/g, '')) || 0; // Simplified check
+  const currentY = parseFloat(el.style.top.replace(/[^-0-9.]/g, '')) || 0;
+  
+  /* Determine direction */
+  const dx = targetXPct - parseFloat(el.dataset.currX || el.dataset.homeX);
+  const dy = targetYPct - parseFloat(el.dataset.currY || el.dataset.homeY);
+  if (Math.abs(dx) > Math.abs(dy)) {
+    el.dataset.dir = dx > 0 ? 'right' : 'left';
+  } else {
+    el.dataset.dir = dy > 0 ? 'down' : 'up';
+  }
+  el.dataset.currX = targetXPct;
+  el.dataset.currY = targetYPct;
+
+  el.classList.add('walking');
+  positionAgentToImageCoord(el, targetXPct, targetYPct);
+  return new Promise(resolve => {
+    setTimeout(() => { el.classList.remove('walking'); resolve(); }, durationMs || 1000);
+  });
+}
+
+/* ===== Visit locations — WORLD %-coords (1400×700 campus canvas) =====
+   Campus: Office (center-right), Cafe (left), Garden (right + outside).
+   These ids are referenced by PERSONALITY.likedLocs and visitLocationStep. */
+const LOCATIONS = {
+  cafeCounter: { x: 21, y: 39, label:'☕ 카페 카운터',     emoji:'☕', stay: 4000 },
+  cafeTable:   { x: 22, y: 75, label:'🪑 카페 테이블',     emoji:'🪑', stay: 5000 },
+  meeting:     { x: 49, y: 78, label:'📊 회의실',          emoji:'📊', stay: 4500 },
+  copier:      { x: 70, y: 18, label:'🖨️ 복사실',          emoji:'🖨️', stay: 3500 },
+  gardenBench: { x: 85, y: 32, label:'🌳 정원 벤치',       emoji:'🌳', stay: 5500 },
+  gardenTree:  { x: 92, y: 86, label:'🌲 큰 나무 아래',    emoji:'🌲', stay: 6000 },
+  gardenWalk:  { x: 78, y: 60, label:'🚶 잔디 산책',       emoji:'🚶', stay: 4500 }
+};
+
+/* Per-agent personality — drives thoughts, status preferences, location bias.
+   likedLocs reference LOCATIONS keys (conference/copier/water/plants/ceoDoor). */
+const PERSONALITY = {
+  ceo: {
+    thoughts: ['이번 분기 목표가...', '회사 비전 정리해야', '다음 큰 그림은?', '팀 잘 굴러가나', 'KPI 다시 봐야겠다'],
+    status: ['🧠','💼','📋','🎯'],
+    likedLocs: ['meeting','gardenBench','cafeCounter']
+  },
+  youtube: {
+    thoughts: ['다음 썸네일 뭐로?', '오프닝 5초가 핵심', '트렌드 봐야지', '편집 컷 좀 줄이자', '구독자 반응 어떨까'],
+    status: ['🎥','📹','💡','🔥','▶️'],
+    likedLocs: ['cafeCounter','meeting','gardenWalk']
+  },
+  designer: {
+    thoughts: ['색감이 뭔가 부족한데', '여백을 더...', '폰트 다시 골라야', '레퍼런스 찾자', '톤앤매너가 안 맞아'],
+    status: ['🎨','💜','✏️','💡','✨'],
+    likedLocs: ['gardenBench','copier','cafeTable']
+  },
+  instagram: {
+    thoughts: ['릴스 트렌드 체크', '해시태그 뭘로?', '커버 이미지가 약해', '댓글 톤이 좋네', '피드 구성 다시'],
+    status: ['📸','💖','🌸','✨','📱'],
+    likedLocs: ['gardenBench','cafeTable','gardenWalk']
+  },
+  developer: {
+    thoughts: ['이거 캐시해야', '버그 어디서 났지', '리팩터 해야 하는데', '...아 그게 그구나', '커피 한 잔 더'],
+    status: ['💻','⌨️','🐛','💡','☕'],
+    likedLocs: ['cafeCounter','copier','gardenTree']
+  },
+  business: {
+    thoughts: ['ROI 계산 다시', '단가 협상해야', '월 마감 보자', '현금흐름은 OK', '채널별 수익 분리'],
+    status: ['💰','📈','💼','📊','💹'],
+    likedLocs: ['meeting','copier','cafeCounter']
+  },
+  secretary: {
+    thoughts: ['일정 정리하자', '메일 답장 보내야', 'CEO 미팅 30분 후', '다들 할 일 알지?', '회의록 다시 보자'],
+    status: ['📋','📞','📅','📝','✉️'],
+    likedLocs: ['copier','meeting','cafeTable']
+  }
+};
+
+/* Show small status icon above an agent's head (auto-fades) */
+function showStatusIcon(agentId, icon, ms){
+  const d = deskEls[agentId]; if (!d) return;
+  const old = d.querySelector('.ag-status'); if (old) old.remove();
+  const s = document.createElement('div'); s.className='ag-status'; s.textContent = icon;
+  d.appendChild(s);
+  const dur = ms || 3500;
+  setTimeout(() => { try { s.classList.add('fade'); setTimeout(()=>s.remove(),350); } catch{} }, dur);
+}
+
+/* Show dotted thought bubble (.oO style — inner monologue) */
+function showThought(agentId, text, ms){
+  const d = deskEls[agentId]; if (!d) return;
+  const old = d.querySelector('.thought'); if (old) old.remove();
+  const t = document.createElement('div'); t.className='thought'; t.textContent = '· '+text;
+  d.appendChild(t);
+  const dur = ms || 3500;
+  setTimeout(() => { try { t.style.opacity='0'; setTimeout(()=>t.remove(),350); } catch{} }, dur);
+}
+
+async function idleChatStep(){
+  if (!autoWalkActive) return;
+  const idleAgents = agents.filter(a => {
+    const el = deskEls[a.id];
+    return el && (el.classList.contains('idle') || el.classList.contains('done'));
+  });
+  if (idleAgents.length < 2) return;
+  const A = pickRandom(idleAgents);
+  let B = pickRandom(idleAgents);
+  let tries = 0;
+  while (B.id === A.id && tries < 5) { B = pickRandom(idleAgents); tries++; }
+  if (B.id === A.id) return;
+  const bEl = deskEls[B.id]; if (!bEl) return;
+  const bx = parseFloat(bEl.dataset.homeX), by = parseFloat(bEl.dataset.homeY);
+  const aHomeX = parseFloat(deskEls[A.id].dataset.homeX);
+  const aHomeY = parseFloat(deskEls[A.id].dataset.homeY);
+  const ax = bx + (aHomeX > bx ? 7 : -7);
+  const ay = by + (aHomeY > by ? 5 : -5);
+  showStatusIcon(A.id, '💬', 4500);
+  await walkToward(A.id, ax, ay, 1100);
+  showBubbleOn(A.id, pickRandom(IDLE_CHATS), 1800);
+  logActivity(A.emoji, A.id, '<strong>'+A.name+'</strong> → '+B.emoji+' '+B.name+' (잡담)');
+  await new Promise(r => setTimeout(r, 1400));
+  if (Math.random() < 0.7) {
+    showStatusIcon(B.id, '💬', 2500);
+    showBubbleOn(B.id, pickRandom(IDLE_CHATS), 1800);
+    await new Promise(r => setTimeout(r, 1400));
+  }
+  await walkToward(A.id, aHomeX, aHomeY, 1100);
+}
+
+/* Visit a location, idle there, return — Smallville routine */
+async function visitLocationStep(){
+  if (!autoWalkActive) return;
+  const idleAgents = agents.filter(a => {
+    const el = deskEls[a.id];
+    return el && (el.classList.contains('idle') || el.classList.contains('done'));
+  });
+  if (idleAgents.length === 0) return;
+  const A = pickRandom(idleAgents);
+  const persona = PERSONALITY[A.id] || { likedLocs:['coffee'], status:['💭'] };
+  const locId = pickRandom(persona.likedLocs);
+  const loc = LOCATIONS[locId]; if (!loc) return;
+  const aHomeX = parseFloat(deskEls[A.id].dataset.homeX);
+  const aHomeY = parseFloat(deskEls[A.id].dataset.homeY);
+  /* offset so multiple agents at same location don't perfectly overlap */
+  const offX = (Math.random() - 0.5) * 5;
+  showStatusIcon(A.id, loc.emoji, loc.stay + 2400);
+  logActivity(loc.emoji, A.id, '<strong>'+A.name+'</strong> → '+loc.label);
+  /* mark location active */
+  const locEl = document.querySelector('[data-loc="'+locId+'"]');
+  if (locEl) locEl.classList.add('active');
+  await walkToward(A.id, loc.x + offX, loc.y, 1300);
+  await new Promise(r => setTimeout(r, loc.stay));
+  if (locEl) locEl.classList.remove('active');
+  await walkToward(A.id, aHomeX, aHomeY, 1300);
+}
+
+/* Think alone at desk — generate a personality thought */
+async function thinkStep(){
+  if (!autoWalkActive) return;
+  const idleAgents = agents.filter(a => {
+    const el = deskEls[a.id];
+    return el && (el.classList.contains('idle') || el.classList.contains('done'));
+  });
+  if (idleAgents.length === 0) return;
+  const A = pickRandom(idleAgents);
+  const persona = PERSONALITY[A.id] || { thoughts:['...'], status:['💭'] };
+  showStatusIcon(A.id, pickRandom(persona.status), 3500);
+  showThought(A.id, pickRandom(persona.thoughts), 3500);
+}
+
+/* Weighted random action — Smallville-style autonomous behavior */
+async function autonomousAct(){
+  if (!autoWalkActive) return;
+  const r = Math.random();
+  if (r < 0.40) await idleChatStep();        /* 40% chitchat */
+  else if (r < 0.75) await visitLocationStep(); /* 35% visit a place */
+  else await thinkStep();                       /* 25% inner thought */
+}
+
+function startAutoWalk(){
+  if (autoWalkActive) return;
+  autoWalkActive = true;
+  logActivity('🚶','ceo','자율 모드 ON — 에이전트들이 일과를 시작합니다.');
+  startChatterAutofire();
+  const tick = async () => {
+    if (!autoWalkActive) return;
+    try { await autonomousAct(); } catch {}
+    /* 14~32초 사이 랜덤 간격 — 더 활발하게 */
+    const next = 14000 + Math.floor(Math.random() * 18000);
+    setTimeout(tick, next);
+  };
+  setTimeout(tick, 6000);
+}
+function stopAutoWalk(){
+  autoWalkActive = false;
+  stopChatterAutofire();
+  logActivity('🛑','ceo','자율 모드 OFF');
+}
+
+/* ===== Ambient particles — drifting glow dots ===== */
+function spawnParticles(){
+  const container = document.getElementById('particles'); if (!container) return;
+  container.innerHTML = '';
+  const count = 14;
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('span');
+    p.style.left = (Math.random() * 100) + '%';
+    p.style.bottom = '0';
+    p.style.animationDuration = (10 + Math.random() * 8) + 's';
+    p.style.animationDelay = (-Math.random() * 14) + 's';
+    /* color variety: green/cyan/violet */
+    const c = Math.random();
+    if (c < 0.5) { /* green default */ }
+    else if (c < 0.8) { p.style.background='rgba(34,211,238,.45)'; p.style.boxShadow='0 0 4px rgba(34,211,238,.7)'; }
+    else { p.style.background='rgba(167,139,250,.45)'; p.style.boxShadow='0 0 4px rgba(167,139,250,.7)'; }
+    container.appendChild(p);
+  }
+}
+
+/* ===== HUD ticker — DAY / TIME / OUTPUT / WORKING ===== */
+let hudOutputCount = 0;
+let hudDayNum = 1;
+let hudVirtualMin = 9 * 60;  /* in-office time, starts 09:00 */
+let hudInterval = null;
+function startHud(){
+  if (hudInterval) clearInterval(hudInterval);
+  const dayEl = document.getElementById('hudDay');
+  const timeEl = document.getElementById('hudTime');
+  const outEl = document.getElementById('hudOutput');
+  const wrkEl = document.getElementById('hudWorking');
+  const wrkStatEl = document.getElementById('hudWorkingStat');
+  const meta = document.getElementById('topMeta');
+  const update = () => {
+    /* virtual time: 1 real second = 30 virtual sec → 1 work day (8 hours) ≈ 16 real min */
+    hudVirtualMin = (hudVirtualMin + 0.5);
+    if (hudVirtualMin >= 18 * 60) { hudVirtualMin = 9 * 60; hudDayNum++; if (dayEl) dayEl.textContent = hudDayNum; logActivity('🌅','ceo','<strong>DAY '+hudDayNum+'</strong> 시작.'); }
+    const hh = Math.floor(hudVirtualMin / 60);
+    const mm = Math.floor(hudVirtualMin % 60);
+    if (timeEl) timeEl.textContent = String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0');
+    if (outEl) outEl.textContent = hudOutputCount;
+    /* count agents currently working/thinking */
+    let working = 0;
+    agents.forEach(a => {
+      const el = deskEls[a.id];
+      if (el && (el.classList.contains('working') || el.classList.contains('thinking'))) working++;
+    });
+    if (wrkEl) wrkEl.textContent = working + '/' + agents.length;
+    if (wrkStatEl) wrkStatEl.classList.toggle('warn', working > 0);
+    if (meta) meta.textContent = '에이전트 '+agents.length+'명 · '+(working > 0 ? working+'명 작업 중' : '대기 중');
+  };
+  hudInterval = setInterval(update, 1000);
+  update();
+}
+function bumpOutput(){ hudOutputCount++; const el = document.getElementById('hudOutput'); if (el) el.textContent = hudOutputCount; }
+
+/* ===== Per-agent connection / API config field schema ===== */
+const AGENT_CONFIG_FIELDS = {
+  ceo: [
+    { key:'company_vision', label:'회사 비전', type:'textarea', help:'한 문장으로 요약. 모든 에이전트가 의사결정 시 참고합니다.' },
+    { key:'company_values', label:'핵심 가치', type:'textarea', help:'쉼표로 구분된 키워드. 예: 빠른 실행, 사용자 중심' },
+    { key:'monthly_target', label:'월 목표', type:'text', help:'예: 매출 ₩1,000만 / 영상 8개 / 팔로워 +5,000' }
+  ],
+  youtube: [
+    { key:'channel_id', label:'YouTube 채널 ID', type:'text', placeholder:'UCxxx...' },
+    { key:'channel_handle', label:'채널 핸들', type:'text', placeholder:'@mychannel' },
+    { key:'api_key', label:'YouTube Data API 키', type:'password', help:'console.cloud.google.com에서 발급. 트렌드 조회/통계용.' },
+    { key:'content_focus', label:'주력 콘텐츠 주제', type:'textarea', help:'예: AI 도구 리뷰, 자동화 워크플로우' }
+  ],
+  instagram: [
+    { key:'username', label:'인스타그램 핸들', type:'text', placeholder:'@yourhandle' },
+    { key:'access_token', label:'Graph API Access Token', type:'password', help:'Meta for Developers에서 발급. 게시/통계용.' },
+    { key:'business_account_id', label:'비즈니스 계정 ID', type:'text' },
+    { key:'aesthetic', label:'피드 톤앤매너', type:'textarea', help:'예: 미니멀 / 비비드 / 다크모노' }
+  ],
+  designer: [
+    { key:'figma_token', label:'Figma Personal Access Token', type:'password', help:'figma.com/settings → Personal access tokens' },
+    { key:'brand_colors', label:'브랜드 컬러 (HEX, 쉼표)', type:'text', placeholder:'#FF0033, #FFD700' },
+    { key:'preferred_fonts', label:'선호 폰트', type:'text', placeholder:'Pretendard, Inter' },
+    { key:'design_system', label:'디자인 시스템 메모', type:'textarea' }
+  ],
+  developer: [
+    { key:'github_token', label:'GitHub Personal Access Token', type:'password', help:'github.com/settings/tokens — repo + workflow 권한 필요' },
+    { key:'default_repo', label:'기본 저장소 (owner/repo)', type:'text', placeholder:'wonseokjung/connect-ai' },
+    { key:'preferred_stack', label:'선호 기술 스택', type:'text', placeholder:'TypeScript, Next.js, PostgreSQL' },
+    { key:'deploy_target', label:'배포 환경', type:'text', placeholder:'Vercel / 자체 서버' }
+  ],
+  business: [
+    { key:'currency', label:'기본 통화', type:'text', placeholder:'KRW' },
+    { key:'monthly_target_revenue', label:'월 목표 매출', type:'text', placeholder:'₩1,000만' },
+    { key:'payment_provider', label:'결제 서비스', type:'text', placeholder:'Toss / Stripe / PayPal' },
+    { key:'tax_rate', label:'세율 / 부가세 정책', type:'text', placeholder:'간이과세 / 일반과세' },
+    { key:'revenue_streams', label:'수익 채널', type:'textarea', help:'예: 광고 / 멤버십 / 상품 판매' }
+  ],
+  secretary: [
+    { key:'google_calendar_id', label:'Google Calendar ID', type:'text', placeholder:'primary 또는 yourcal@group.calendar.google.com' },
+    { key:'google_oauth_token', label:'Google OAuth Token', type:'password', help:'OAuth 2.0 Playground 또는 자체 발급' },
+    { key:'telegram_bot_token', label:'Telegram Bot Token', type:'password', help:'@BotFather에서 봇 만들고 토큰 받기' },
+    { key:'telegram_chat_id', label:'Telegram Chat ID', type:'text', placeholder:'본인 chat_id (숫자)', help:'@userinfobot으로 확인' },
+    { key:'work_hours', label:'근무 시간', type:'text', placeholder:'09:00–18:00' }
+  ]
+};
+
+/* ===== Agent profile modal (in-UI panel) ===== */
+let _profileAgentId = null;
+function openAgentProfile(agentId){
+  const a = agentMap[agentId]; if (!a) return;
+  _profileAgentId = agentId;
+  const backdrop = document.getElementById('agentModalBackdrop');
+  const modal = document.getElementById('agentModal');
+  const emoji = document.getElementById('amdEmoji');
+  const name = document.getElementById('amdName');
+  const role = document.getElementById('amdRole');
+  const state = document.getElementById('amdState');
+  const specialty = document.getElementById('amdSpecialty');
+  const memory = document.getElementById('amdMemory');
+  const decisions = document.getElementById('amdDecisions');
+  const sessions = document.getElementById('amdSessions');
+  const sessionList = document.getElementById('amdSessionList');
+  if (emoji) emoji.textContent = a.emoji;
+  if (name) name.textContent = a.name;
+  if (role) role.textContent = a.role;
+  if (specialty) specialty.textContent = a.specialty || '—';
+  const el = deskEls[agentId];
+  let cur = 'IDLE';
+  if (el) {
+    if (el.classList.contains('working')) cur = 'WORKING';
+    else if (el.classList.contains('thinking')) cur = 'THINKING';
+    else if (el.classList.contains('done')) cur = 'DONE';
+  }
+  if (state) state.textContent = cur;
+  if (memory) memory.textContent = '불러오는 중…';
+  if (decisions) decisions.textContent = '불러오는 중…';
+  if (sessions) sessions.textContent = '…';
+  if (sessionList) sessionList.innerHTML = '';
+  /* render config form */
+  renderConfigForm(agentId, {});
+  modal.style.setProperty('--ag-color', a.color);
+  modal.style.setProperty('--ag-color-glow', a.color + '55');
+  if (backdrop) backdrop.removeAttribute('hidden');
+  vscode.postMessage({ type: 'agentProfileRequest', agent: agentId });
+  vscode.postMessage({ type: 'agentConfigRequest', agent: agentId });
+}
+function closeAgentProfile(){
+  _profileAgentId = null;
+  const backdrop = document.getElementById('agentModalBackdrop');
+  if (backdrop) backdrop.setAttribute('hidden','');
+}
+
+function renderConfigForm(agentId, values){
+  const form = document.getElementById('amdConfigForm');
+  if (!form) return;
+  const fields = AGENT_CONFIG_FIELDS[agentId] || [];
+  if (fields.length === 0) {
+    form.innerHTML = '<span style="font-size:10px;color:var(--text-dim)">이 에이전트는 별도 외부 연결 설정이 없습니다.</span>';
+    return;
+  }
+  form.innerHTML = '';
+  fields.forEach(f => {
+    const wrap = document.createElement('div');
+    wrap.className = 'amd-field';
+    const lbl = document.createElement('label');
+    lbl.className = 'amd-field-lbl';
+    lbl.textContent = f.label;
+    wrap.appendChild(lbl);
+    let input;
+    if (f.type === 'textarea') {
+      input = document.createElement('textarea');
+    } else {
+      input = document.createElement('input');
+      input.type = (f.type === 'password') ? 'password' : 'text';
+    }
+    input.className = 'amd-input';
+    input.dataset.key = f.key;
+    if (f.placeholder) input.placeholder = f.placeholder;
+    if (values && values[f.key] !== undefined) input.value = values[f.key];
+    wrap.appendChild(input);
+    if (f.help) {
+      const help = document.createElement('div');
+      help.className = 'amd-field-help';
+      help.textContent = f.help;
+      wrap.appendChild(help);
+    }
+    form.appendChild(wrap);
+  });
+}
+
+function collectConfigValues(){
+  const form = document.getElementById('amdConfigForm');
+  if (!form) return {};
+  const out = {};
+  form.querySelectorAll('[data-key]').forEach(el => {
+    out[el.dataset.key] = el.value || '';
+  });
+  return out;
+}
+
+function saveAgentConfig(){
+  if (!_profileAgentId) return;
+  const values = collectConfigValues();
+  const status = document.getElementById('amdSaveStatus');
+  if (status) { status.className = 'amd-save-status show'; status.textContent = '저장 중…'; }
+  vscode.postMessage({ type:'saveAgentConfig', agent: _profileAgentId, values });
+}
+
+(function(){
+  const closeBtn = document.getElementById('amdClose');
+  if (closeBtn) closeBtn.addEventListener('click', closeAgentProfile);
+  /* Click on backdrop (outside modal box) closes too */
+  const backdrop = document.getElementById('agentModalBackdrop');
+  if (backdrop) backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeAgentProfile(); });
+  /* Esc closes */
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _profileAgentId) closeAgentProfile(); });
+  const ofb = document.getElementById('amdOpenFolder');
+  if (ofb) ofb.addEventListener('click', () => { if (_profileAgentId) vscode.postMessage({ type:'openCompanyFolder', sub:'_agents/'+_profileAgentId }); });
+  const sfb = document.getElementById('amdSaveConfig');
+  if (sfb) sfb.addEventListener('click', saveAgentConfig);
+  const pfb = document.getElementById('pickFolderBtn');
+  if (pfb) pfb.addEventListener('click', () => vscode.postMessage({ type:'pickCompanyFolder' }));
+})();
+
+/* ===== Brain integration visual ===== */
+function pulseBrain(agentId, reason){
+  const locEl = document.querySelector('[data-loc="brain"]');
+  if (locEl) {
+    locEl.classList.add('active');
+    setTimeout(()=>locEl.classList.remove('active'), 2200);
+  }
+  if (agentId) showStatusIcon(agentId, '🧠', 2400);
+  if (reason) {
+    const a = agentMap[agentId];
+    logActivity('🧠', agentId || 'ceo', '<strong>'+(a?a.name:'에이전트')+'</strong> 두뇌 열람: '+reason);
+  }
+}
+
+function logActivity(emoji, agentId, text){
+  const a = agentMap[agentId];
+  const e = document.createElement('div'); e.className = 'log-entry';
+  if (a) e.style.setProperty('--ag-color', a.color);
+  const t = new Date(); const hh = String(t.getHours()).padStart(2,'0'), mm = String(t.getMinutes()).padStart(2,'0'), ss = String(t.getSeconds()).padStart(2,'0');
+  e.innerHTML = '<span class="log-time">'+hh+':'+mm+':'+ss+'</span><span class="log-emoji">'+emoji+'</span><span class="log-text">'+text+'</span>';
+  logPane.appendChild(e);
+  logPane.scrollTop = logPane.scrollHeight;
+}
+
+function startOutCard(agentId, task){
+  const a = agentMap[agentId]; if (!a) return;
+  /* Clear empty state once */
+  const empty = outPane.querySelector('.empty'); if (empty) empty.remove();
+  const card = document.createElement('div');
+  card.className = 'out-card';
+  card.style.setProperty('--ag-color', a.color);
+  card.innerHTML = '<div class="out-head">'+a.emoji+' '+a.name+' <span class="oh-task">— '+escapeHtml(task||'')+'</span></div><div class="out-body"></div>';
+  outPane.appendChild(card);
+  outPane.scrollTop = outPane.scrollHeight;
+  outCardEls[agentId] = { card: card, body: card.querySelector('.out-body'), raw: '' };
+}
+function appendOutChunk(agentId, value){
+  let c = outCardEls[agentId];
+  if (!c) { startOutCard(agentId, ''); c = outCardEls[agentId]; }
+  if (!c) return;
+  c.raw = (c.raw||'') + value;
+  c.body.textContent = c.raw;
+  outPane.scrollTop = outPane.scrollHeight;
+}
+function endOutCard(agentId){ delete outCardEls[agentId]; }
+
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function drawBeams(taskAgentIds){
+  if (!beams || !deskEls.ceo) return;
+  beams.innerHTML = '';
+  const fr = floor.getBoundingClientRect();
+  const ceoR = deskEls.ceo.getBoundingClientRect();
+  const cx = ceoR.left + ceoR.width/2 - fr.left;
+  const cy = ceoR.top + ceoR.height/2 - fr.top;
+  const w = fr.width, h = fr.height;
+  beams.setAttribute('viewBox','0 0 '+w+' '+h);
+  beams.setAttribute('width', w); beams.setAttribute('height', h);
+  taskAgentIds.forEach((id, i) => {
+    const desk = deskEls[id]; if (!desk || id==='ceo') return;
+    const r = desk.getBoundingClientRect();
+    const tx = r.left + r.width/2 - fr.left;
+    const ty = r.top + r.height/2 - fr.top;
+    const mx = (cx+tx)/2, my = (cy+ty)/2 - 30;
+    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d','M '+cx+' '+cy+' Q '+mx+' '+my+' '+tx+' '+ty);
+    path.setAttribute('class','beam');
+    const a = agentMap[id];
+    if (a) { path.style.stroke = a.color; path.style.filter = 'drop-shadow(0 0 6px '+a.color+')'; }
+    path.style.animationDelay = (i*0.08)+'s';
+    beams.appendChild(path);
+  });
+}
+
+function setSending(v){ cmdSend.disabled = v; cmdInput.disabled = v; }
+function send(){
+  const text = (cmdInput.value || '').trim();
+  if (!text) return;
+  setSending(true);
+  logActivity('👤','ceo','명령: <strong>'+escapeHtml(text)+'</strong>');
+  vscode.postMessage({ type: 'officePrompt', value: text });
+  cmdInput.value = '';
+}
+cmdSend.addEventListener('click', send);
+cmdInput.addEventListener('keydown', e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); send(); }});
+folderBtn.addEventListener('click', () => vscode.postMessage({ type: 'openCompanyFolder' }));
+/* Manual + auto chatter — ask backend to generate one round of agent dialogue.
+   Local Gemma is free so we tie auto-fire to autoWalk: every 90s when on. */
+const chatterBtn = document.getElementById('chatterBtn');
+let _chatterTimer = null;
+function startChatterAutofire(){
+  if (_chatterTimer) return;
+  _chatterTimer = setInterval(() => {
+    try { vscode.postMessage({ type: 'runChatter' }); } catch {}
+  }, 90000);
+}
+function stopChatterAutofire(){
+  if (_chatterTimer) { clearInterval(_chatterTimer); _chatterTimer = null; }
+}
+chatterBtn && chatterBtn.addEventListener('click', () => {
+  vscode.postMessage({ type: 'runChatter' });
+});
+/* Side panel toggle — start collapsed so the map gets all the room */
+const sideEl = document.querySelector('.side');
+const toggleSideBtn = document.getElementById('toggleSideBtn');
+if (sideEl) sideEl.classList.add('collapsed');
+if (toggleSideBtn && sideEl) {
+  toggleSideBtn.addEventListener('click', () => {
+    sideEl.classList.toggle('collapsed');
+    toggleSideBtn.style.color = sideEl.classList.contains('collapsed') ? '' : 'var(--accent)';
+    /* Re-fit world canvas after panel width change */
+    setTimeout(() => { try { fitAndScale(); } catch {} window.dispatchEvent(new Event('resize')); }, 280);
+  });
+}
+const roomSelect = document.getElementById('roomSelect');
+let activeRoomAgents = null;     /* string[] | null — null means all agents visible (legacy) */
+let activeRoomHomePos = null;    /* {agentId: {x,y}} | null */
+let activeAnimations = [];       /* [{src,x,y,w}] */
+roomSelect && roomSelect.addEventListener('change', () => {
+  vscode.postMessage({ type: 'setRoom', roomId: roomSelect.value });
+});
+/* === Connected campus world — Office + Cafe + Garden in one coord space === */
+let officeZones = [];           /* [{id,name,emoji,x,y}] world % */
+let worldData = null;           /* { worldWidth, worldHeight, buildings, decorations, ... } */
+const stageInner = document.getElementById('stageInner');
+
+function renderWorldGrass(){
+  const grass = document.getElementById('worldGrass');
+  if (!grass || !worldData || !worldData.grassUri) return;
+  /* Tile size = (48 / worldWidth) * 100% so each tile maps to one 48-px
+     LimeZu tile in world coordinates. With % units, the grass scales with
+     stageInner without becoming pixelated mush. */
+  const tilePctW = (48 / worldData.worldWidth) * 100;
+  const tilePctH = (48 / worldData.worldHeight) * 100;
+  grass.style.backgroundImage = 'url(' + worldData.grassUri + ')';
+  grass.style.backgroundSize = tilePctW + '% ' + tilePctH + '%';
+}
+
+function renderWorldPaths(){
+  const wrap = document.getElementById('worldPaths');
+  if (!wrap || !worldData) return;
+  wrap.innerHTML = '';
+  if (!worldData.pathUri || !Array.isArray(worldData.paths)) return;
+  const W = worldData.worldWidth, H = worldData.worldHeight;
+  /* Path tile is 48px native; render at one tile per 48 world-px. */
+  const tilePctW = (48 / W) * 100;
+  const tilePctH = (48 / H) * 100;
+  worldData.paths.forEach(p => {
+    const strip = document.createElement('div');
+    strip.className = 'path-strip';
+    strip.style.left   = (p.x / W) * 100 + '%';
+    strip.style.top    = (p.y / H) * 100 + '%';
+    strip.style.width  = (p.w / W) * 100 + '%';
+    strip.style.height = (p.h / H) * 100 + '%';
+    strip.style.backgroundImage = 'url(' + worldData.pathUri + ')';
+    /* Sub-strip background-size needs to express tile size as % of THIS
+       strip, not the world. Convert: tile_strip% = world_tilePct / strip_pct. */
+    strip.style.backgroundSize =
+      (48 / p.w * 100) + '% ' + (48 / p.h * 100) + '%';
+    wrap.appendChild(strip);
+  });
+}
+
+function renderWorldBuildings(){
+  const wrap = document.getElementById('worldBuildings');
+  if (!wrap || !worldData) return;
+  wrap.innerHTML = '';
+  const W = worldData.worldWidth, H = worldData.worldHeight;
+  worldData.buildings.forEach(b => {
+    const leftPct  = (b.x / W) * 100;
+    const topPct   = (b.y / H) * 100;
+    const widthPct = (b.width / W) * 100;
+    const heightPct= (b.height / H) * 100;
+    if (b.layer1Uri) {
+      const im = document.createElement('img');
+      im.src = b.layer1Uri; im.alt = '';
+      im.style.left = leftPct + '%';
+      im.style.top  = topPct + '%';
+      im.style.width = widthPct + '%';
+      im.style.height = heightPct + '%';
+      im.style.zIndex = '1';
+      wrap.appendChild(im);
+    }
+    if (b.layer2Uri) {
+      const im2 = document.createElement('img');
+      im2.src = b.layer2Uri; im2.alt = '';
+      im2.style.left = leftPct + '%';
+      im2.style.top  = topPct + '%';
+      im2.style.width = widthPct + '%';
+      im2.style.height = heightPct + '%';
+      im2.style.zIndex = '2';
+      wrap.appendChild(im2);
+    }
+  });
+}
+
+function renderWorldDecorations(){
+  const wrap = document.getElementById('worldDecor');
+  if (!wrap || !worldData) return;
+  wrap.innerHTML = '';
+  const W = worldData.worldWidth;
+  // Each decoration is 48px native — render at (48/W)*100 % wide so the
+  // pixel-art stays consistent regardless of stage size.
+  const decorWPct = (48 / W) * 100;
+  worldData.decorations.forEach(d => {
+    const img = document.createElement('img');
+    img.src = d.uri; img.alt = '';
+    img.style.left = d.x + '%';
+    img.style.top  = d.y + '%';
+    img.style.width = (d.w || decorWPct) + '%';
+    /* depth-sort: decorations farther down render in front of higher ones */
+    img.style.zIndex = String(Math.floor(d.y * 10));
+    wrap.appendChild(img);
+  });
+}
+
+function renderOfficeZones(zones){
+  const wrap = document.getElementById('officeZones');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  (zones || []).forEach(z => {
+    const lbl = document.createElement('div');
+    lbl.className = 'zone-label';
+    lbl.textContent = (z.emoji || '') + ' ' + z.name;
+    lbl.style.left = z.x + '%';
+    lbl.style.top  = z.y + '%';
+    wrap.appendChild(lbl);
+  });
+}
+
+/* Resize stageInner to the largest world-aspect rect that fits in the
+   office-stage container. World aspect comes from worldData (1400/700 = 2.0). */
+function fitStage(){
+  const stage = document.getElementById('officeStage');
+  const inner = document.getElementById('stageInner');
+  if (!stage || !inner) return;
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if (w <= 0 || h <= 0) return;
+  const W = (worldData && worldData.worldWidth) || 1400;
+  const H = (worldData && worldData.worldHeight) || 700;
+  const targetAR = W / H;
+  const containerAR = w / h;
+  let iw, ih;
+  if (containerAR > targetAR) { ih = h; iw = Math.round(h * targetAR); }
+  else                         { iw = w; ih = Math.round(w / targetAR); }
+  inner.style.width  = iw + 'px';
+  inner.style.height = ih + 'px';
+}
+
+/* Scale character sprites to MATCH the world's display scale.
+   World is rendered at world-px → stage-px ratio. Characters should scale
+   the same so they look proportional to the cubicles/furniture baked into
+   the bg images. A small bump (×1.05) so name plates stay readable. */
+function updateCharScale(){
+  const inner = document.getElementById('stageInner');
+  if (!inner) return;
+  const worldW = (worldData && worldData.worldWidth) || 1400;
+  const worldScale = inner.clientWidth / worldW;
+  const scale = Math.max(0.35, Math.min(1.6, worldScale * 1.05));
+  inner.style.setProperty('--char-scale', scale.toFixed(2));
+}
+
+function fitAndScale(){ fitStage(); updateCharScale(); repositionAllAgents(); }
+
+/* Stubs kept so legacy call sites don't crash. */
+function applyRoomLayout(){ /* unified office: no per-room swap */ }
+function applyAnimations(){ /* unified office: ambient anims belong to bg */ }
+const autoBtn = document.getElementById('autoBtn');
+autoBtn.addEventListener('click', () => {
+  if (autoWalkActive) { stopAutoWalk(); autoBtn.textContent = '🚶 자율 OFF'; autoBtn.style.color = ''; }
+  else { startAutoWalk(); autoBtn.textContent = '🚶 자율 ON'; autoBtn.style.color = 'var(--accent)'; }
+});
+/* Re-fit stage + rescale characters + reposition agents on panel resize */
+window.addEventListener('resize', fitAndScale);
+document.querySelectorAll('.side-tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.side-tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.side-pane').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById(t.dataset.pane).classList.add('active');
+    if (t.dataset.pane === 'convPane') {
+      vscode.postMessage({ type: 'loadConversations' });
+    }
+  });
+});
+document.getElementById('reloadConvBtn')?.addEventListener('click', () => {
+  vscode.postMessage({ type: 'loadConversations' });
+});
+
+window.addEventListener('message', e => {
+  const m = e.data;
+  switch (m.type) {
+    case 'officeInit': {
+      agents = m.agents || [];
+      agentMap = {}; deskEls = {};
+      agents.forEach(a => { agentMap[a.id] = a; });
+      topCompany.textContent = m.companyName || '1인 기업';
+      /* Connected campus: world canvas with multiple buildings + decorations.
+         Agents share the world coord space (% of stageInner = % of world). */
+      worldData = m.world || null;
+      if (worldData && worldData.desks) {
+        HOME_POS = Object.assign({}, HOME_POS, worldData.desks);
+      }
+      officeZones = (worldData && Array.isArray(worldData.zones)) ? worldData.zones : [];
+      document.body.classList.add('floorplan');
+      try {
+        const dbg = (m.debug || {});
+        console.log('[Connect AI] world init — buildings:', dbg.buildingsLoaded, '/ decor:', dbg.decorationsLoaded, '/ custom map:', dbg.customMap||'none');
+        const customNote = (dbg.customMap === 'OK') ? ' · 🎨 커스텀 맵 사용' : '';
+        logActivity('🛠','ceo','캠퍼스 v2.28: '+(dbg.buildingsLoaded||0)+'동 + '+(dbg.decorationsLoaded||0)+' 장식'+customNote);
+      } catch {}
+      /* Hide the room selector — campus view has no room switcher */
+      if (roomSelect) roomSelect.style.display = 'none';
+      /* Custom map: a user-supplied full-stage PNG overrides procedural world */
+      const customMapUri = m.customMapUri || '';
+      const stageEl = document.getElementById('stageInner');
+      if (customMapUri) {
+        if (stageEl) {
+          stageEl.style.backgroundImage = 'url(' + customMapUri + ')';
+          stageEl.style.backgroundSize = '100% 100%';
+          stageEl.style.backgroundPosition = 'center center';
+          stageEl.style.backgroundRepeat = 'no-repeat';
+        }
+        /* Suppress procedural world layers when custom map is used */
+        ['worldGrass','worldPaths','worldBuildings','worldDecorations'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = '';
+        });
+      } else {
+        if (stageEl) stageEl.style.backgroundImage = '';
+        renderWorldGrass();
+        renderWorldPaths();
+        renderWorldBuildings();
+        renderWorldDecorations();
+      }
+      renderOfficeZones(officeZones);
+      /* Render agents inside stageInner — % coords map onto the world canvas */
+      const stage = document.getElementById('stageInner');
+      if (stage) stage.querySelectorAll('.agent').forEach(d => d.remove());
+      agents.forEach(a => {
+        const d = makeAgent(a);
+        if (stage) stage.appendChild(d);
+        deskEls[a.id] = d;
+      });
+      fitAndScale();
+      /* Re-fit once any building image has loaded so layout settles */
+      const firstBld = stage && stage.querySelector('.world-buildings img');
+      if (firstBld) { firstBld.addEventListener('load', fitAndScale, { once: true }); }
+      setTimeout(fitAndScale, 60);
+      setTimeout(fitAndScale, 350);
+      
+      /* Sprite animation loop — LimeZu Premade_Character_48x48 (cell = 48×96).
+         Row 1 (y=96)  = idle / standing.  Cycles 6 frames per direction even when idle (subtle breathing).
+         Row 2 (y=192) = walking / typing motion.  6 frames per direction.
+         Direction columns: down=0, left=6, right=12, up=18 (each 6 frames). */
+      let frameCount = 0;
+      const TILE = 48;
+      const CHAR_HEIGHT = TILE * 2;  /* = 96 — correct cell height */
+      const animateSprites = () => {
+        frameCount++;
+        agents.forEach(a => {
+          const el = deskEls[a.id]; if (!el) return;
+          const characterEl = el.querySelector('.character'); if (!characterEl) return;
+
+          let colOffset = 0;
+          switch (el.dataset.dir) {
+            case 'down':  colOffset = 0;  break;
+            case 'left':  colOffset = 6;  break;
+            case 'right': colOffset = 12; break;
+            case 'up':    colOffset = 18; break;
+          }
+
+          let row = 1;  /* idle */
+          if (el.classList.contains('walking')) row = 2;
+          else if (el.classList.contains('working') || el.classList.contains('thinking')) row = 2;
+
+          /* Animate slower when idle, faster when walking/working */
+          const speed = (row === 2) ? 8 : 14;
+          const frameIndex = Math.floor(frameCount / speed) % 6;
+          const col = colOffset + frameIndex;
+
+          characterEl.style.backgroundPosition = '-' + (col * TILE) + 'px -' + (row * CHAR_HEIGHT) + 'px';
+        });
+        requestAnimationFrame(animateSprites);
+      };
+      animateSprites();
+
+      /* reposition once layout settles */
+      setTimeout(repositionAllAgents, 100);
+      setTimeout(repositionAllAgents, 600);
+      /* spawn ambient particles */
+      spawnParticles();
+      /* start HUD ticker (DAY / TIME / WORKING) */
+      startHud();
+      /* start auto-walk + first thought after short delay */
+      setTimeout(() => startAutoWalk(), 6000);
+      setTimeout(() => { agents.forEach(a => { showStatusIcon(a.id, '☕', 2500); }); }, 1200);
+      logActivity('🏢','ceo','사무실 가동. 에이전트 '+agents.length+'명 자리 잡음.');
+      logActivity('🌅','ceo','오늘 하루 시작.');
+      break;
+    }
+    case 'agentDispatch': {
+      currentTasks = m.tasks || [];
+      const ids = ['ceo'].concat(currentTasks.map(t => t.agent));
+      whiteboard.classList.add('active');
+      whiteboard.innerHTML = '<span class="wb-line">📋 '+escapeHtml(m.brief||'')+'</span>';
+      currentTasks.forEach(t => setDeskState(t.agent, 'thinking', t.task));
+      document.body.classList.add('dispatching');
+      setTimeout(() => drawBeams(ids), 50);
+      setTimeout(() => { document.body.classList.remove('dispatching'); beams.innerHTML=''; }, 1700);
+      logActivity('🧭','ceo','<strong>분배:</strong> '+escapeHtml(m.brief||''));
+      currentTasks.forEach(t => {
+        const a = agentMap[t.agent];
+        if (a) logActivity(a.emoji, t.agent, '<strong>'+a.name+'</strong> ← '+escapeHtml(t.task));
+      });
+      /* 캐릭터들이 회의실로 모이는 시네마틱 */
+      const taskIdsOnly = currentTasks.map(t => t.agent);
+      const ceoP = HOME_POS.ceo;
+      taskIdsOnly.forEach((id, i) => {
+        setTimeout(() => {
+          const offX = ((i % 4) - 1.5) * 7;
+          const offY = (Math.floor(i / 4)) * 6 + 8;
+          walkToward(id, ceoP.x + offX, ceoP.y + offY, 1100);
+        }, i * 90);
+      });
+      setTimeout(() => {
+        taskIdsOnly.forEach(id => {
+          const el = deskEls[id]; if (!el) return;
+          const hx = parseFloat(el.dataset.homeX), hy = parseFloat(el.dataset.homeY);
+          walkToward(id, hx, hy, 1100);
+        });
+      }, 2200);
+      break;
+    }
+    case 'agentStart': {
+      setDeskState(m.agent, 'working', m.task);
+      const persona = PERSONALITY[m.agent] || { status:['⚡'] };
+      showStatusIcon(m.agent, pickRandom(persona.status), 4500);
+      if (m.agent !== 'ceo') {
+        startOutCard(m.agent, m.task||'');
+        const a = agentMap[m.agent];
+        if (a) logActivity(a.emoji, m.agent, a.name+' 작업 시작');
+      } else {
+        const txt = m.task || 'CEO 작업';
+        logActivity('🧭','ceo','<strong>CEO</strong> '+escapeHtml(txt));
+      }
+      break;
+    }
+    case 'agentChunk': {
+      appendOutChunk(m.agent, m.value || '');
+      break;
+    }
+    case 'agentEnd': {
+      setDeskState(m.agent, 'done');
+      endOutCard(m.agent);
+      const a = agentMap[m.agent];
+      if (a) logActivity('✅', m.agent, a.name+' 완료');
+      showStatusIcon(m.agent, '✨', 2000);
+      bumpOutput();
+      break;
+    }
+    case 'corporateReport': {
+      whiteboard.classList.add('active');
+      whiteboard.innerHTML = '<span class="wb-line">📝 '+escapeHtml((m.brief||'').slice(0,80))+'</span>';
+      const block = document.createElement('div'); block.className = 'report-block';
+      block.innerHTML = '<div class="rb-head">📝 CEO 종합 보고서</div>'+escapeHtml(m.report||'');
+      outPane.appendChild(block);
+      outPane.scrollTop = outPane.scrollHeight;
+      logActivity('📝','ceo','<strong>종합 보고서 발표</strong> · '+escapeHtml(m.sessionPath||''));
+      /* switch to outputs tab */
+      document.querySelectorAll('.side-tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.side-pane').forEach(x => x.classList.remove('active'));
+      document.querySelector('.side-tab[data-pane="outPane"]').classList.add('active');
+      outPane.classList.add('active');
+      setSending(false);
+      setTimeout(() => Object.keys(deskEls).forEach(id => setDeskState(id, 'idle')), 2500);
+      break;
+    }
+    case 'telegramSent': {
+      logActivity('📱','secretary','<strong>Secretary</strong> 텔레그램으로 보고 전송');
+      break;
+    }
+    case 'agentConfig': {
+      if (m.agent !== _profileAgentId) break;
+      renderConfigForm(m.agent, m.values || {});
+      break;
+    }
+    case 'agentConfigSaved': {
+      const status = document.getElementById('amdSaveStatus');
+      if (!status) break;
+      status.className = 'amd-save-status show ' + (m.error ? 'error' : 'success');
+      status.textContent = m.error ? ('⚠️ ' + m.error) : '✅ 저장됨 · _agents/' + m.agent + '/connections.md';
+      setTimeout(() => { status.classList.remove('show'); }, 2800);
+      break;
+    }
+    case 'agentProfile': {
+      if (m.agent !== _profileAgentId) break;  /* user closed or switched */
+      const memEl = document.getElementById('amdMemory');
+      const decEl = document.getElementById('amdDecisions');
+      const sessEl = document.getElementById('amdSessions');
+      const listEl = document.getElementById('amdSessionList');
+      if (m.error) {
+        if (memEl) memEl.textContent = '⚠️ ' + m.error;
+        break;
+      }
+      if (memEl) memEl.textContent = m.memory || '_없음_';
+      if (decEl) decEl.textContent = m.decisions || '_없음_';
+      if (sessEl) sessEl.textContent = m.sessionCount || 0;
+      if (listEl) {
+        listEl.innerHTML = '';
+        (m.recentSessions || []).forEach(s => {
+          const d = document.createElement('div'); d.className='amd-sess'; d.textContent = '· '+s;
+          listEl.appendChild(d);
+        });
+        if ((m.recentSessions || []).length === 0) listEl.textContent = '_세션 기록 없음_';
+      }
+      break;
+    }
+    case 'companyFolderChanged': {
+      logActivity('📁','ceo','회사 폴더 변경됨 → '+escapeHtml(m.dir||''));
+      break;
+    }
+    case 'conversationsLoaded': {
+      const dateEl = document.getElementById('convDate');
+      const bodyEl = document.getElementById('convBody');
+      if (dateEl) dateEl.textContent = m.date ? '📅 ' + m.date : '';
+      if (bodyEl) bodyEl.textContent = m.content || '';
+      /* Auto-scroll to latest entry at the bottom */
+      const pane = document.getElementById('convPane');
+      if (pane) pane.scrollTop = pane.scrollHeight;
+      break;
+    }
+    case 'roomChanged': {
+      /* No-op in floor-plan mode: every room is already on screen. */
+      break;
+    }
+    case 'brainRead': {
+      pulseBrain(m.agent, m.reason || '');
+      break;
+    }
+    case 'agentConfer': {
+      const turns = m.turns || [];
+      logActivity('💬','ceo','<strong>자율 회의</strong> ('+turns.length+'턴)');
+      /* 자동 walk: 화자가 청자 옆으로 걸어가서 말 → 다시 자기 자리로 */
+      let chain = Promise.resolve();
+      turns.forEach((t) => {
+        chain = chain.then(async () => {
+          const fa = agentMap[t.from], ta = agentMap[t.to];
+          const fEl = deskEls[t.from], tEl = deskEls[t.to];
+          if (!fa || !ta || !fEl || !tEl) return;
+          const bx = parseFloat(tEl.dataset.homeX), by = parseFloat(tEl.dataset.homeY);
+          const ax = parseFloat(fEl.dataset.homeX);
+          const offX = (ax > bx ? 7 : -7);
+          await walkToward(t.from, bx + offX, by, 950);
+          showBubbleOn(t.from, t.text, 1700);
+          logActivity(fa.emoji, t.from, '<strong>'+fa.name+'</strong> → '+ta.emoji+' '+ta.name+': '+escapeHtml(t.text));
+          await new Promise(r => setTimeout(r, 1500));
+          const hx = parseFloat(fEl.dataset.homeX), hy = parseFloat(fEl.dataset.homeY);
+          await walkToward(t.from, hx, hy, 950);
+        });
+      });
+      break;
+    }
+    case 'decisionsLearned': {
+      const decs = m.decisions || [];
+      if (decs.length === 0) break;
+      logActivity('🧠','ceo','<strong>자가학습</strong> '+decs.length+'개 결정 누적 (decisions.md)');
+      const empty = outPane.querySelector('.empty'); if (empty) empty.remove();
+      const block = document.createElement('div'); block.className = 'report-block';
+      block.style.borderColor = 'rgba(167,139,250,.4)';
+      block.style.boxShadow = '0 0 14px rgba(167,139,250,.15)';
+      block.innerHTML = '<div class="rb-head" style="color:#A78BFA">🧠 자가학습 · decisions.md</div>'+decs.map(d => '• '+escapeHtml(d)).join('<br>');
+      outPane.appendChild(block);
+      outPane.scrollTop = outPane.scrollHeight;
+      break;
+    }
+    case 'error': {
+      logActivity('⚠️','ceo','<strong>오류:</strong> '+escapeHtml(m.value||''));
+      setSending(false);
+      break;
+    }
+  }
+});
+
+vscode.postMessage({ type: 'officeReady' });
+</script>
+</body>
+</html>`;
+    }
+}
+
+// ============================================================
 // Sidebar Chat Provider
 // ============================================================
 
@@ -1993,6 +5085,94 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     public registerExternalGraphPanel(panel: vscode.WebviewPanel) {
         this._externalGraphPanels.add(panel);
         panel.onDidDispose(() => this._externalGraphPanels.delete(panel));
+    }
+
+    // 🏢 Office panel broadcast — corporate-mode 메시지를 사이드바와 풀스크린
+    // 사무실 패널 양쪽에 동시에 보내기 위한 list. OfficePanel이 자기 webview를 등록.
+    private _corporateBroadcastTargets: Set<vscode.Webview> = new Set();
+    public registerCorporateBroadcastTarget(webview: vscode.Webview) {
+        this._corporateBroadcastTargets.add(webview);
+    }
+    public unregisterCorporateBroadcastTarget(webview: vscode.Webview) {
+        this._corporateBroadcastTargets.delete(webview);
+    }
+    private _broadcastCorporate(msg: any) {
+        try { this._view?.webview.postMessage(msg); } catch { /* ignore */ }
+        this._corporateBroadcastTargets.forEach(w => {
+            try { w.postMessage(msg); } catch { /* disposed */ }
+        });
+    }
+    /** Notify the sidebar webview that the office panel opened/closed so it can update its UI. */
+    public broadcastOfficeState(open: boolean) {
+        try { this._view?.webview.postMessage({ type: 'officeStateChanged', open }); } catch { /* ignore */ }
+    }
+
+    // 외부 (OfficePanel)에서 명령을 받아 corporate 작업 시작
+    public async runCorporatePromptExternal(prompt: string, modelName: string) {
+        await this._handleCorporatePrompt(prompt, modelName);
+    }
+    public async runAutonomousChatter(modelName: string): Promise<void> {
+        await this._runAutonomousChatter(modelName);
+    }
+    public getDefaultModel(): string {
+        return getConfig().defaultModel || '';
+    }
+
+    /** One round of agent-to-agent ambient chatter. Picks two random specialists,
+     *  asks the model for 2-3 short turns of natural workplace dialogue (in
+     *  context of recent conversations + company goals), animates the confer in
+     *  the office panel, and appends to the daily conversation log. */
+    private async _runAutonomousChatter(modelName: string): Promise<void> {
+        try {
+            ensureCompanyStructure();
+            if (!this._abortController) this._abortController = new AbortController();
+            const post = (m: any) => this._broadcastCorporate(m);
+            // Pick two distinct specialists at random
+            const pool = SPECIALIST_IDS.slice();
+            if (pool.length < 2) return;
+            const i = Math.floor(Math.random() * pool.length);
+            let j = Math.floor(Math.random() * pool.length);
+            while (j === i) j = Math.floor(Math.random() * pool.length);
+            const aFrom = AGENTS[pool[i]];
+            const aTo = AGENTS[pool[j]];
+            if (!aFrom || !aTo) return;
+            const recent = readRecentConversations(1500);
+            const goalsPath = path.join(getCompanyDir(), '_shared', 'goals.md');
+            const goals = fs.existsSync(goalsPath) ? fs.readFileSync(goalsPath, 'utf-8').slice(0, 1000) : '';
+            const sys = `당신은 1인 AI 기업 사무실의 분위기 시뮬레이터입니다. 두 동료가 자연스럽게 짧게 잡담하거나 작업 얘기를 합니다.
+
+⚠️ 반드시 아래 JSON 형식으로만 출력. 마크다운 펜스·머리말·꼬리말 절대 금지.
+
+{
+  "turns": [
+    {"from": "${aFrom.id}", "to": "${aTo.id}", "text": "30자 이내 한국어"},
+    {"from": "${aTo.id}", "to": "${aFrom.id}", "text": "30자 이내 한국어"}
+  ]
+}
+
+규칙: 2~3턴, 각 30자 이내, 자연스러움. from/to는 정확히 "${aFrom.id}"와 "${aTo.id}"만.`;
+            const usr = `[참여자]\n${aFrom.emoji} ${aFrom.name} (${aFrom.role})\n${aTo.emoji} ${aTo.name} (${aTo.role})\n\n[회사 목표]\n${goals}${recent}`;
+            const raw = await this._callAgentLLM(sys, usr, modelName, aFrom.id, false);
+            const m = raw.match(/\{[\s\S]*\}/);
+            if (!m) return;
+            const parsed = JSON.parse(m[0]);
+            if (!parsed || !Array.isArray(parsed.turns)) return;
+            const validIds = SPECIALIST_IDS;
+            const turns: { from: string; to: string; text: string }[] = [];
+            for (const t of parsed.turns) {
+                if (typeof t.from === 'string' && typeof t.to === 'string' && typeof t.text === 'string'
+                    && validIds.includes(t.from) && validIds.includes(t.to)
+                    && t.from !== t.to && t.text.trim().length > 0) {
+                    turns.push({ from: t.from, to: t.to, text: t.text.trim().slice(0, 80) });
+                }
+            }
+            if (turns.length === 0) return;
+            post({ type: 'agentConfer', turns });
+            const body = turns
+                .map(t => `- ${AGENTS[t.from]?.emoji || ''} **${AGENTS[t.from]?.name || t.from}** → ${AGENTS[t.to]?.emoji || ''} ${AGENTS[t.to]?.name || t.to}: ${t.text}`)
+                .join('\n');
+            appendConversationLog({ speaker: '자율 잡담', emoji: '💬', section: `${aFrom.name} ↔ ${aTo.name}`, body });
+        } catch { /* never let chatter break the panel */ }
     }
 
     /** Push a flashy "knowledge injected" card into the chat sidebar and
@@ -2165,6 +5345,21 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     // ============================================================
     // 📊 Header status bar — folder + GitHub status, always visible
     // ============================================================
+    private _sendCompanyState(noteToUser?: string) {
+        if (!this._view) return;
+        const dir = getCompanyDir();
+        const exists = fs.existsSync(path.join(dir, '_shared'));
+        const configured = isCompanyConfigured();
+        this._view.webview.postMessage({
+            type: 'corporateState',
+            companyDir: dir.replace(os.homedir(), '~'),
+            companyName: readCompanyName(),
+            folderExists: exists,
+            configured,
+            note: noteToUser || ''
+        });
+    }
+
     private _sendStatusUpdate() {
         if (!this._view) return;
         const cfg = vscode.workspace.getConfiguration('connectAiLab');
@@ -2395,11 +5590,148 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     await this._sendModels();
                     break;
                 case 'prompt':
-                    await this._handlePrompt(msg.value, msg.model, msg.internet);
+                    if (msg.corporate) {
+                        await this._handleCorporatePrompt(msg.value, msg.model);
+                    } else {
+                        await this._handlePrompt(msg.value, msg.model, msg.internet);
+                    }
                     break;
                 case 'promptWithFile':
                     await this._handlePromptWithFile(msg.value, msg.model, msg.files, msg.internet);
                     break;
+                case 'corporateInit':
+                    try {
+                        const dir = getCompanyDir();
+                        const exists = fs.existsSync(path.join(dir, '_shared'));
+                        const configured = isCompanyConfigured();
+                        if (this._view) {
+                            this._view.webview.postMessage({
+                                type: 'corporateReady',
+                                agents: AGENT_ORDER.map(id => ({
+                                    id,
+                                    name: AGENTS[id].name,
+                                    role: AGENTS[id].role,
+                                    emoji: AGENTS[id].emoji,
+                                    color: AGENTS[id].color
+                                })),
+                                companyDir: dir.replace(os.homedir(), '~'),
+                                companyName: readCompanyName(),
+                                folderExists: exists,
+                                configured
+                            });
+                        }
+                    } catch (e: any) {
+                        if (this._view) this._view.webview.postMessage({ type: 'error', value: `⚠️ 회사 폴더 초기화 실패: ${e.message}` });
+                    }
+                    break;
+                case 'openCompanyFolder':
+                    try {
+                        const dir = ensureCompanyStructure();
+                        const sub = msg.sub || '';
+                        const target = sub ? path.join(dir, sub) : dir;
+                        vscode.env.openExternal(vscode.Uri.file(target));
+                    } catch { /* ignore */ }
+                    break;
+                case 'companySetup': {
+                    // msg.choice: 'default' | 'pick' | 'import'
+                    const choice = msg.choice as string;
+                    try {
+                        if (choice === 'default') {
+                            // ~/.connect-ai-brain (brain dir == company dir)
+                            await setCompanyDir('');
+                            ensureCompanyStructure();
+                            this._sendCompanyState('회사 폴더가 두뇌 폴더 안에 만들어졌어요.');
+                        } else if (choice === 'pick') {
+                            const picked = await vscode.window.showOpenDialog({
+                                canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
+                                openLabel: '두뇌+회사 폴더로 사용할 위치 선택',
+                                title: '두뇌+회사 폴더 선택 (이 폴더 안에 _shared, _agents 등이 만들어집니다)'
+                            });
+                            if (picked && picked[0]) {
+                                const target = picked[0].fsPath;
+                                fs.mkdirSync(target, { recursive: true });
+                                await setCompanyDir(target);
+                                ensureCompanyStructure();
+                                this._sendCompanyState(`두뇌+회사 폴더가 ${target} 에 설정되었어요.`);
+                            } else {
+                                this._sendCompanyState('취소했어요.');
+                            }
+                        } else if (choice === 'import') {
+                            const url = await vscode.window.showInputBox({
+                                prompt: '기존 회사 폴더의 GitHub URL (예: https://github.com/me/my-company-brain.git)',
+                                placeHolder: 'https://github.com/...',
+                                validateInput: (v) => {
+                                    if (!v || !v.trim()) return undefined;
+                                    return validateGitRemoteUrl(v) ? undefined : '⚠️ 유효한 GitHub URL이 아닙니다';
+                                }
+                            });
+                            if (url) {
+                                const targetParent = path.join(os.homedir(), '.connect-ai-brain-imported');
+                                fs.mkdirSync(targetParent, { recursive: true });
+                                const targetName = path.basename(url, '.git');
+                                const target = path.join(targetParent, targetName);
+                                if (fs.existsSync(target)) {
+                                    this._view?.webview.postMessage({ type: 'error', value: `⚠️ 이미 존재하는 폴더: ${target}\n다른 이름으로 다시 시도하거나 폴더를 먼저 정리해주세요.` });
+                                } else {
+                                    const r = gitRun(['clone', url, target], targetParent, 60000);
+                                    if (r.status === 0) {
+                                        // import한 위치가 Company 자체이거나 상위인지 확인
+                                        const candidate = fs.existsSync(path.join(target, '_shared')) ? target : path.join(target, 'Company');
+                                        await setCompanyDir(candidate);
+                                        ensureCompanyStructure();
+                                        this._sendCompanyState(`✅ 가져오기 완료: ${candidate}`);
+                                    } else {
+                                        this._view?.webview.postMessage({ type: 'error', value: `⚠️ git clone 실패: ${r.stderr || r.error?.message || 'unknown'}` });
+                                    }
+                                }
+                            } else {
+                                this._sendCompanyState('취소했어요.');
+                            }
+                        }
+                    } catch (e: any) {
+                        this._view?.webview.postMessage({ type: 'error', value: `⚠️ 회사 설정 실패: ${e.message}` });
+                    }
+                    break;
+                }
+                case 'companyInterview': {
+                    // msg.answers: { name, oneLiner, goal }
+                    try {
+                        ensureCompanyStructure();
+                        const dir = getCompanyDir();
+                        const a = msg.answers || {};
+                        const name = (a.name || '').trim();
+                        const oneLiner = (a.oneLiner || '').trim();
+                        const goal = (a.goal || '').trim();
+                        const idPath = path.join(dir, '_shared', 'identity.md');
+                        const goalsPath = path.join(dir, '_shared', 'goals.md');
+                        fs.writeFileSync(idPath,
+`# 🏢 회사 정체성
+
+- **회사 이름:** ${name || '(아직 미설정)'}
+- **한 줄 소개:** ${oneLiner || '(아직 미설정)'}
+- **타깃 청중:** _자가학습이 채울 예정_
+- **브랜드 톤:** _자가학습이 채울 예정_
+- **금기:** _자가학습이 채울 예정_
+
+> 이 파일은 사용자가 직접 편집하거나, 작업하면서 자가학습으로 채워집니다.
+`);
+                        fs.writeFileSync(goalsPath,
+`# 🎯 공동 목표
+
+## 올해 핵심 목표
+- [ ] ${goal || '(아직 미설정 — 작업하면서 추가)'}
+
+## 1개월 내 단기 목표
+_자가학습이 채울 예정_
+
+> 모든 에이전트가 매번 이 파일을 읽고 일합니다.
+`);
+                        this._sendCompanyState(`✅ "${name}" 설정 완료. 명령을 내려보세요.`);
+                    } catch (e: any) {
+                        this._view?.webview.postMessage({ type: 'error', value: `⚠️ 인터뷰 저장 실패: ${e.message}` });
+                    }
+                    break;
+                }
                 case 'newChat':
                     this.resetChat();
                     break;
@@ -2415,6 +5747,19 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'showBrainNetwork':
                     vscode.commands.executeCommand('connect-ai-lab.showBrainNetwork');
+                    break;
+                case 'openOffice':
+                    vscode.commands.executeCommand('connect-ai-lab.openOffice');
+                    break;
+                case 'toggleOffice':
+                    if (OfficePanel.current) {
+                        OfficePanel.current.dispose();
+                    } else {
+                        vscode.commands.executeCommand('connect-ai-lab.openOffice');
+                    }
+                    break;
+                case 'closeOffice':
+                    if (OfficePanel.current) OfficePanel.current.dispose();
                     break;
                 case 'toggleThinking':
                     await this._toggleThinkingMode();
@@ -3330,7 +6675,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     model: modelName || defaultModel,
                     messages: reqMessages,
                     stream: true,
-                    options: { num_ctx: 16384, num_predict: 4096, temperature: this._temperature, top_p: this._topP, top_k: this._topK }
+                    options: { num_ctx: 8192, num_predict: 2048, temperature: this._temperature, top_p: this._topP, top_k: this._topK }
                 };
                 // Attach images to the last user message for Ollama
                 if (images.length > 0) {
@@ -3493,7 +6838,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 stream: true,
                 ...(isLMStudio
                     ? { max_tokens: 4096, temperature: this._temperature, top_p: this._topP }
-                    : { options: { num_ctx: 16384, num_predict: 4096, temperature: this._temperature, top_p: this._topP, top_k: this._topK } }),
+                    : { options: { num_ctx: 8192, num_predict: 2048, temperature: this._temperature, top_p: this._topP, top_k: this._topK } }),
             };
 
             // 🎬 Thinking Mode: notify graph panel that a session is starting
@@ -3631,7 +6976,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     stream: true, // 스트리밍 활성화
                     ...(isLMStudio 
                         ? { max_tokens: 4096, temperature: this._temperature, top_p: this._topP } 
-                        : { options: { num_ctx: 16384, num_predict: 4096, temperature: this._temperature, top_p: this._topP, top_k: this._topK } }),
+                        : { options: { num_ctx: 8192, num_predict: 2048, temperature: this._temperature, top_p: this._topP, top_k: this._topK } }),
                 }, { timeout, responseType: 'stream', signal: this._abortController?.signal });
 
                 aiMessage = cleanedResponse + uiFeedbackStr;
@@ -3743,6 +7088,434 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 });
             }
         }
+    }
+
+    // --------------------------------------------------------
+    // 1인 기업 모드 — Multi-Agent Orchestration
+    // --------------------------------------------------------
+    // CEO 에이전트가 사용자 한 줄 명령을 받아 작업을 분해하고,
+    // 전문 에이전트들에게 순차로 일을 분배합니다. 각 에이전트는
+    // 공동 목표·정체성·자기 메모리를 매번 읽고 작업합니다.
+    // --------------------------------------------------------
+    private async _handleCorporatePrompt(prompt: string, modelName: string) {
+        if (!this._view && this._corporateBroadcastTargets.size === 0) return;
+        const post = (m: any) => this._broadcastCorporate(m);
+        // Single abort controller drives every LLM call in this session — sidebar
+        // stop button calls _abortController.abort() which propagates through.
+        this._abortController = new AbortController();
+        const isAborted = () => !!this._abortController?.signal.aborted;
+        try {
+            ensureCompanyStructure();
+            const sessionDir = makeSessionDir();
+            const sessionDisplay = sessionDir.replace(os.homedir(), '~');
+
+            this._displayMessages.push({ text: prompt, role: 'user' });
+
+            // Phase 1: log the user command at the top of every session
+            appendConversationLog({ speaker: '사용자', emoji: '👤', body: prompt });
+
+            // 1) CEO에게 작업 분해 요청 (silent — UI에는 카드 펄스만)
+            // Phase 2: inject recent conversation history into CEO context so
+            // planning is aware of what the company has been doing.
+            post({ type: 'agentStart', agent: 'ceo', task: '작업 분해' });
+            let planRaw = '';
+            try {
+                planRaw = await this._callAgentLLM(
+                    `${CEO_PLANNER_PROMPT}\n${readAgentSharedContext('ceo')}${readRecentConversations(2000)}`,
+                    `[사용자 명령]\n${prompt}`,
+                    modelName,
+                    'ceo',
+                    false
+                );
+            } catch (e: any) {
+                post({ type: 'agentEnd', agent: 'ceo' });
+                // Pull server-side error detail out of the axios stream response so
+                // 500s don't surface as the bare "Request failed with status code 500".
+                let detail = '';
+                try {
+                    if (e?.response?.data?.on) {
+                        const buf = await new Promise<string>((resolve) => {
+                            let acc = '';
+                            e.response.data.on('data', (c: Buffer) => { acc += c.toString(); });
+                            e.response.data.on('end', () => resolve(acc));
+                            e.response.data.on('error', () => resolve(acc));
+                        });
+                        try { detail = JSON.parse(buf).error?.message || JSON.parse(buf).error || buf.slice(0, 300); }
+                        catch { detail = buf.slice(0, 300); }
+                    } else if (e?.response?.data) {
+                        detail = typeof e.response.data === 'string' ? e.response.data.slice(0, 300) : JSON.stringify(e.response.data).slice(0, 300);
+                    }
+                } catch { /* ignore */ }
+                let hint = '';
+                if (/context length|context_length|num_ctx|maximum context/i.test(detail)) {
+                    hint = '\n💡 컨텍스트 초과 — 더 큰 모델로 바꾸거나 회사 폴더의 _shared/decisions.md / _agents/ceo/memory.md를 줄여주세요.';
+                } else if (/out of memory|cuda|allocation/i.test(detail)) {
+                    hint = '\n💡 메모리 부족 — 작은 모델 사용 또는 다른 무거운 앱 종료 후 재시도.';
+                } else if (e?.code === 'ECONNREFUSED') {
+                    hint = '\n💡 LLM 서버에 연결 못함 — Ollama/LM Studio가 켜져 있는지 확인.';
+                }
+                post({ type: 'error', value: `⚠️ CEO 호출 실패: ${e.message}${detail ? '\n원인: ' + detail : ''}${hint}` });
+                return;
+            }
+            post({ type: 'agentEnd', agent: 'ceo' });
+
+            // 2) JSON 파싱 (관대하게)
+            let plan: { brief: string; tasks: { agent: string; task: string }[] } | null = null;
+            try {
+                const m = planRaw.match(/\{[\s\S]*\}/);
+                plan = JSON.parse(m ? m[0] : planRaw);
+            } catch {
+                plan = null;
+            }
+            if (!plan || !Array.isArray(plan.tasks) || plan.tasks.length === 0) {
+                post({
+                    type: 'error',
+                    value: `⚠️ CEO가 작업 분배 계획(JSON)을 생성하지 못했어요. 다시 시도해주세요.\n\n원본 응답:\n${planRaw.slice(0, 400)}`
+                });
+                return;
+            }
+            // 유효한 에이전트만 필터 — 모델이 케이스/공백/한글명을 섞어 보낼 수 있으니
+            // 관대하게 매칭. 영문 id 정확매칭 → 소문자/trim → 한글이름·영문이름 부분일치 순.
+            const idLookup = new Map<string, string>();
+            for (const id of SPECIALIST_IDS) {
+                idLookup.set(id, id);
+                idLookup.set(id.toLowerCase(), id);
+                const a = AGENTS[id];
+                if (a) {
+                    idLookup.set(a.name.toLowerCase(), id);
+                    idLookup.set(a.name, id);
+                }
+            }
+            const koreanAlias: Record<string, string> = {
+                '유튜브': 'youtube', '인스타': 'instagram', '인스타그램': 'instagram',
+                '디자이너': 'designer', '디자인': 'designer',
+                '개발자': 'developer', '개발': 'developer',
+                '비즈니스': 'business', '경영': 'business',
+                '비서': 'secretary', '비서관': 'secretary',
+                '편집자': 'editor', '편집': 'editor',
+                '작가': 'writer', '카피라이터': 'writer',
+                '리서처': 'researcher', '연구원': 'researcher', '리서치': 'researcher',
+            };
+            const originalTasks = [...plan.tasks];
+            plan.tasks = plan.tasks
+                .map(t => {
+                    const raw = String(t.agent || '').trim();
+                    const direct = idLookup.get(raw) || idLookup.get(raw.toLowerCase());
+                    if (direct) return { ...t, agent: direct };
+                    if (koreanAlias[raw]) return { ...t, agent: koreanAlias[raw] };
+                    // partial: any specialist id that appears as substring
+                    const lower = raw.toLowerCase();
+                    const hit = SPECIALIST_IDS.find(id => lower.includes(id));
+                    if (hit) return { ...t, agent: hit };
+                    return null;
+                })
+                .filter((t): t is { agent: string; task: string } => !!t);
+            if (plan.tasks.length === 0) {
+                const wantedIds = originalTasks.map(t => `"${t.agent}"`).join(', ');
+                post({
+                    type: 'error',
+                    value: `⚠️ CEO가 호출한 에이전트(${wantedIds || '없음'})가 우리 팀에 없어요.\n사용 가능한 id: ${SPECIALIST_IDS.join(', ')}\n\nCEO 원본 응답 일부:\n${(planRaw || '').slice(0, 300)}`
+                });
+                return;
+            }
+
+            // brief 저장
+            try {
+                fs.writeFileSync(
+                    path.join(sessionDir, '_brief.md'),
+                    `# 📋 작업 브리프\n\n**원 명령:** ${prompt}\n\n## 요약\n${plan.brief}\n\n## 분배\n${plan.tasks.map(t => `- **${AGENTS[t.agent]?.emoji} ${AGENTS[t.agent]?.name}**: ${t.task}`).join('\n')}\n`
+                );
+            } catch { /* ignore */ }
+
+            // 3) 시네마틱 분배 알림
+            post({
+                type: 'agentDispatch',
+                brief: plan.brief,
+                tasks: plan.tasks.map(t => ({ agent: t.agent, task: t.task })),
+                userPrompt: prompt
+            });
+
+            // Phase 1: log CEO's brief + assignment
+            appendConversationLog({
+                speaker: 'CEO', emoji: '🧭', section: '작업 분배',
+                body: `${plan.brief}\n\n**할당:**\n${plan.tasks.map(t => `- ${AGENTS[t.agent]?.emoji || '🤖'} **${AGENTS[t.agent]?.name || t.agent}**: ${t.task}`).join('\n')}`,
+            });
+
+            // 4) 각 specialist 순차 호출
+            const outputs: Record<string, string> = {};
+            for (const t of plan.tasks) {
+                if (isAborted()) {
+                    post({ type: 'agentEnd', agent: t.agent });
+                    break;
+                }
+                const a = AGENTS[t.agent];
+                if (!a) continue;
+                post({ type: 'agentStart', agent: t.agent, task: t.task });
+
+                // 이전 에이전트들의 산출물을 동료의 작업으로 함께 제공
+                const peerCtx = Object.keys(outputs).length > 0
+                    ? `\n\n[같은 세션의 동료 에이전트 산출물]\n${Object.entries(outputs).map(([k, v]) => `\n### ${AGENTS[k]?.emoji} ${AGENTS[k]?.name}\n${v.slice(0, 1500)}`).join('\n')}`
+                    : '';
+
+                const sysPrompt = `${buildSpecialistPrompt(t.agent)}${readAgentSharedContext(t.agent)}${peerCtx}`;
+                const userMsg = `[CEO의 지시]\n${t.task}\n\n[원 사용자 명령 참고]\n${prompt}`;
+
+                let out = '';
+                try {
+                    out = await this._callAgentLLM(sysPrompt, userMsg, modelName, t.agent, true);
+                } catch (e: any) {
+                    if (isAborted()) {
+                        post({ type: 'agentEnd', agent: t.agent });
+                        post({ type: 'error', value: '🛑 사용자가 중단했어요.' });
+                        return;
+                    }
+                    out = `⚠️ ${a.name} 에이전트 호출 실패: ${e.message}`;
+                }
+                outputs[t.agent] = out;
+                try {
+                    fs.writeFileSync(
+                        path.join(sessionDir, `${t.agent}.md`),
+                        `# ${a.emoji} ${a.name} — ${t.task}\n\n${out}\n`
+                    );
+                } catch { /* ignore */ }
+                // 개인 메모리에 한 줄 누적
+                appendAgentMemory(t.agent, `${t.task} → 산출물 sessions/${path.basename(sessionDir)}/${t.agent}.md`);
+                // Phase 1: log this agent's full output to the running transcript
+                appendConversationLog({ speaker: a.name, emoji: a.emoji, section: t.task.slice(0, 60), body: out });
+                post({ type: 'agentEnd', agent: t.agent });
+            }
+
+            if (isAborted()) {
+                post({ type: 'error', value: '🛑 사용자가 중단했어요.' });
+                return;
+            }
+            // 4.5) 에이전트 간 자율 대화 (Confer) — 2명 이상일 때만
+            const conferTurns: { from: string; to: string; text: string }[] = [];
+            if (plan.tasks.length >= 2) {
+                try {
+                    const conferInput = `[원 명령]\n${prompt}\n\n[산출물 요약]\n${plan.tasks.map(t => `\n## ${AGENTS[t.agent]?.name}\n${(outputs[t.agent] || '').slice(0, 800)}`).join('\n')}`;
+                    const conferRaw = await this._callAgentLLM(CONFER_PROMPT, conferInput, modelName, 'ceo', false);
+                    const m = conferRaw.match(/\{[\s\S]*\}/);
+                    const parsed = JSON.parse(m ? m[0] : conferRaw);
+                    if (parsed && Array.isArray(parsed.turns)) {
+                        const validIds = SPECIALIST_IDS;
+                        for (const t of parsed.turns) {
+                            if (typeof t.from === 'string' && typeof t.to === 'string' && typeof t.text === 'string'
+                                && validIds.includes(t.from) && validIds.includes(t.to)
+                                && t.from !== t.to && t.text.trim().length > 0) {
+                                conferTurns.push({ from: t.from, to: t.to, text: t.text.trim().slice(0, 80) });
+                            }
+                        }
+                    }
+                } catch { /* confer 실패는 silent */ }
+
+                if (conferTurns.length > 0) {
+                    post({ type: 'agentConfer', turns: conferTurns });
+                    // Phase 1: log all confer turns into the running transcript
+                    const conferBody = conferTurns
+                        .map(t => `- ${AGENTS[t.from]?.emoji || ''} **${AGENTS[t.from]?.name || t.from}** → ${AGENTS[t.to]?.emoji || ''} ${AGENTS[t.to]?.name || t.to}: ${t.text}`)
+                        .join('\n');
+                    appendConversationLog({ speaker: '팀 회의', emoji: '💬', section: '에이전트 간 대화', body: conferBody });
+                    // 사무실 시각화가 자연스럽게 흐르도록 대기 (캐릭터 walk + bubble + return)
+                    await new Promise(r => setTimeout(r, Math.min(conferTurns.length * 4500, 22000)));
+                }
+            }
+
+            if (isAborted()) {
+                post({ type: 'error', value: '🛑 사용자가 중단했어요.' });
+                return;
+            }
+            // 5) CEO 종합 보고서 (UI에는 chunk 안 흘리고 카드로만 표시)
+            post({ type: 'agentStart', agent: 'ceo', task: '종합 보고서 작성' });
+            const reportInput = `[원 명령]\n${prompt}\n\n[브리프]\n${plan.brief}\n\n[각 에이전트 산출물]\n${plan.tasks.map(t => `\n## ${AGENTS[t.agent]?.emoji} ${AGENTS[t.agent]?.name}\n${(outputs[t.agent] || '').slice(0, 2000)}`).join('\n')}`;
+            let finalReport = '';
+            try {
+                finalReport = await this._callAgentLLM(
+                    `${CEO_REPORT_PROMPT}\n${readAgentSharedContext('ceo')}`,
+                    reportInput,
+                    modelName,
+                    'ceo',
+                    false
+                );
+            } catch (e: any) {
+                finalReport = `⚠️ 종합 보고서 작성 실패: ${e.message}`;
+            }
+            post({ type: 'agentEnd', agent: 'ceo' });
+
+            try {
+                fs.writeFileSync(path.join(sessionDir, '_report.md'), `# 📝 CEO 종합 보고서\n\n${finalReport}\n`);
+            } catch { /* ignore */ }
+            appendAgentMemory('ceo', `${prompt} → 보고서 sessions/${path.basename(sessionDir)}/_report.md`);
+            // Phase 1: log CEO's final synthesis into the running transcript
+            appendConversationLog({ speaker: 'CEO', emoji: '🧭', section: '종합 보고서', body: finalReport });
+
+            // 5.5) 자가학습 — 결정 추출 → decisions.md에 자동 append
+            const learnedDecisions: string[] = [];
+            try {
+                const learnInput = `[원 명령]\n${prompt}\n\n[보고서]\n${finalReport.slice(0, 2500)}\n\n[대화]\n${conferTurns.map(t => `${AGENTS[t.from]?.name} → ${AGENTS[t.to]?.name}: ${t.text}`).join('\n')}`;
+                const learnRaw = await this._callAgentLLM(DECISIONS_EXTRACT_PROMPT, learnInput, modelName, 'ceo', false);
+                const m = learnRaw.match(/\{[\s\S]*\}/);
+                const parsed = JSON.parse(m ? m[0] : learnRaw);
+                if (parsed && Array.isArray(parsed.decisions)) {
+                    for (const d of parsed.decisions) {
+                        if (typeof d === 'string' && d.trim().length > 0 && d.trim().length <= 80) {
+                            learnedDecisions.push(d.trim());
+                        }
+                    }
+                }
+            } catch { /* silent */ }
+
+            if (learnedDecisions.length > 0) {
+                try {
+                    const dir = getCompanyDir();
+                    const decPath = path.join(dir, '_shared', 'decisions.md');
+                    if (!fs.existsSync(decPath)) {
+                        fs.writeFileSync(decPath, `# 📌 회사 의사결정 로그\n\n_자가학습이 자동 누적합니다. 잘못된 항목은 직접 삭제하세요._\n`);
+                    }
+                    const ts = new Date().toISOString().slice(0, 10);
+                    const block = `\n## [${ts}] ${prompt.slice(0, 60)}\n${learnedDecisions.map(d => `- ${d}`).join('\n')}\n_세션: ${path.basename(sessionDir)}_\n`;
+                    fs.appendFileSync(decPath, block);
+                } catch { /* ignore */ }
+                post({ type: 'decisionsLearned', decisions: learnedDecisions });
+            }
+
+            // 6) 종합 카드
+            post({
+                type: 'corporateReport',
+                brief: plan.brief,
+                report: finalReport,
+                sessionPath: sessionDisplay,
+                sessionRel: `Company/sessions/${path.basename(sessionDir)}`
+            });
+
+            // 6.5) Secretary 자동 텔레그램 보고 (토큰 있을 때만)
+            const tg = readTelegramConfig();
+            if (tg.token && tg.chatId) {
+                const company = readCompanyName() || '1인 기업';
+                const tgText = `*📱 ${company} — 일일 보고*\n\n*명령:* ${prompt.slice(0, 200)}\n\n*브리프:* ${plan.brief}\n\n*완료한 에이전트:*\n${plan.tasks.map(t => `• ${AGENTS[t.agent]?.emoji} ${AGENTS[t.agent]?.name}`).join('\n')}\n\n${finalReport.slice(0, 1500)}\n\n_세션: ${path.basename(sessionDir)}_`;
+                sendTelegramReport(tgText).then(ok => {
+                    if (ok) {
+                        post({ type: 'telegramSent', agent: 'secretary' });
+                    }
+                }).catch(() => { /* silent */ });
+            }
+
+            // 7) 디스플레이 히스토리 (간략)
+            this._displayMessages.push({
+                text: `**[1인 기업 모드]** ${plan.brief}\n\n${finalReport}\n\n_📁 저장: ${sessionDisplay}_`,
+                role: 'ai'
+            });
+            this._saveHistory();
+
+            // 8) 자율 git 백업 (기존 brain auto-sync 재사용)
+            const brainDir = path.join(os.homedir(), '.connect-ai-brain');
+            _safeGitAutoSync(brainDir, `chore(corporate): session ${path.basename(sessionDir)}`, this).catch(() => { /* silent */ });
+        } catch (error: any) {
+            if (isAborted()) {
+                this._broadcastCorporate({ type: 'error', value: '🛑 사용자가 중단했어요.' });
+            } else {
+                this._broadcastCorporate({ type: 'error', value: `⚠️ 1인 기업 모드 오류: ${error.message}` });
+            }
+        } finally {
+            this._abortController = undefined;
+        }
+    }
+
+    // 단일 에이전트 LLM 호출. broadcast=true이면 토큰을 webview로 스트리밍.
+    private async _callAgentLLM(
+        systemPrompt: string,
+        userMsg: string,
+        modelName: string,
+        agentId: string,
+        broadcast: boolean
+    ): Promise<string> {
+        const { ollamaBase, defaultModel, timeout } = getConfig();
+        let isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+        let apiUrl = isLMStudio ? `${ollamaBase}/v1/chat/completions` : `${ollamaBase}/api/chat`;
+        if (!isLMStudio) {
+            try { await axios.get(`${ollamaBase}/api/tags`, { timeout: 1000 }); }
+            catch { apiUrl = 'http://127.0.0.1:1234/v1/chat/completions'; isLMStudio = true; }
+        }
+
+        const messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMsg }
+        ];
+
+        let result = '';
+        const broadcast_fn = (chunk: string) => this._broadcastCorporate({ type: 'agentChunk', agent: agentId, value: chunk });
+
+        const signal = this._abortController?.signal;
+
+        if (isLMStudio) {
+            const body = {
+                model: modelName || defaultModel,
+                messages,
+                stream: true,
+                max_tokens: 4096,
+                temperature: this._temperature,
+                top_p: this._topP
+            };
+            const response = await axios.post(apiUrl, body, { timeout, responseType: 'stream', signal });
+            await new Promise<void>((resolve, reject) => {
+                const stream = response.data;
+                let buffer = '';
+                const onAbort = () => { try { stream.destroy?.(); } catch {} reject(new Error('aborted')); };
+                if (signal) signal.addEventListener('abort', onAbort, { once: true });
+                stream.on('data', (chunk: Buffer) => {
+                    buffer += chunk.toString();
+                    if (buffer.length > MAX_STREAM_BUFFER) buffer = buffer.slice(-MAX_STREAM_BUFFER);
+                    const lines = buffer.split('\n'); buffer = lines.pop() || '';
+                    for (const line of lines) {
+                        if (!line.trim() || line.trim() === 'data: [DONE]') continue;
+                        try {
+                            const raw = line.startsWith('data: ') ? line.slice(6) : line;
+                            const json = JSON.parse(raw);
+                            const token = json.choices?.[0]?.delta?.content || '';
+                            if (token) {
+                                result += token;
+                                if (broadcast) broadcast_fn(token);
+                            }
+                        } catch { /* skip */ }
+                    }
+                });
+                stream.on('end', () => resolve());
+                stream.on('error', (err: any) => reject(err));
+            });
+        } else {
+            const body: any = {
+                model: modelName || defaultModel,
+                messages,
+                stream: true,
+                options: { num_ctx: 8192, num_predict: 2048, temperature: this._temperature, top_p: this._topP, top_k: this._topK }
+            };
+            const response = await axios.post(apiUrl, body, { timeout, responseType: 'stream', signal });
+            await new Promise<void>((resolve, reject) => {
+                const stream = response.data;
+                let buffer = '';
+                const onAbort = () => { try { stream.destroy?.(); } catch {} reject(new Error('aborted')); };
+                if (signal) signal.addEventListener('abort', onAbort, { once: true });
+                stream.on('data', (chunk: Buffer) => {
+                    buffer += chunk.toString();
+                    if (buffer.length > MAX_STREAM_BUFFER) buffer = buffer.slice(-MAX_STREAM_BUFFER);
+                    const lines = buffer.split('\n'); buffer = lines.pop() || '';
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        try {
+                            const json = JSON.parse(line);
+                            const token = json.message?.content || '';
+                            if (token) {
+                                result += token;
+                                if (broadcast) broadcast_fn(token);
+                            }
+                        } catch { /* skip */ }
+                    }
+                });
+                stream.on('end', () => resolve());
+                stream.on('error', (err: any) => reject(err));
+            });
+        }
+        return result;
     }
 
     // --------------------------------------------------------
@@ -4250,8 +8023,127 @@ body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;tr
 .msg-body pre .attr{color:#ffcb6b}
 .msg-body pre .op{color:#89ddff}
 .msg-body pre .type{color:#ffcb6b}
+
+/* ============================================================
+   1인 기업 모드 — Agent Board
+   ============================================================ */
+.agent-board{display:none;background:linear-gradient(180deg,rgba(8,10,15,.95),rgba(5,7,11,.92));border-bottom:1px solid var(--border);padding:10px 12px 12px;position:relative;z-index:8;flex-shrink:0;backdrop-filter:blur(12px)}
+body.corp-on .agent-board{display:block;animation:abSlideIn .45s cubic-bezier(.16,1,.3,1)}
+/* When office panel is open, hide sidebar agent-board (it's redundant with the office view) */
+body.office-open .agent-board{display:none}
+
+@keyframes abSlideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.ab-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;font-size:10px;letter-spacing:.5px}
+.ab-title{font-family:'SF Mono','JetBrains Mono',monospace;color:var(--text-bright);font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:10px}
+.ab-title .ab-sub{color:var(--text-dim);font-weight:400;letter-spacing:.5px;text-transform:none;margin-left:4px}
+.ab-folder{font-family:'SF Mono',monospace;color:var(--text-dim);font-size:9.5px;cursor:pointer;padding:3px 8px;border-radius:6px;border:1px solid transparent;transition:all .2s}
+.ab-folder:hover{color:var(--accent);border-color:var(--border2);background:var(--surface2)}
+.ab-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(74px,1fr));gap:6px;position:relative;z-index:2}
+.ab-svg{position:absolute;left:12px;right:12px;top:36px;bottom:12px;width:calc(100% - 24px);height:calc(100% - 48px);pointer-events:none;z-index:1;opacity:0;transition:opacity .3s}
+body.corp-dispatching .ab-svg{opacity:1}
+.ab-card{position:relative;background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:9px 6px 7px;display:flex;flex-direction:column;align-items:center;gap:3px;transition:all .35s cubic-bezier(.16,1,.3,1);overflow:hidden;backdrop-filter:blur(8px);cursor:pointer;min-height:64px}
+.ab-card::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 60%,var(--ag-color,var(--accent)) 200%);opacity:0;transition:opacity .4s;pointer-events:none}
+.ab-card:hover{transform:translateY(-1px);border-color:var(--ag-color,var(--accent));box-shadow:0 4px 14px var(--accent-glow)}
+.ab-card.thinking::before{opacity:.18;animation:cardPulse 1.6s ease-in-out infinite}
+.ab-card.working{border-color:var(--ag-color,var(--accent));box-shadow:0 0 18px var(--ag-color-glow,var(--accent-glow)),inset 0 0 12px rgba(0,0,0,.3)}
+.ab-card.working::before{opacity:.2}
+.ab-card.working::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0,transparent 4px,var(--ag-color,var(--accent)) 4px,var(--ag-color,var(--accent)) 4.5px);opacity:.06;animation:cardScan 2.2s linear infinite;pointer-events:none}
+.ab-card.done{border-color:var(--ag-color,var(--accent));opacity:.85}
+.ab-card.done::before{opacity:.08}
+.ab-card.idle{opacity:.55}
+@keyframes cardPulse{0%,100%{opacity:.05}50%{opacity:.25}}
+@keyframes cardScan{from{background-position:0 0}to{background-position:0 -40px}}
+.ab-emoji{font-size:18px;line-height:1;filter:drop-shadow(0 0 6px var(--ag-color-glow,transparent))}
+.ab-card.idle .ab-emoji{filter:grayscale(.4) brightness(.8)}
+.ab-name{font-family:'SF Mono','JetBrains Mono',monospace;font-size:9px;font-weight:700;color:var(--text-bright);letter-spacing:.6px;text-transform:uppercase}
+.ab-status{font-family:'SF Mono',monospace;font-size:8px;color:var(--text-dim);letter-spacing:.4px;text-transform:uppercase}
+.ab-card.thinking .ab-status{color:#ffab40}
+.ab-card.working .ab-status{color:var(--ag-color,var(--accent))}
+.ab-card.done .ab-status{color:#00cc77}
+.ab-card .ab-led{position:absolute;top:6px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--text-dim);opacity:.4;transition:all .3s}
+.ab-card.thinking .ab-led{background:#ffab40;animation:ledBlink 1s ease-in-out infinite;box-shadow:0 0 6px #ffab40}
+.ab-card.working .ab-led{background:var(--ag-color,var(--accent));animation:ledBlink .7s ease-in-out infinite;box-shadow:0 0 8px var(--ag-color,var(--accent))}
+.ab-card.done .ab-led{background:#00cc77;opacity:1;box-shadow:0 0 6px #00cc77}
+@keyframes ledBlink{0%,100%{opacity:1}50%{opacity:.35}}
+.ab-task-toast{position:absolute;left:50%;bottom:calc(100% + 4px);transform:translateX(-50%);background:rgba(8,10,15,.96);border:1px solid var(--ag-color,var(--accent));border-radius:6px;padding:4px 8px;font-size:9.5px;color:var(--text-bright);white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;font-family:'SF Mono',monospace;z-index:5;box-shadow:0 4px 14px rgba(0,0,0,.5),0 0 12px var(--ag-color-glow,var(--accent-glow));animation:toastIn .4s cubic-bezier(.16,1,.3,1)}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+.ab-svg .ab-beam{stroke:var(--accent);stroke-width:1.5;fill:none;stroke-dasharray:4 6;opacity:.65;filter:drop-shadow(0 0 4px var(--accent))}
+.ab-svg .ab-beam.dispatching{animation:beamFlow 1.2s linear}
+@keyframes beamFlow{0%{stroke-dashoffset:60;opacity:0}20%{opacity:1}100%{stroke-dashoffset:0;opacity:.65}}
+
+/* ===== Agent-tagged messages ===== */
+.msg.msg-agent{position:relative}
+.msg-agent .av{background:rgba(20,22,28,.85);color:var(--ag-color,var(--accent));border:1px solid var(--ag-color,var(--accent));box-shadow:0 0 10px var(--ag-color-glow,var(--accent-glow))}
+.msg-agent .ag-tag{font-family:'SF Mono','JetBrains Mono',monospace;font-size:9.5px;font-weight:700;color:var(--ag-color,var(--accent));letter-spacing:1px;text-transform:uppercase;padding:1px 7px;border:1px solid var(--ag-color,var(--accent));border-radius:5px;background:rgba(0,0,0,.3);margin-left:2px}
+.msg-agent .ag-task{font-size:10px;color:var(--text-dim);margin-left:4px;font-weight:400}
+.msg-agent .msg-body{border-left:2px solid var(--ag-color,var(--accent));padding-left:12px;margin-left:23px}
+.msg-agent.streaming .msg-body{box-shadow:inset 0 0 18px var(--ag-color-glow,transparent)}
+.msg-agent .ag-elapsed{font-size:9px;color:var(--text-dim);margin-left:auto;font-family:'SF Mono',monospace;opacity:.6}
+
+/* ===== CEO Brief Card (작업 분배 시작 알림) ===== */
+.brief-card{background:linear-gradient(135deg,rgba(248,250,252,.06),rgba(248,250,252,.02));border:1px solid rgba(248,250,252,.25);border-radius:14px;padding:14px 16px;margin-left:29px;animation:msgIn .5s cubic-bezier(.16,1,.3,1);position:relative;overflow:hidden;backdrop-filter:blur(8px)}
+.brief-card::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(248,250,252,.08),transparent);transform:translateX(-100%);animation:briefSweep 2s ease-out}
+@keyframes briefSweep{to{transform:translateX(100%)}}
+.brief-head{font-family:'SF Mono',monospace;font-size:10px;letter-spacing:2px;color:#F8FAFC;margin-bottom:8px;text-transform:uppercase;opacity:.85}
+.brief-text{font-size:13px;line-height:1.6;color:var(--text-bright);margin-bottom:10px;font-weight:500}
+.brief-tasks{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+.brief-task{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text);padding:5px 8px;background:rgba(0,0,0,.3);border-radius:7px;border-left:2px solid var(--ag-color,var(--accent));animation:briefTaskIn .4s ease-out backwards}
+.brief-task .bt-emoji{font-size:13px}
+.brief-task .bt-name{font-family:'SF Mono',monospace;font-size:9.5px;font-weight:700;color:var(--ag-color,var(--accent));letter-spacing:.5px;text-transform:uppercase;min-width:62px}
+.brief-task .bt-text{flex:1;color:var(--text-bright);font-size:11.5px}
+@keyframes briefTaskIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
+
+/* ===== CEO Final Report Card ===== */
+.report-card{background:linear-gradient(135deg,rgba(0,255,65,.04),rgba(0,143,17,.02));border:1px solid rgba(0,255,65,.3);border-radius:16px;padding:18px 20px;margin-left:29px;animation:msgIn .55s cubic-bezier(.16,1,.3,1);position:relative;overflow:hidden;backdrop-filter:blur(8px);box-shadow:0 8px 32px rgba(0,0,0,.4),0 0 24px rgba(0,255,65,.12)}
+.report-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),var(--accent2),var(--accent),transparent);animation:reportLine 3s ease-in-out infinite}
+@keyframes reportLine{0%,100%{opacity:.4}50%{opacity:1}}
+.report-head{display:flex;align-items:center;justify-content:space-between;font-family:'SF Mono',monospace;font-size:10px;letter-spacing:2px;color:var(--accent);margin-bottom:12px;text-transform:uppercase;text-shadow:0 0 8px var(--accent-glow)}
+.report-head .rh-tag{padding:2px 8px;border:1px solid rgba(0,255,65,.4);border-radius:5px;background:rgba(0,255,65,.06)}
+.report-body{font-size:13px;line-height:1.75;color:var(--text-bright)}
+.report-body h2{font-size:13px;color:var(--accent);margin:10px 0 6px;letter-spacing:.5px}
+.report-body ul,.report-body ol{padding-left:20px;margin:4px 0}
+.report-body li{margin:3px 0;color:var(--text)}
+.report-body strong{color:var(--text-bright)}
+.report-foot{margin-top:14px;padding-top:10px;border-top:1px solid rgba(0,255,65,.15);display:flex;align-items:center;justify-content:space-between;font-size:10px;font-family:'SF Mono',monospace;color:var(--text-dim)}
+.report-foot .rf-link{color:var(--accent);cursor:pointer;text-decoration:none}
+.report-foot .rf-link:hover{text-decoration:underline}
+
+/* ===== Onboarding & Interview Cards ===== */
+.onboard-card,.interview-card{background:linear-gradient(135deg,rgba(0,255,65,.05),rgba(0,143,17,.02));border:1px solid rgba(0,255,65,.28);border-radius:16px;padding:18px 20px;margin-left:29px;animation:msgIn .5s cubic-bezier(.16,1,.3,1);position:relative;overflow:hidden;backdrop-filter:blur(8px);box-shadow:0 8px 32px rgba(0,0,0,.4),0 0 18px rgba(0,255,65,.08)}
+.onboard-card::before,.interview-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:reportLine 3s ease-in-out infinite}
+.onboard-head,.interview-head{font-family:'SF Mono',monospace;font-size:10px;letter-spacing:2px;color:var(--accent);margin-bottom:8px;text-transform:uppercase;text-shadow:0 0 8px var(--accent-glow)}
+.onboard-title,.interview-title{font-size:15px;font-weight:700;color:var(--text-bright);margin-bottom:6px}
+.onboard-sub,.interview-sub{font-size:11.5px;color:var(--text-dim);line-height:1.6;margin-bottom:14px}
+.onboard-options{display:flex;flex-direction:column;gap:6px}
+.onboard-opt{display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border2);border-radius:10px;padding:10px 14px;cursor:pointer;transition:all .25s;font-family:inherit;color:var(--text-bright);text-align:left}
+.onboard-opt:hover{border-color:var(--accent);background:rgba(0,255,65,.06);transform:translateY(-1px);box-shadow:0 4px 14px var(--accent-glow)}
+.onboard-opt .oo-icon{font-size:18px;flex-shrink:0}
+.onboard-opt .oo-text{display:flex;flex-direction:column;gap:2px;flex:1}
+.onboard-opt .oo-title{font-size:12.5px;font-weight:700}
+.onboard-opt .oo-desc{font-size:10.5px;color:var(--text-dim);font-weight:400}
+.interview-fields{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.interview-field label{display:block;font-size:10px;font-family:'SF Mono',monospace;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
+.interview-field input{width:100%;background:var(--input-bg);border:1px solid var(--border2);border-radius:8px;padding:8px 12px;color:var(--text-bright);font-family:inherit;font-size:13px;outline:none;transition:all .2s}
+.interview-field input:focus{border-color:var(--accent);box-shadow:0 0 12px var(--accent-glow)}
+.interview-actions{display:flex;justify-content:flex-end;gap:8px}
+.interview-btn{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;padding:8px 18px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;transition:all .2s}
+.interview-btn:hover{transform:translateY(-1px);box-shadow:0 4px 14px var(--accent-glow)}
+.interview-btn.skip{background:transparent;border:1px solid var(--border2);color:var(--text-dim)}
+.interview-btn.skip:hover{border-color:var(--accent);color:var(--text-bright);box-shadow:none}
+
+/* 헤더에 회사명 표시 */
+.brand-suffix{font-family:'SF Mono','JetBrains Mono',monospace;font-size:10px;color:var(--accent);font-weight:600;letter-spacing:.5px;margin-left:6px;padding:2px 7px;border:1px solid rgba(0,255,65,.3);border-radius:5px;background:rgba(0,255,65,.04);display:none}
+body.corp-on .brand-suffix.has-name{display:inline-block}
+
+/* ===== Cinematic dispatch overlay (boot moment) ===== */
+.corp-overlay{position:absolute;inset:0;background:radial-gradient(circle at center,rgba(0,255,65,.06),rgba(0,0,0,.7));backdrop-filter:blur(2px);pointer-events:none;opacity:0;z-index:50;display:flex;align-items:center;justify-content:center}
+body.corp-dispatching .corp-overlay{opacity:1;animation:overlayPulse 1.5s ease-out forwards}
+@keyframes overlayPulse{0%{opacity:0}30%{opacity:1}100%{opacity:0}}
+.corp-overlay-text{font-family:'SF Mono',monospace;font-size:11px;letter-spacing:4px;color:var(--accent);text-transform:uppercase;text-shadow:0 0 12px var(--accent),0 0 24px var(--accent2);animation:bootText 1.5s ease-out}
+@keyframes bootText{0%{opacity:0;letter-spacing:0}30%{opacity:1;letter-spacing:6px}70%{opacity:1}100%{opacity:0;letter-spacing:8px}}
+
 </style></head><body class="init">
-<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="internetBtn" title="인터넷 검색 켜기 (현재: OFF)" style="opacity: 0.4; filter: grayscale(1);">🌐</button><button class="btn-icon" id="thinkingBtn" title="Thinking Mode — AI가 어떻게 생각하는지 시각화" style="opacity:0.5">🎬</button><button class="btn-icon" id="brainBtn" title="내 지식 관리">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="설정">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="새 대화 시작">+</button></div></div>
+<div class="header"><div class="header-left"><div class="logo">\u2726</div><span class="brand">Connect AI</span><span class="brand-suffix" id="brandSuffix"></span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="corporateBtn" title="1인 기업 모드 — 에이전트 팀이 자동으로 일합니다 (현재: OFF)" style="opacity:0.5">👔</button><button class="btn-icon" id="internetBtn" title="인터넷 검색 켜기 (현재: OFF)" style="opacity: 0.4; filter: grayscale(1);">🌐</button><button class="btn-icon" id="thinkingBtn" title="Thinking Mode — AI가 어떻게 생각하는지 시각화" style="opacity:0.5">🎬</button><button class="btn-icon" id="brainBtn" title="내 지식 관리">\ud83e\udde0</button><button class="btn-icon" id="settingsBtn" title="설정">\u2699\ufe0f</button><button class="btn-icon" id="newChatBtn" title="새 대화 시작">+</button></div></div>
 <div class="thinking-bar" id="thinkingBar"></div>
 <div class="status-bar" id="statusBar">
   <span class="status-item" id="statFolder" title="지식 폴더 — 클릭하면 폴더 열림"><span class="status-icon">📁</span><span id="statFolderText">지식 폴더 미설정</span></span>
@@ -4259,7 +8151,17 @@ body.init .input-wrap{max-width:680px;width:100%;margin:0 auto;transform:none;tr
   <span class="status-item" id="statGit" title="GitHub 백업 — 클릭하면 동기화"><span class="status-icon">☁️</span><span id="statGitText">GitHub 미연결</span></span>
   <span class="ag-mini">⚡ ANTIGRAVITY</span>
 </div>
+<div class="agent-board" id="agentBoard">
+  <div class="ab-head">
+    <span class="ab-title"><span id="abCompanyName">1인 기업 OS</span> <span class="ab-sub" id="abSub">— Multi-Agent Team</span></span>
+    <span class="ab-folder" id="abFolder" title="회사 폴더 열기">📁 <span id="abFolderText">미설정</span></span>
+  </div>
+  <div class="ab-grid" id="abGrid"></div>
+  <svg class="ab-svg" id="abSvg" preserveAspectRatio="none"></svg>
+</div>
+
 <div class="main-view" id="mainView">
+<div class="corp-overlay" id="corpOverlay"><div class="corp-overlay-text">DISPATCHING AGENTS</div></div>
 <div class="chat" id="chat">
 <div id="welcomeRoot"></div></div>
 <div class="input-wrap"><div class="input-box">
@@ -4281,8 +8183,17 @@ const vscode=acquireVsCodeApi(),chat=document.getElementById('chat'),input=docum
 sendBtn=document.getElementById('sendBtn'),stopBtn=document.getElementById('stopBtn'),
 modelSel=document.getElementById('modelSel'),newChatBtn=document.getElementById('newChatBtn'),settingsBtn=document.getElementById('settingsBtn'),brainBtn=document.getElementById('brainBtn'),thinkingBtn=document.getElementById('thinkingBtn'),
 internetBtn=document.getElementById('internetBtn'),attachBtn=document.getElementById('attachBtn'),injectLocalBtn=document.getElementById('injectLocalBtn'),fileInput=document.getElementById('fileInput'),attachPreview=document.getElementById('attachPreview'),
-thinkingBar=document.getElementById('thinkingBar');
-let loader=null,sending=false,pendingFiles=[],internetEnabled=false;
+thinkingBar=document.getElementById('thinkingBar'),corporateBtn=document.getElementById('corporateBtn'),agentBoard=document.getElementById('agentBoard'),abGrid=document.getElementById('abGrid'),abSvg=document.getElementById('abSvg'),abFolder=document.getElementById('abFolder'),abCompanyName=document.getElementById('abCompanyName'),abFolderText=document.getElementById('abFolderText'),brandSuffix=document.getElementById('brandSuffix');
+let loader=null,sending=false,pendingFiles=[],internetEnabled=false,corporateMode=false,officeOpen=false,corporateUnlocked=false;
+/* Smart auto-scroll: only stick to the bottom if the user is already near it.
+   If they scrolled up to read earlier messages, leave their view alone. */
+function scrollChatToBottomIfNear(){
+  if (!chat) return;
+  const nearBottom = (chat.scrollHeight - chat.scrollTop - chat.clientHeight) < 120;
+  if (nearBottom) chat.scrollTo({ top: chat.scrollHeight });
+}
+let agentMap={},agentCardEls={},agentStreamEls={};
+let companyState={configured:false,name:'',dir:'',folderExists:false};
 function welcomeHtml(){
   return '<div class="welcome"><div class="welcome-logo">✦</div>'
     + '<div class="ag-badge">⚡ Built for Antigravity</div>'
@@ -4305,7 +8216,7 @@ internetBtn.addEventListener('click', ()=>{
   msg.className='msg';
   msg.innerHTML='<div class="msg-body" style="color:#00bdff;font-size:12px;opacity:0.8;">🌐 인터넷 및 시간 동기화 모드가 ' + (internetEnabled?'ON':'OFF') + ' 되었습니다.</div>';
   chat.appendChild(msg);
-  chat.scrollTop=chat.scrollHeight;
+  scrollChatToBottomIfNear();
 });
 
 /* Syntax Highlighting (lightweight) */
@@ -4344,6 +8255,7 @@ input.addEventListener('paste',(e)=>{
   }
 });
 vscode.postMessage({type:'getModels'});
+vscode.postMessage({type:'corporateInit'});
 setTimeout(()=>vscode.postMessage({type:'ready'}),300);
 // Initial welcome render
 const _wr=document.getElementById('welcomeRoot'); if(_wr) _wr.outerHTML=welcomeHtml();
@@ -4377,7 +8289,7 @@ function addMsg(text,role){
   head.innerHTML=(isUser?'<div class="av av-user">\ud83d\udc64</div><span>You</span>':'<div class="av av-ai">\u2726</div><span>Connect AI</span>')+'<span class="msg-time">'+getTime()+'</span>';
   const body=document.createElement('div');body.className='msg-body';
   if(isUser){body.innerText=text}else{body.innerHTML=fmt(text)}
-  el.appendChild(head);el.appendChild(body);chat.appendChild(el);chat.scrollTop=chat.scrollHeight;
+  el.appendChild(head);el.appendChild(body);chat.appendChild(el);scrollChatToBottomIfNear();
 }
 function escapeHtml(s){return String(s||'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]))}
 function showInjectCard(title,relPath){
@@ -4390,7 +8302,7 @@ function showInjectCard(title,relPath){
     '<div class="inject-path">\ud83d\udcc1 '+safeP+'</div>'+
     '<div class="inject-quote">I know '+safeT+'.</div>'+
     '</div>';
-  chat.appendChild(el);chat.scrollTop=chat.scrollHeight;
+  chat.appendChild(el);scrollChatToBottomIfNear();
 }
 const LOADING_PHASES=[
   '\ud83d\udcc2 \ud504\ub85c\uc81d\ud2b8 \ud30c\uc77c \uc0b4\ud3b4\ubcf4\ub294 \uc911...',
@@ -4402,7 +8314,7 @@ let _loaderTimer=null;
 function showLoader(){
   loader=document.createElement('div');loader.className='msg';
   loader.innerHTML='<div class="msg-head"><div class="av av-ai">\u2726</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div><div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><span class="loading-text" id="loadingTextEl">'+LOADING_PHASES[0]+'</span></div>';
-  chat.appendChild(loader);chat.scrollTop=chat.scrollHeight;thinkingBar.classList.add('active');
+  chat.appendChild(loader);scrollChatToBottomIfNear();thinkingBar.classList.add('active');
   // \ub2e8\uacc4\ubcc4 \uba54\uc2dc\uc9c0 \uc21c\ucc28 \uc804\ud658 (\uc0ac\uc6a9\uc790\uac00 \uc9c4\ud589 \uc0c1\ud669\uc744 \uc778\uc9c0\ud560 \uc218 \uc788\ub3c4\ub85d)
   let phase=0;
   if(_loaderTimer) clearInterval(_loaderTimer);
@@ -4414,20 +8326,34 @@ function showLoader(){
 }
 function hideLoader(){if(_loaderTimer){clearInterval(_loaderTimer);_loaderTimer=null;}if(loader&&loader.parentNode)loader.parentNode.removeChild(loader);loader=null;thinkingBar.classList.remove('active')}
 function setSending(v){sending=v;sendBtn.disabled=v;stopBtn.classList.toggle('visible',v);input.disabled=v;if(!v){input.focus();thinkingBar.classList.remove('active')}}
-function send(){
+function send(opts){
+  const bypassCorporate=!!(opts&&opts.bypassCorporate);
+  const corp=corporateMode&&!bypassCorporate;
   const text=input.value.trim();
   if((!text&&pendingFiles.length===0)||sending)return;
   document.body.classList.remove('init');
   const w=document.querySelector('.welcome');if(w)w.remove();
   document.querySelectorAll('.quick-actions').forEach(e=>e.remove());
   const displayText=text+(pendingFiles.length>0?'\\\\n\\ud83d\\udcce '+pendingFiles.map(f=>f.name).join(', '):'');
+  /* corporate \ubaa8\ub4dc\uc778\ub370 \uc544\uc9c1 \uc14b\uc5c5 \uc548 \ub05d\ub0ac\uc73c\uba74 \uba85\ub839 \ucc28\ub2e8 */
+  if(corp && !companyState.configured){
+    setSending(false);
+    addCorpBanner('\u26a0\ufe0f \ud68c\uc0ac \uc124\uc815\uc744 \uba3c\uc800 \uc644\ub8cc\ud574\uc8fc\uc138\uc694. (\uc704 \uce74\ub4dc\uc5d0\uc11c \uc120\ud0dd)');
+    if(!companyState.folderExists)showOnboardingCard();else showInterviewCard();
+    return;
+  }
   addMsg(displayText,'user');
-  input.value='';input.style.height='auto';setSending(true);showLoader();
+  input.value='';input.style.height='auto';setSending(true);
+  if(corp && pendingFiles.length===0){
+    /* \uce74\ub4dc \ubcf4\ub4dc\uac00 \uc2dc\uac01\ud654 \ub2f4\ub2f9 \u2014 \uc77c\ubc18 \ub85c\ub354 \uc548 \ub744\uc6c0 */
+  } else {
+    showLoader();
+  }
   if(pendingFiles.length>0){
     vscode.postMessage({type:'promptWithFile',value:text||'\uc774 \ud30c\uc77c\uc744 \ubd84\uc11d\ud574\uc8fc\uc138\uc694.',model:modelSel.value,files:pendingFiles,internet:internetEnabled});
     pendingFiles=[];attachPreview.innerHTML='';attachPreview.classList.remove('visible');
   } else {
-    vscode.postMessage({type:'prompt',value:text,model:modelSel.value,internet:internetEnabled});
+    vscode.postMessage({type:'prompt',value:text,model:modelSel.value,internet:internetEnabled,corporate:corp});
   }
 }
 
@@ -4514,10 +8440,309 @@ function updateStatus(s){
 vscode.postMessage({type:'requestStatus'});
 setInterval(()=>vscode.postMessage({type:'requestStatus'}), 30000);
 stopBtn.addEventListener('click',()=>{vscode.postMessage({type:'stopGeneration'});hideLoader();setSending(false);if(streamBody){streamBody.classList.remove('stream-active')}streamEl=null;streamBody=null;});
+
+/* ===== 1인 기업 모드 ===== */
+function applyCorporateMode(on){
+  corporateMode=on;
+  document.body.classList.toggle('corp-on',on);
+  corporateBtn.style.opacity=on?'1':'0.5';
+  corporateBtn.style.background=on?'linear-gradient(135deg,var(--accent),var(--accent2))':'';
+  corporateBtn.title='1인 기업 모드 — '+(on?'ON':'OFF (클릭해서 켜기)');
+  input.placeholder=on?'한 줄 명령을 내리세요. 팀이 알아서 일합니다.':'무엇을 만들어 드릴까요?';
+}
+
+function showCorpGate(onUnlock){
+  const old=document.getElementById('corpGateBackdrop');if(old)old.remove();
+  const bd=document.createElement('div');bd.id='corpGateBackdrop';bd.className='cg-backdrop';
+  bd.innerHTML='<div class="cg-modal" id="cgModal">'
+    +'<span class="cg-corner bl"></span><span class="cg-corner br"></span>'
+    +'<div class="cg-lock-wrap"><div class="cg-lock">🔒</div><div class="cg-tag">BETA · ACCESS REQUIRED</div></div>'
+    +'<div class="cg-title">ENTERPRISE MODE</div>'
+    +'<div class="cg-sub">기업 모드는 현재 테스트 중입니다.<br>비밀번호를 입력하면 사용할 수 있습니다.</div>'
+    +'<div class="cg-input-wrap"><input id="corpGateInput" class="cg-input" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="● ● ● ●"></div>'
+    +'<div id="corpGateErr" class="cg-err">// ACCESS DENIED — INVALID KEY</div>'
+    +'<div class="cg-actions"><button class="cg-btn cancel" id="corpGateCancel">취소</button><button class="cg-btn ok" id="corpGateOk">UNLOCK ▸</button></div>'
+    +'</div>';
+  document.body.appendChild(bd);
+  const inp=document.getElementById('corpGateInput'),err=document.getElementById('corpGateErr'),modal=document.getElementById('cgModal');
+  setTimeout(()=>inp.focus(),120);
+  function close(){bd.style.transition='opacity .25s';bd.style.opacity='0';setTimeout(()=>bd.remove(),250);}
+  function submit(){
+    if(inp.value==='0101'){
+      corporateUnlocked=true;
+      modal.style.transition='all .35s cubic-bezier(.16,1,.3,1)';
+      modal.style.transform='scale(1.04)';
+      modal.style.boxShadow='0 0 0 1px rgba(0,255,65,.2) inset,0 30px 80px rgba(0,0,0,.85),0 0 100px rgba(0,255,65,.5),0 0 200px rgba(0,255,65,.25)';
+      setTimeout(()=>{close();onUnlock();},220);
+    } else {
+      err.classList.add('show');
+      modal.classList.remove('shake');void modal.offsetWidth;modal.classList.add('shake');
+      inp.value='';inp.focus();
+    }
+  }
+  document.getElementById('corpGateOk').addEventListener('click',submit);
+  document.getElementById('corpGateCancel').addEventListener('click',close);
+  inp.addEventListener('input',()=>{if(err.classList.contains('show'))err.classList.remove('show');});
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submit();}else if(e.key==='Escape'){close();}});
+  bd.addEventListener('click',e=>{if(e.target===bd)close();});
+}
+
+function runCorporateClick(){
+  /* 회사 폴더가 아직 없거나 정체성이 비어있으면 사이드바에서 셋업 먼저 */
+  if(!companyState.folderExists){
+    applyCorporateMode(true);
+    addCorpBanner('👔 처음이시군요. 회사 폴더를 어디에 만들까요?');
+    showOnboardingCard();
+    return;
+  }
+  if(!companyState.configured){
+    applyCorporateMode(true);
+    addCorpBanner('👔 회사 폴더는 있지만 정체성이 비어있어요. 빠르게 3가지만 알려주세요.');
+    showInterviewCard();
+    return;
+  }
+  /* 셋업 완료 → 가상 사무실 토글 (열려있으면 닫고, 닫혀있으면 엶) */
+  if (officeOpen) {
+    vscode.postMessage({type:'closeOffice'});
+  } else {
+    applyCorporateMode(true);
+    vscode.postMessage({type:'toggleOffice'});
+  }
+}
+
+corporateBtn.addEventListener('click',()=>{
+  if(!corporateUnlocked){showCorpGate(runCorporateClick);return;}
+  runCorporateClick();
+});
+abFolder.addEventListener('click',()=>vscode.postMessage({type:'openCompanyFolder'}));
+
+
+function addCorpBanner(text){
+  const m=document.createElement('div');m.className='msg';
+  m.innerHTML='<div class="msg-body" style="color:#F8FAFC;font-size:12px;opacity:0.9;background:rgba(0,255,65,0.06);border:1px solid rgba(0,255,65,0.25);border-radius:10px;padding:8px 12px;margin-left:29px;font-family:\\'SF Mono\\',monospace;letter-spacing:0.3px;">'+esc(text)+'</div>';
+  chat.appendChild(m);scrollChatToBottomIfNear();
+}
+
+function showOnboardingCard(){
+  const old=document.getElementById('onboardCard');if(old)old.remove();
+  const el=document.createElement('div');el.className='msg';el.id='onboardCard';
+  el.innerHTML='<div class="onboard-card">'
+    +'<div class="onboard-head">⚙️ COMPANY SETUP — 처음 시작</div>'
+    +'<div class="onboard-title">회사 폴더를 어디에 만들까요?</div>'
+    +'<div class="onboard-sub">모든 에이전트의 메모리·산출물이 이 폴더에 쌓입니다. 나중에 GitHub 백업으로 다른 PC에서도 이어갈 수 있어요.</div>'
+    +'<div class="onboard-options">'
+      +'<button class="onboard-opt" data-choice="default"><span class="oo-icon">🏠</span><span class="oo-text"><span class="oo-title">디폴트 위치에 만들기</span><span class="oo-desc">~/.connect-ai-brain/Company/ — 기존 두뇌 폴더 안</span></span></button>'
+      +'<button class="onboard-opt" data-choice="pick"><span class="oo-icon">📂</span><span class="oo-text"><span class="oo-title">직접 폴더 선택</span><span class="oo-desc">아무 위치나 골라서 그 안에 Company/ 만들기</span></span></button>'
+      +'<button class="onboard-opt" data-choice="import"><span class="oo-icon">📥</span><span class="oo-text"><span class="oo-title">다른 PC에서 가져오기 (GitHub)</span><span class="oo-desc">기존 회사 폴더의 Git URL로 복원</span></span></button>'
+    +'</div></div>';
+  chat.appendChild(el);scrollChatToBottomIfNear();
+  el.querySelectorAll('.onboard-opt').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const choice=btn.getAttribute('data-choice');
+      vscode.postMessage({type:'companySetup',choice:choice});
+      el.remove();
+    });
+  });
+}
+
+function showInterviewCard(){
+  const old=document.getElementById('interviewCard');if(old)old.remove();
+  const el=document.createElement('div');el.className='msg';el.id='interviewCard';
+  el.innerHTML='<div class="interview-card">'
+    +'<div class="interview-head">🧭 CEO · 회사 정체성 인터뷰</div>'
+    +'<div class="interview-title">3가지만 빠르게 알려주세요</div>'
+    +'<div class="interview-sub">나머지는 작업하면서 자가학습이 채워줄 거예요. 빈 칸으로 둬도 OK.</div>'
+    +'<div class="interview-fields">'
+      +'<div class="interview-field"><label>회사·브랜드 이름</label><input id="ivName" placeholder="예: 제이코프 / 브랜드 미정"></div>'
+      +'<div class="interview-field"><label>한 줄로 뭐 하시는 분이세요?</label><input id="ivOneLiner" placeholder="예: 자기계발 콘텐츠 만드는 1인 크리에이터"></div>'
+      +'<div class="interview-field"><label>올해 목표 1개</label><input id="ivGoal" placeholder="예: 유튜브 구독자 10만"></div>'
+    +'</div>'
+    +'<div class="interview-actions">'
+      +'<button class="interview-btn skip" id="ivSkipBtn">건너뛰기</button>'
+      +'<button class="interview-btn" id="ivSubmitBtn">완료 →</button>'
+    +'</div></div>';
+  chat.appendChild(el);scrollChatToBottomIfNear();
+  setTimeout(()=>{const f=document.getElementById('ivName');if(f)f.focus();},100);
+  document.getElementById('ivSubmitBtn').addEventListener('click',()=>{
+    const name=document.getElementById('ivName').value;
+    const oneLiner=document.getElementById('ivOneLiner').value;
+    const goal=document.getElementById('ivGoal').value;
+    vscode.postMessage({type:'companyInterview',answers:{name:name,oneLiner:oneLiner,goal:goal}});
+    el.remove();
+  });
+  document.getElementById('ivSkipBtn').addEventListener('click',()=>{
+    vscode.postMessage({type:'companyInterview',answers:{name:'',oneLiner:'',goal:''}});
+    el.remove();
+  });
+}
+
+function applyCompanyState(s){
+  if(!s)return;
+  companyState.configured=!!s.configured;
+  companyState.name=s.companyName||'';
+  companyState.dir=s.companyDir||'';
+  companyState.folderExists=!!s.folderExists;
+  /* 헤더 */
+  if(brandSuffix){
+    if(companyState.name){
+      brandSuffix.textContent='👔 '+companyState.name;
+      brandSuffix.classList.add('has-name');
+    } else {
+      brandSuffix.textContent='';
+      brandSuffix.classList.remove('has-name');
+    }
+  }
+  /* 에이전트 보드 헤더 */
+  if(abCompanyName)abCompanyName.textContent=companyState.name||'1인 기업 OS';
+  if(abFolderText)abFolderText.textContent=companyState.dir||'미설정';
+}
+abFolder.addEventListener('click',()=>vscode.postMessage({type:'openCompanyFolder'}));
+
+function renderAgentBoard(agents,companyDir){
+  agentMap={};agentCardEls={};
+  abGrid.innerHTML='';
+  if(companyDir){const t=document.getElementById('abFolderText');if(t)t.textContent=companyDir;}
+  agents.forEach(a=>{
+    agentMap[a.id]=a;
+    const card=document.createElement('div');
+    card.className='ab-card idle';
+    card.style.setProperty('--ag-color',a.color);
+    card.style.setProperty('--ag-color-glow',a.color+'33');
+    card.dataset.agent=a.id;
+    card.innerHTML='<span class="ab-led"></span><div class="ab-emoji">'+a.emoji+'</div><div class="ab-name">'+a.name+'</div><div class="ab-status">IDLE</div>';
+    card.addEventListener('click',()=>{
+      vscode.postMessage({type:'openCompanyFolder',sub:'_agents/'+a.id});
+    });
+    abGrid.appendChild(card);
+    agentCardEls[a.id]=card;
+  });
+}
+
+function setCardState(agent,state,task){
+  const c=agentCardEls[agent];if(!c)return;
+  c.classList.remove('idle','thinking','working','done');
+  c.classList.add(state);
+  const s=c.querySelector('.ab-status');
+  if(s){
+    if(state==='idle')s.textContent='IDLE';
+    else if(state==='thinking')s.textContent='THINKING';
+    else if(state==='working')s.textContent='WORKING';
+    else if(state==='done')s.textContent='DONE';
+  }
+  /* 작업 라벨 toast */
+  const old=c.querySelector('.ab-task-toast');if(old)old.remove();
+  if(task && (state==='working'||state==='thinking')){
+    const t=document.createElement('div');t.className='ab-task-toast';t.textContent=task;
+    c.appendChild(t);
+    setTimeout(()=>{if(t.parentNode)t.style.opacity='0.0';setTimeout(()=>t.remove(),400);},2400);
+  }
+}
+
+function resetAllAgentCards(){
+  Object.keys(agentCardEls).forEach(id=>setCardState(id,'idle'));
+  if(abSvg)abSvg.innerHTML='';
+}
+
+function drawDispatchBeams(taskAgentIds){
+  if(!abSvg||!agentCardEls.ceo)return;
+  abSvg.innerHTML='';
+  const board=abGrid.getBoundingClientRect();
+  const ceoR=agentCardEls.ceo.getBoundingClientRect();
+  const cx=ceoR.left+ceoR.width/2-board.left;
+  const cy=ceoR.top+ceoR.height/2-board.top;
+  const w=abGrid.clientWidth,h=abGrid.clientHeight;
+  abSvg.setAttribute('viewBox','0 0 '+w+' '+h);
+  abSvg.setAttribute('width',w);abSvg.setAttribute('height',h);
+  taskAgentIds.forEach((id,i)=>{
+    const card=agentCardEls[id];if(!card||id==='ceo')return;
+    const r=card.getBoundingClientRect();
+    const tx=r.left+r.width/2-board.left;
+    const ty=r.top+r.height/2-board.top;
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    /* curved beam */
+    const mx=(cx+tx)/2,my=(cy+ty)/2-12;
+    path.setAttribute('d','M '+cx+' '+cy+' Q '+mx+' '+my+' '+tx+' '+ty);
+    path.setAttribute('class','ab-beam dispatching');
+    const a=agentMap[id];if(a){path.style.stroke=a.color;path.style.filter='drop-shadow(0 0 6px '+a.color+')';}
+    path.style.animationDelay=(i*0.08)+'s';
+    abSvg.appendChild(path);
+  });
+}
+
+function startAgentMsg(agent,task){
+  const a=agentMap[agent];if(!a)return;
+  if(agentStreamEls[agent]){endAgentMsg(agent);}
+  const el=document.createElement('div');el.className='msg msg-agent streaming';
+  el.style.setProperty('--ag-color',a.color);
+  el.style.setProperty('--ag-color-glow',a.color+'40');
+  const head=document.createElement('div');head.className='msg-head';
+  const safeTask=esc(task||'').slice(0,80);
+  head.innerHTML='<div class="av">'+a.emoji+'</div><span class="ag-tag">'+a.name+'</span><span class="ag-task">'+safeTask+'</span><span class="ag-elapsed" id="ge-'+agent+'-'+Date.now()+'">0:00</span>';
+  const elapsedEl=head.querySelector('.ag-elapsed');
+  const body=document.createElement('div');body.className='msg-body';
+  el.appendChild(head);el.appendChild(body);chat.appendChild(el);scrollChatToBottomIfNear();
+  const startedAt=Date.now();
+  const tick=setInterval(()=>{
+    if(!el.parentNode){clearInterval(tick);return;}
+    const s=Math.floor((Date.now()-startedAt)/1000);
+    if(elapsedEl)elapsedEl.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+  },1000);
+  agentStreamEls[agent]={el:el,body:body,raw:'',tick:tick};
+}
+
+function appendAgentChunk(agent,value){
+  let s=agentStreamEls[agent];
+  if(!s){startAgentMsg(agent,'');s=agentStreamEls[agent];}
+  if(!s)return;
+  s.raw=(s.raw||'')+value;
+  s.body.innerHTML=fmt(s.raw);
+  scrollChatToBottomIfNear();
+}
+
+function endAgentMsg(agent){
+  const s=agentStreamEls[agent];if(!s)return;
+  s.el.classList.remove('streaming');
+  if(s.tick)clearInterval(s.tick);
+  delete agentStreamEls[agent];
+}
+
+function showBriefCard(brief,tasks){
+  const el=document.createElement('div');el.className='brief-card';
+  let tasksHtml='';
+  tasks.forEach((t,i)=>{
+    const a=agentMap[t.agent];if(!a)return;
+    tasksHtml+='<div class="brief-task" style="--ag-color:'+a.color+';animation-delay:'+(0.1+i*0.08)+'s"><span class="bt-emoji">'+a.emoji+'</span><span class="bt-name">'+a.name+'</span><span class="bt-text">'+esc(t.task)+'</span></div>';
+  });
+  el.innerHTML='<div class="brief-head">🧭 CEO · 작업 분배</div><div class="brief-text">'+esc(brief)+'</div><div class="brief-tasks">'+tasksHtml+'</div>';
+  chat.appendChild(el);scrollChatToBottomIfNear();
+}
+
+function showReportCard(brief,report,sessionPath,sessionRel){
+  const el=document.createElement('div');el.className='report-card';
+  el.innerHTML='<div class="report-head"><span>📝 CEO · 종합 보고서</span><span class="rh-tag">SESSION COMPLETE</span></div><div class="report-body">'+fmt(report)+'</div><div class="report-foot"><span>📁 '+esc(sessionPath||'')+'</span><span class="rf-link" data-sub="'+esc(sessionRel||'')+'">폴더 열기 →</span></div>';
+  const link=el.querySelector('.rf-link');
+  if(link)link.addEventListener('click',()=>vscode.postMessage({type:'openCompanyFolder',sub:link.dataset.sub.replace(/^Company\\//,'')}));
+  chat.appendChild(el);scrollChatToBottomIfNear();
+}
+
 let streamEl=null,streamBody=null;
 window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
   case 'response':hideLoader();setSending(false);addMsg(msg.value,'ai');break;
   case 'brainInject':showInjectCard(msg.title,msg.relPath);break;
+  case 'officeStateChanged':{
+    officeOpen=!!msg.open;
+    /* Tie corp mode visual to office state — closing the office turns the button OFF visually too */
+    corporateMode=officeOpen;
+    document.body.classList.toggle('office-open',officeOpen);
+    document.body.classList.toggle('corp-on',officeOpen);
+    if(corporateBtn){
+      corporateBtn.style.opacity=officeOpen?'1':'0.5';
+      corporateBtn.style.background=officeOpen?'linear-gradient(135deg,var(--accent),var(--accent2))':'';
+      corporateBtn.title=officeOpen?'1인 기업 모드 — 사무실 열림 (클릭해서 닫기)':'1인 기업 모드 — OFF (클릭해서 사무실 열기)';
+    }
+    if(input)input.placeholder=officeOpen?'한 줄 명령을 내리세요. 팀이 알아서 일합니다.':'무엇을 만들어 드릴까요?';
+    break;
+  }
   case 'error':hideLoader();setSending(false);addMsg(msg.value,'error');break;
   case 'streamStart':{
     hideLoader();
@@ -4525,10 +8750,10 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     const h=document.createElement('div');h.className='msg-head';
     h.innerHTML='<div class="av av-ai">\u2726</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span>';
     streamBody=document.createElement('div');streamBody.className='msg-body stream-active';
-    streamEl.appendChild(h);streamEl.appendChild(streamBody);chat.appendChild(streamEl);chat.scrollTop=chat.scrollHeight;
+    streamEl.appendChild(h);streamEl.appendChild(streamBody);chat.appendChild(streamEl);scrollChatToBottomIfNear();
     break;}
   case 'streamChunk':{
-    if(streamBody){streamBody.innerHTML=fmt(streamBody._raw=(streamBody._raw||'')+msg.value);chat.scrollTop=chat.scrollHeight;}
+    if(streamBody){streamBody.innerHTML=fmt(streamBody._raw=(streamBody._raw||'')+msg.value);scrollChatToBottomIfNear();}
     break;}
   case 'streamEnd':{
     if(streamBody)streamBody.classList.remove('stream-active');
@@ -4573,7 +8798,7 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
         wrap.appendChild(chip);
       });
       last.appendChild(wrap);
-      chat.scrollTop = chat.scrollHeight;
+      scrollChatToBottomIfNear();
     }
     break;
   }
@@ -4592,7 +8817,85 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     }
     break;
   case 'focusInput':input.focus();break;
-  case 'injectPrompt':input.value=msg.value;input.style.height='auto';input.style.height=Math.min(input.scrollHeight,150)+'px';send();break;
+  case 'injectPrompt':input.value=msg.value;input.style.height='auto';input.style.height=Math.min(input.scrollHeight,150)+'px';send({bypassCorporate:true});break;
+  case 'corporateReady':
+    renderAgentBoard(msg.agents||[],msg.companyDir||'');
+    applyCompanyState(msg);
+    break;
+  case 'corporateState':
+    applyCompanyState(msg);
+    if(msg.note){addCorpBanner(msg.note);}
+    /* 폴더는 막 만들어졌고 정체성이 비어있으면 바로 인터뷰 */
+    if(corporateMode && companyState.folderExists && !companyState.configured){
+      setTimeout(showInterviewCard,200);
+    }
+    if(corporateMode && companyState.configured){
+      addCorpBanner('✅ '+(companyState.name||'회사')+' 설정 완료. 명령을 내려보세요.');
+    }
+    break;
+  case 'agentDispatch':{
+    hideLoader();
+    document.body.classList.add('corp-dispatching');
+    const taskIds=(msg.tasks||[]).map(t=>t.agent);
+    showBriefCard(msg.brief||'',msg.tasks||[]);
+    /* 모든 selected agent를 thinking 상태로 점등 */
+    taskIds.forEach(id=>setCardState(id,'thinking'));
+    /* SVG 빛줄기 */
+    setTimeout(()=>drawDispatchBeams(['ceo'].concat(taskIds)),60);
+    setTimeout(()=>{document.body.classList.remove('corp-dispatching');if(abSvg)abSvg.innerHTML='';},1700);
+    break;
+  }
+  case 'agentStart':{
+    hideLoader();
+    setCardState(msg.agent,'working',msg.task);
+    /* CEO는 카드 펄스만, specialist는 채팅 메시지도 시작 */
+    if(msg.agent!=='ceo'){startAgentMsg(msg.agent,msg.task||'');}
+    break;
+  }
+  case 'agentChunk':{
+    appendAgentChunk(msg.agent,msg.value||'');
+    break;
+  }
+  case 'agentEnd':{
+    setCardState(msg.agent,'done');
+    endAgentMsg(msg.agent);
+    break;
+  }
+  case 'corporateReport':{
+    showReportCard(msg.brief||'',msg.report||'',msg.sessionPath||'',msg.sessionRel||'');
+    setSending(false);
+    /* 잠시 후 모든 카드 idle로 복귀 */
+    setTimeout(()=>{Object.keys(agentCardEls).forEach(id=>setCardState(id,'idle'));},2200);
+    break;
+  }
+  case 'agentConfer':{
+    const turns=msg.turns||[];
+    if(turns.length===0)break;
+    const el=document.createElement('div');el.className='msg confer-card';
+    el.innerHTML='<div class="brief-card" style="--ag-color:#A78BFA;border-color:rgba(167,139,250,.3);background:linear-gradient(135deg,rgba(167,139,250,.05),rgba(167,139,250,.02))">'
+      +'<div class="brief-head" style="color:#A78BFA">💬 자율 회의 · '+turns.length+'턴</div>'
+      +'<div class="brief-tasks">'
+      +turns.map(t=>{const fa=agentMap[t.from],ta=agentMap[t.to];if(!fa||!ta)return '';return '<div class="brief-task" style="--ag-color:'+fa.color+'"><span class="bt-emoji">'+fa.emoji+'</span><span class="bt-name">'+fa.name+'</span><span class="bt-text">→ '+ta.emoji+' '+esc(t.text)+'</span></div>';}).join('')
+      +'</div></div>';
+    chat.appendChild(el);scrollChatToBottomIfNear();
+    break;
+  }
+  case 'decisionsLearned':{
+    const decs=msg.decisions||[];
+    if(decs.length===0)break;
+    const el=document.createElement('div');el.className='msg';
+    el.innerHTML='<div class="brief-card" style="--ag-color:#A78BFA;border-color:rgba(167,139,250,.4);background:linear-gradient(135deg,rgba(167,139,250,.06),rgba(167,139,250,.02));box-shadow:0 0 14px rgba(167,139,250,.15)">'
+      +'<div class="brief-head" style="color:#A78BFA">🧠 자가학습 — decisions.md에 누적됨</div>'
+      +'<div style="font-size:12px;color:var(--text-bright);line-height:1.7">'+decs.map(d=>'• '+esc(d)).join('<br>')+'</div>'
+      +'</div>';
+    chat.appendChild(el);scrollChatToBottomIfNear();
+    break;
+  }
+  case 'telegramSent':{
+    /* 사이드바에서는 작은 banner */
+    addCorpBanner && addCorpBanner('📱 Secretary가 텔레그램으로 보고를 보냈어요.');
+    break;
+  }
 } });
 } catch(err) {
   document.body.innerHTML = '<div style="color:#ff4444;padding:20px;background:#111;height:100%;font-size:14px;overflow:auto;"><h2>\u26a0\ufe0f WEBVIEW JS CRASH</h2><pre>' + err.name + ': ' + err.message + '\\n' + err.stack + '</pre></div>';

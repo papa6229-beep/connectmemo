@@ -21,3 +21,14 @@ tsconfig.json
 *.vsix
 assets/icon.svg
 preview.html
+# Heavy LimeZu source packs — kept out of vsix (huge, ~1GB). The slim
+# office bundle at `assets/pixel/office/` ships instead, plus the 7
+# renamed character sprites at `assets/pixel/characters/*.png`.
+# Project owner has redistribution permission for the bundled subset.
+**/moderninteriors-win/**
+**/modernexteriors-win/**
+**/Modern_Office_Revamped_v1/**
+# Nested duplicate copies (user dragged folders into multiple paths)
+assets/pixel/characters/Modern_Office_Revamped_v1/**
+assets/pixel/characters/moderninteriors-win/**
+idea1_script_draft.md

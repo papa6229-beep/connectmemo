@@ -2,7 +2,7 @@
   "name": "connect-ai-lab",
   "displayName": "Connect AI",
   "description": "내 지식과 연결된 100% 로컬 AI 워크스페이스. 파일 생성, 코드 편집, 터미널 실행, Second Brain까지 오프라인으로.",
-  "version": "2.12.5",
+  "version": "2.32.0",
   "publisher": "connectailab",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -120,6 +120,16 @@
           "type": "string",
           "default": "",
           "description": "🔗 깃허브 저장소 URL — 내 지식을 클라우드에 백업하고 동기화할 깃허브 저장소 주소입니다. (예: https://github.com/사용자/memory)"
+        },
+        "connectAiLab.companyDir": {
+          "type": "string",
+          "default": "",
+          "description": "👔 1인 기업 폴더 경로 — 비워두면 ~/.connect-ai-brain/Company/에 자동 생성됩니다. 직접 지정하려면 절대 경로 또는 ~/로 시작하는 경로를 입력하세요."
+        },
+        "connectAiLab.assetsPath": {
+          "type": "string",
+          "default": "",
+          "description": "🎨 (선택) LimeZu Modern Interiors 풀팩 폴더 — 사무실 뷰에 더 풍부한 캐릭터·인테리어를 쓰고 싶을 때만 지정합니다. 비워두면 vsix에 번들된 7개 캐릭터를 자동 사용합니다."
         }
       }
     }

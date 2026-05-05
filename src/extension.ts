@@ -19973,33 +19973,36 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         }
         if (catalog.length === 0) return false;
 
-        /* === 1단계: 패턴 매칭 (deterministic) ===
-           가장 흔한 단일 도구 요청을 LLM 거치지 않고 즉시 처리. 새 도구·새 에이전트
-           추가 시 여기에 한 줄만 추가하면 됨. 카탈로그에 실재하는 도구만 활성화. */
-        type Pattern = { agentId: string; tool: string; regexes: RegExp[] };
-        const patterns: Pattern[] = [
+        /* === 1단계: 도메인 키워드 + 비창작 의도 매칭 (v2.89.48) ===
+           이전엔 빡빡한 정규식이라 "유튜브붆석해" 같은 오타나 "유튜브 어때" 같은 변형을
+           못 잡고 CEO 플래너로 떨어뜨림. 새 접근:
+           - 도메인 키워드 (유튜브/채널/구독자/조회수 등) 등장 = YouTube 도구 후보
+           - 사용자가 명백한 창작 동사 (만들/기획/디자인/스크립트 써)를 안 쓰면 = 분석 의도
+           - 즉, 키워드 + 비창작 → my_videos_check.py 즉시 실행
+           오타·변형·축약 다 흡수. 창작 명령은 CEO 플래너로 정상 라우팅. */
+        type DomainShortcut = {
+            agentId: string;
+            tool: string;
+            domainPattern: RegExp;
+        };
+        const domainShortcuts: DomainShortcut[] = [
             {
                 agentId: 'youtube',
                 tool: 'my_videos_check.py',
-                regexes: [
-                    /(내|제|우리)\s*(?:유튜브|채널|영상)/i,
-                    /유튜브\s*(?:채널|분석|체크|상태)/i,
-                    /채널\s*(?:분석|체크|상태|영상|어때|어떻게|좀)/i,
-                    /구독자|조회수|시청\s*시간|시청자/i,
-                    /(최근|이번주|이번\s*주|어제)\s*영상/i,
-                    /(내|제)\s*비디오/i,
-                    /youtube|channel|video|subscriber|view\s*count/i,
-                ],
+                domainPattern: /(?:유튜브|youtube|채널|구독자|조회수|시청자|시청\s*시간|내\s*영상|내\s*비디오|video\s*count|subscriber)/i,
             },
         ];
+        /* 창작·기획 동사 — 이게 있으면 분석이 아니라 multi-agent 작업 (CEO 플래너로) */
+        const creativePattern = /(?:만들|기획|디자인|썸네일\s*제작|썸네일\s*만들|스크립트\s*써|글\s*써|작성해|코딩|개발|제작|design|create|build|make|write|generate|plan)/i;
+        const isCreative = creativePattern.test(p);
         const lower = p.toLowerCase();
-        const patMatch = patterns.find(pat =>
-            pat.regexes.some(re => re.test(lower)) &&
-            catalog.some(c => c.agentId === pat.agentId && c.tool === pat.tool)
+        const domainMatch = !isCreative && domainShortcuts.find(d =>
+            d.domainPattern.test(lower) &&
+            catalog.some(c => c.agentId === d.agentId && c.tool === d.tool)
         );
-        if (patMatch) {
-            const entry = catalog.find(c => c.agentId === patMatch.agentId && c.tool === patMatch.tool)!;
-            return await this._runShortcutTool(entry, prompt, sessionDir, '패턴');
+        if (domainMatch) {
+            const entry = catalog.find(c => c.agentId === domainMatch.agentId && c.tool === domainMatch.tool)!;
+            return await this._runShortcutTool(entry, prompt, sessionDir, '키워드');
         }
 
         /* === 2단계: LLM 분류기 ===
@@ -20151,24 +20154,24 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             post({ type: 'agentEnd', agent: 'ceo' });
         }
 
-        /* === 출력 조합 — CEO 요약(있으면) → Specialist 분석 또는 실패 알림 → 원본 데이터 ===
-           v2.89.47 — 아바타는 markdown image (작은 사이즈)로 교체. 이전 inline <img> HTML은
-           webview markdown sanitizer가 raw text로 표시함. */
+        /* === 출력 조합 (v2.89.48 — 스크립트 분석을 항상 주답으로) ===
+           이전엔 LLM 실패 시 "분석 실패"라고만 표시 + 데이터를 collapsible로 숨김. 그런데
+           pro_v1 스크립트는 이미 (1) 채널 메타 (2) 영상별 표 (3) 상위 영상 + 인기 댓글
+           (4) 패턴 분석 (5) 우선순위 액션 추천 까지 다 출력하는 진짜 분석. 즉 LLM이 죽어도
+           쓸만한 분석은 이미 손에 있음. 이걸 항상 펼쳐서 주답으로, LLM 분석은 "추가 인사이트"로. */
         const sections: string[] = [];
         if (ceoSummary && ceoSummary.trim()) {
             sections.push(`## 👔 CEO 종합\n\n${ceoSummary.trim()}`);
         }
         const avatarMd = this._agentAvatarUriMd(entry.agentId);
-        const headerLine = `## ${avatarMd}${a.emoji} ${a.name} — 전문가 분석`;
+        /* 스크립트 분석을 항상 펼쳐서 1차 표시 — LLM 없이도 사용자가 보는 첫 분석 */
+        sections.push(`## ${avatarMd}${a.emoji} ${a.name} — 데이터 분석\n\n${toolOut.slice(0, 12000)}`);
+        /* LLM 자가 분석은 추가 레이어 — 성공 시 더 깊은 인사이트, 실패 시 짧게 안내만 */
         if (specialistOk) {
-            sections.push(`${headerLine}\n\n${specialistContent}`);
-        } else {
-            const reason = specialistError
-                ? `LLM 호출 실패: ${specialistError}`
-                : `빈 답변 반환 (LLM이 응답 안 함 — 메모리 부족·모델 미로드 가능성)`;
-            sections.push(`${headerLine}\n\n⚠️ **분석 실패** — ${reason}\n\n💡 **모델 오케스트레이션 모달**에서 ${a.name}의 모델을 더 작은 것으로 변경 후 재시도. 또는 LM Studio에서 모델을 미리 로드.\n\n_(아래 원본 데이터는 정상 수집됨 — my_videos_check.py의 자동 분석·추천은 그대로 유효)_`);
+            sections.push(`## 🧠 LLM 추가 인사이트 (${a.name} 자가 분석)\n\n${specialistContent}`);
+        } else if (specialistError) {
+            sections.push(`> ⚠️ LLM 추가 인사이트 단계 스킵: ${specialistError.slice(0, 200)}\n> 💡 모델 오케스트레이션 모달에서 ${a.name}의 모델을 더 작은 것으로 변경하면 다음번엔 LLM 인사이트도 같이 옵니다. 위 데이터 분석은 LLM 없이도 정상 수집·집계된 결과입니다.`);
         }
-        sections.push(`<details>\n<summary>📊 원본 데이터 (${entry.tool} ${toolStatus})</summary>\n\n\`\`\`\n${toolOut.slice(0, 6000)}\n\`\`\`\n</details>`);
         const body = sections.join('\n\n---\n\n');
 
         this._displayMessages.push({ text: body, role: 'ai' });

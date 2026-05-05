@@ -21681,9 +21681,9 @@ select:hover,select:focus{border-color:var(--accent);box-shadow:0 0 12px var(--a
 .cmd-badge{background:rgba(124,106,255,.05);border:1px solid rgba(124,106,255,.25);border-radius:10px;padding:10px 14px;margin:8px 0;font-size:12px;color:var(--accent);font-family:'SF Mono','Menlo',monospace;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px)}
 .msg-error .msg-body{color:var(--red);text-shadow:0 0 20px rgba(255,82,82,.2)}
 /* v2.89.53 — chat markdown 렌더링 (heading/blockquote/list/table/hr) */
-.chat-h1{font-size:18px;font-weight:800;color:var(--text);margin:14px 0 8px;padding-bottom:6px;border-bottom:2px solid rgba(124,106,255,.25);letter-spacing:-.3px}
-.chat-h2{font-size:15px;font-weight:700;color:var(--text);margin:12px 0 6px;letter-spacing:-.2px}
-.chat-h3{font-size:13.5px;font-weight:700;color:var(--text);margin:10px 0 4px;letter-spacing:-.1px}
+.chat-h1{font-size:20px;font-weight:800;color:var(--text-bright);margin:18px 0 10px;padding-bottom:8px;border-bottom:2px solid rgba(124,106,255,.35);letter-spacing:-.3px}
+.chat-h2{font-size:16.5px;font-weight:700;color:var(--text-bright);margin:14px 0 8px;letter-spacing:-.2px}
+.chat-h3{font-size:14.5px;font-weight:700;color:var(--text-bright);margin:12px 0 6px;letter-spacing:-.1px}
 .chat-bq{border-left:3px solid rgba(124,106,255,.55);background:rgba(124,106,255,.06);padding:8px 12px;margin:6px 0;border-radius:0 8px 8px 0;color:var(--text);font-size:12.5px;line-height:1.6}
 .chat-bq strong{color:var(--accent)}
 .chat-hr{border:none;height:1px;background:linear-gradient(90deg,transparent,rgba(124,106,255,.4),transparent);margin:14px 0}
@@ -22899,7 +22899,9 @@ function fmt(t){
   }
   t = out.join('\\n');
 
-  t=esc(t);
+  /* v2.89.54 — esc()는 innerText↔innerHTML 라운드트립이라 \\n을 <br>로 바꿈. 그러면
+     multiline regex(/^##/m)가 깨짐. 수동 escape로 줄바꿈 보존. */
+  t=t.replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));
   /* 헤딩 — ### / ## / # (긴 것 먼저). esc 후에 처리하므로 # 그대로 매칭됨. */
   t=t.replace(/^###\\s+(.+)$/gm, '<h3 class=\"chat-h3\">$1</h3>');
   t=t.replace(/^##\\s+(.+)$/gm, '<h2 class=\"chat-h2\">$1</h2>');
@@ -22928,6 +22930,11 @@ function fmt(t){
   /* 표·코드 placeholder 복원 */
   t=t.replace(/__T(\\d+)__/g, (_,i)=>tableRows[i]);
   t=t.replace(/__B(\\d+)__/g, (_,i)=>blocks[i]);
+  /* v2.89.54 — 수동 escape로 \\n 보존했으니 마지막에 br로 변환. 단 블록 요소
+     (h1/h2/h3/blockquote/ul/ol/table/hr) 직전·직후 \\n은 제거 (블록이 자체 spacing). */
+  t=t.replace(/\\n(?=<(?:h[1-6]|blockquote|ul|ol|table|hr|div)[\\s>])/gi, '');
+  t=t.replace(/(<\\/(?:h[1-6]|blockquote|ul|ol|table|div)>|<hr[^>]*\\/?>)\\n/gi, '$1');
+  t=t.replace(/\\n/g, '<br/>');
   return t;
 }
 function copyCode(btn){const code=btn.parentElement.querySelector('code');if(!code)return;navigator.clipboard.writeText(code.innerText).then(()=>{btn.textContent='✓ Copied';btn.classList.add('copied');setTimeout(()=>{btn.textContent='Copy';btn.classList.remove('copied')},1500)})}

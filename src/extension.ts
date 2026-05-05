@@ -6196,7 +6196,7 @@ if __name__ == "__main__":
    참여율·제목 키워드·인기 댓글·구체 액션 추천까지 포함. */
 function _seedYouTubeMyVideosCheck(toolsDir: string) {
   const py = `#!/usr/bin/env python3
-"""Professional YouTube Channel Analysis — pro_v3.
+"""Professional YouTube Channel Analysis — pro_v4.
 
 채널 메타 · 영상별 상세 (조회수·좋아요율·댓글율·길이·요일) · 상위/하위 영상의 패턴 ·
 인기 댓글 샘플 · 발행 요일 분석 · 제목 키워드 · 우선순위 액션 추천. 모든 분석은
@@ -6204,7 +6204,7 @@ function _seedYouTubeMyVideosCheck(toolsDir: string) {
 
 Reads YOUTUBE_API_KEY + MY_CHANNEL_HANDLE/ID from youtube_account.json.
 Reads LOOKBACK_DAYS / TOP_N / COMMENT_SAMPLES from my_videos_check.json."""
-import os, json, sys, time, datetime, re, statistics, warnings
+import os, json, sys, time, datetime, re, statistics, warnings, html as html_lib
 from collections import Counter
 # v2.89.49 — DeprecationWarning(utcnow 등) 노이즈 제거. 사용자 채팅창 출력에 끼면 못생김.
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -6360,7 +6360,9 @@ def main():
     ch = cit[0]
     snip = ch.get("snippet", {})
     cstats = ch.get("statistics", {})
-    ch_title = snip.get("title", "")
+    # v2.89.55 — YouTube API가 가끔 &amp; / &#39; 같은 HTML entity로 인코딩된 제목 반환.
+    # 이걸 그대로 출력하면 채팅창에서 "&#39;" 가 literal로 보임. 미리 디코드.
+    ch_title = html_lib.unescape(snip.get("title", "") or "")
     custom_url = snip.get("customUrl", "")
     published = (snip.get("publishedAt", "") or "")[:10]
     country = snip.get("country", "")
@@ -6392,7 +6394,8 @@ def main():
         vids = [(it["id"]["videoId"], it["snippet"]["title"], it["snippet"]["publishedAt"])
                 for it in sr.get("items", [])]
     if not vids:
-        print(f"⚠️  업로드된 영상이 없어요.")
+        # v2.89.55 — 빈 영상 시 stderr로. stdout이 비어 있어야 TS shortcut이 실패로 정확히 처리.
+        print(f"⚠️  업로드된 영상이 없어요.", file=sys.stderr)
         sys.exit(0)
 
     # === 3. 영상 상세 통계 ===
@@ -6421,7 +6424,8 @@ def main():
         except Exception:
             weekday, hour = "-", 0
         rows.append({
-            "id": vid, "title": vtitle, "pub": pub[:10],
+            # v2.89.55 — title HTML entity 디코드 (&#39; → ', &amp; → & 등)
+            "id": vid, "title": html_lib.unescape(vtitle or ""), "pub": pub[:10],
             "weekday": weekday, "hour": hour,
             "views": views, "likes": likes, "comments": comments,
             "duration_sec": dur_sec,
@@ -6472,8 +6476,9 @@ def main():
             ).execute()
             comments_by_video[r["id"]] = [
                 {
-                    "author": c["snippet"]["topLevelComment"]["snippet"].get("authorDisplayName", ""),
-                    "text": c["snippet"]["topLevelComment"]["snippet"].get("textOriginal", "")[:200],
+                    # v2.89.55 — author/text도 HTML entity 디코드
+                    "author": html_lib.unescape(c["snippet"]["topLevelComment"]["snippet"].get("authorDisplayName", "") or ""),
+                    "text": html_lib.unescape(c["snippet"]["topLevelComment"]["snippet"].get("textOriginal", "") or "")[:200],
                     "likes": int(c["snippet"]["topLevelComment"]["snippet"].get("likeCount", 0)),
                 }
                 for c in cr_resp.get("items", [])
@@ -6696,8 +6701,8 @@ if __name__ == "__main__":
   /* Force-upgrade the .py — older users on pre-telegram_v2 versions need
      the Secretary fallback so token doesn't have to be duplicated. */
   /* v2.89.43 — sentinel 'pro_v1' = 종합 분석 버전. 기존 사용자도 자동 업그레이드. */
-  /* sentinel pro_v3 — 시각적 카드 레이아웃 + 평가 이모지 + URL 노이즈 필터. 기존 설치자 자동 업그레이드. */
-  _seedFileForceUpgrade(path.join(toolsDir, 'my_videos_check.py'), py, 'pro_v3');
+  /* sentinel pro_v4 — HTML entity 디코드 + 빈 영상 시 stderr로. 기존 설치자 자동 업그레이드. */
+  _seedFileForceUpgrade(path.join(toolsDir, 'my_videos_check.py'), py, 'pro_v4');
   _seedFile(path.join(toolsDir, 'my_videos_check.json'), json);
   /* v2.89.20 — Force upgrade .md heading from old "내 영상 체크" to "내 유튜브 채널 분석"
      for existing users. Sentinel = the new heading text. */
@@ -22930,10 +22935,15 @@ function fmt(t){
   /* 표·코드 placeholder 복원 */
   t=t.replace(/__T(\\d+)__/g, (_,i)=>tableRows[i]);
   t=t.replace(/__B(\\d+)__/g, (_,i)=>blocks[i]);
-  /* v2.89.54 — 수동 escape로 \\n 보존했으니 마지막에 br로 변환. 단 블록 요소
-     (h1/h2/h3/blockquote/ul/ol/table/hr) 직전·직후 \\n은 제거 (블록이 자체 spacing). */
-  t=t.replace(/\\n(?=<(?:h[1-6]|blockquote|ul|ol|table|hr|div)[\\s>])/gi, '');
-  t=t.replace(/(<\\/(?:h[1-6]|blockquote|ul|ol|table|div)>|<hr[^>]*\\/?>)\\n/gi, '$1');
+  /* v2.89.55 — 마지막에 \\n을 br로 변환. 블록 요소(h*/bq/ul/ol/table/hr/div)
+     직전·직후 \\n은 자체 margin으로 흡수되도록 제거 (이중 spacing 방지).
+     이전 버전은 닫는 태그 직후만 처리 → 리스트(ul/ol) 안의 \\n이 br로 잘못 변환되어
+     아이템 사이에 공백 두 줄 생기던 버그 수정. */
+  t=t.replace(/\\n+(?=<(?:h[1-6]|blockquote|ul|ol|table|hr|div)[\\s>])/gi, '');
+  t=t.replace(/(<\\/(?:h[1-6]|blockquote|ul|ol|table|div)>|<hr[^>]*\\/?>)\\n+/gi, '$1');
+  /* 리스트·표 안의 줄바꿈은 br로 만들지 말고 제거 (각 li/tr/td는 이미 자체 줄) */
+  t=t.replace(/(<(?:ul|ol|table|tbody|thead|tr)[^>]*>)\\s*\\n+/gi, '$1');
+  t=t.replace(/\\n+(?=<\\/(?:ul|ol|table|tbody|thead|tr|li|td|th)>)/gi, '');
   t=t.replace(/\\n/g, '<br/>');
   return t;
 }
@@ -25263,10 +25273,23 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     streamEl.appendChild(h);streamEl.appendChild(streamBody);chat.appendChild(streamEl);scrollChatToBottomIfNear();
     break;}
   case 'streamChunk':{
-    if(streamBody){streamBody.innerHTML=fmt(streamBody._raw=(streamBody._raw||'')+msg.value);scrollChatToBottomIfNear();}
+    /* v2.89.55 — 스트리밍 중엔 fmt() 호출하지 않음. 부분 markdown ('## ti'까지만 도착하면)
+       fmt이 평문으로 처리하고, 다음 청크에서 ('## title' 완성) 다시 호출시 헤딩 변환 →
+       사용자는 평문 → 헤딩 점프 봄. 더 심각한 건 코드블록·표 placeholder가 청크별 인덱스
+       어긋나서 깨짐. 해법: 스트리밍 중엔 plain text만 누적·표시, streamEnd에서 한 번에 fmt(). */
+    if(streamBody){
+      streamBody._raw=(streamBody._raw||'')+msg.value;
+      const safe = streamBody._raw.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      streamBody.innerHTML = safe.replace(/\\n/g, '<br/>');
+      scrollChatToBottomIfNear();
+    }
     break;}
   case 'streamEnd':{
-    if(streamBody)streamBody.classList.remove('stream-active');
+    if(streamBody){
+      /* 스트리밍 끝났으니 전체 누적 raw에 한 번에 fmt() 적용 → 헤딩·표·인용·리스트 정상 렌더 */
+      streamBody.innerHTML = fmt(streamBody._raw||'');
+      streamBody.classList.remove('stream-active');
+    }
     /* Add regenerate button */
     if(streamEl){
       const rb=document.createElement('button');rb.className='regen-btn';rb.innerHTML='<span style="font-size:13px;line-height:1">↻</span> 재생성';

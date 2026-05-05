@@ -1,8 +1,8 @@
 {
   "name": "connect-ai-lab",
-  "displayName": "Connect AI",
-  "description": "내 지식과 연결된 100% 로컬 AI 워크스페이스. 파일 생성, 코드 편집, 터미널 실행, Second Brain까지 오프라인으로.",
-  "version": "2.32.0",
+  "displayName": "Connect AI — AI 1인 기업 · 나만의 에이전트 팀 · 제2의 두뇌",
+  "description": "AI 1인 기업가를 위한 워크스페이스. 나만의 AI 에이전트 팀과 제2의 두뇌가 한 곳에서 — CEO + 전문 에이전트들이 내 지식·결정 로그·메모리를 컨텍스트로 24시간 미션 향해 자동으로 일합니다. 100% 로컬·오프라인·무료.",
+  "version": "2.89.45",
   "publisher": "connectailab",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -22,17 +22,22 @@
     "ai",
     "local",
     "ollama",
+    "lmstudio",
     "gemma",
     "llama",
     "deepseek",
     "offline",
     "agent",
+    "agent-team",
+    "second-brain",
+    "1인기업",
+    "solopreneur",
     "code-generation",
     "connect-ai-lab",
     "copilot"
   ],
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -57,6 +62,84 @@
       {
         "command": "connect-ai-lab.showBrainNetwork",
         "title": "Connect AI: Show Brain Topology 🧠"
+      },
+      {
+        "command": "connect-ai-lab.changeCompanyDir",
+        "title": "Connect AI: 회사 폴더 변경 🏢"
+      },
+      {
+        "command": "connect-ai-lab.connectCompanyRepo",
+        "title": "Connect AI: 회사 GitHub 연결 ☁️"
+      },
+      {
+        "command": "connect-ai-lab.connectGoogleCalendarWrite",
+        "title": "Connect AI: Google Calendar 자동 일정 연결 📅"
+      },
+      {
+        "command": "connectAiLab.tasks.refresh",
+        "title": "할 일 새로고침",
+        "category": "Connect AI",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "connectAiLab.tasks.markDone",
+        "title": "완료 처리",
+        "category": "Connect AI",
+        "icon": "$(check)"
+      },
+      {
+        "command": "connectAiLab.tasks.cancel",
+        "title": "취소",
+        "category": "Connect AI",
+        "icon": "$(close)"
+      },
+      {
+        "command": "connectAiLab.tasks.setPriority",
+        "title": "우선순위 변경",
+        "category": "Connect AI",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "connectAiLab.tasks.openTrackerJson",
+        "title": "tracker.json 열기",
+        "category": "Connect AI",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "connectAiLab.dailyBriefing.fireNow",
+        "title": "지금 데일리 브리핑 발사",
+        "category": "Connect AI",
+        "icon": "$(megaphone)"
+      },
+      {
+        "command": "connectAiLab.youtube.refreshCommentQueue",
+        "title": "YouTube 댓글 답장 큐 갱신",
+        "category": "Connect AI",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "connectAiLab.developer.scaffoldProject",
+        "title": "Developer: 새 프로젝트 만들기",
+        "category": "Connect AI",
+        "icon": "$(file-directory-create)"
+      },
+      {
+        "command": "connectAiLab.youtube.connectOAuth",
+        "title": "YouTube OAuth 연결 (Analytics)",
+        "category": "Connect AI",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "connectAiLab.dashboard.open",
+        "title": "우리 회사 (팀 + 오늘 + 채널)",
+        "category": "Connect AI",
+        "icon": "$(organization)"
+      },
+      {
+        "command": "connectAiLab.apiConnections.open",
+        "title": "외부 연결 (API 키 한 곳에서)",
+        "category": "Connect AI",
+        "icon": "$(plug)"
       }
     ],
     "keybindings": [
@@ -72,6 +155,35 @@
           "command": "connect-ai-lab.explainSelection",
           "when": "editorHasSelection",
           "group": "1_modification"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "connectAiLab.tasks.refresh",
+          "when": "view == connectAiLab.tasks",
+          "group": "navigation"
+        },
+        {
+          "command": "connectAiLab.tasks.openTrackerJson",
+          "when": "view == connectAiLab.tasks",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "connectAiLab.tasks.markDone",
+          "when": "view == connectAiLab.tasks && viewItem == openTask",
+          "group": "inline@1"
+        },
+        {
+          "command": "connectAiLab.tasks.cancel",
+          "when": "view == connectAiLab.tasks && viewItem == openTask",
+          "group": "inline@2"
+        },
+        {
+          "command": "connectAiLab.tasks.setPriority",
+          "when": "view == connectAiLab.tasks && viewItem == openTask",
+          "group": "1_actions"
         }
       ]
     },
@@ -103,8 +215,8 @@
         },
         "connectAiLab.defaultModel": {
           "type": "string",
-          "default": "gemma4:e2b",
-          "description": "🧠 사용할 AI 모델 이름 (예: gemma4:e2b, llama3.3, deepseek-r1)"
+          "default": "",
+          "description": "🧠 사용할 AI 모델 이름 (비워두면 설치된 모델 중 가장 작은 것이 자동 선택됨. 직접 지정 예: llama3.2:1b, gemma2:2b, qwen2.5:1.5b)"
         },
         "connectAiLab.requestTimeout": {
           "type": "number",
@@ -119,17 +231,43 @@
         "connectAiLab.secondBrainRepo": {
           "type": "string",
           "default": "",
-          "description": "🔗 깃허브 저장소 URL — 내 지식을 클라우드에 백업하고 동기화할 깃허브 저장소 주소입니다. (예: https://github.com/사용자/memory)"
+          "description": "🔗 두뇌 깃허브 저장소 URL — 내 지식을 클라우드에 백업하고 동기화할 깃허브 저장소 주소. (예: https://github.com/사용자/memory)"
+        },
+        "connectAiLab.companyRepo": {
+          "type": "string",
+          "default": "",
+          "description": "🔗 회사 깃허브 저장소 URL — 회사 폴더를 두뇌와 별도 저장소로 백업할 때 사용. 회사 폴더가 두뇌 안 nested면(기본) 비워두세요(이미 두뇌 repo에 같이 들어감). 회사를 별도 위치(detached)로 분리한 경우에만 의미 있음. 명령 팔레트의 'Connect AI: 회사 GitHub 연결'로도 설정."
         },
         "connectAiLab.companyDir": {
           "type": "string",
           "default": "",
-          "description": "👔 1인 기업 폴더 경로 — 비워두면 ~/.connect-ai-brain/Company/에 자동 생성됩니다. 직접 지정하려면 절대 경로 또는 ~/로 시작하는 경로를 입력하세요."
+          "description": "👔 회사 폴더 경로 — 비워두면 두뇌 폴더 안 _company/에 자동 생성됩니다(시각적으로 분리·한 git repo). 절대 경로 또는 ~/로 시작하는 경로를 입력하면 두뇌와 완전히 분리된 별도 위치에 회사 폴더가 만들어집니다(예: 외주 공유용·다른 git repo). 명령 팔레트의 'Connect AI: 회사 폴더 변경'으로도 설정 가능."
         },
         "connectAiLab.assetsPath": {
           "type": "string",
           "default": "",
           "description": "🎨 (선택) LimeZu Modern Interiors 풀팩 폴더 — 사무실 뷰에 더 풍부한 캐릭터·인테리어를 쓰고 싶을 때만 지정합니다. 비워두면 vsix에 번들된 7개 캐릭터를 자동 사용합니다."
+        },
+        "connectAiLab.autoCycleEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "🤖 24시간 자율 사이클 — 켜두면 사용자가 30분 이상 자리를 비웠을 때 CEO가 회사 목표·각 에이전트 개인 목표를 검토해 자동으로 다음 한 스텝을 실행합니다. 에이전트 패널의 토글에서 같이 제어됩니다."
+        },
+        "connectAiLab.dailyBriefingTime": {
+          "type": "string",
+          "default": "09:00",
+          "description": "📋 매일 자동 데일리 브리핑 발사 시각 (HH:MM, 24시간 형식). 비워두거나 'off'로 설정하면 자동 발사 안 함. 텔레그램으로 오늘 일정·할 일·어제 회사 활동 카드가 전송됩니다."
+        },
+        "connectAiLab.secretaryBridgeMode": {
+          "type": "string",
+          "enum": ["off", "output_only", "full"],
+          "enumDescriptions": [
+            "Off — 비서는 텔레그램에서만 활동. 사이드바는 CEO와 직접 대화 (현재 동작)",
+            "출력만 — specialist 산출물 끝에 비서가 한 줄로 사장님께 정리 카드 추가",
+            "풀 브릿지 — 사이드바 입력도 비서가 1차 수신 후 CEO에게 라우팅 또는 직접 응답"
+          ],
+          "default": "off",
+          "description": "📱 비서 브릿지 모드 — 비서를 사람과 AI 회사 사이의 단일 통로로 만들지 결정. 차이를 직접 체감하면서 멀티에이전트 라우팅 패턴을 학습할 수 있어요."
         }
       }
     }

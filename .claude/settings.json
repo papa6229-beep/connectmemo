@@ -21,7 +21,8 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(grep -c '`' /Users/jay/로컬테스트/local-ai-coder/assets/force-graph.min.js)",
-      "Bash(grep -o '\\\\${' /Users/jay/로컬테스트/local-ai-coder/assets/force-graph.min.js)"
+      "Bash(grep -o '\\\\${' /Users/jay/로컬테스트/local-ai-coder/assets/force-graph.min.js)",
+      "Bash(npm list *)"
     ],
     "additionalDirectories": [
       "/Users/jay/로컬테스트/local-ai-coder"

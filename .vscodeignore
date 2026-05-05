@@ -3,6 +3,8 @@
 .secondbrain/**
 .git/**
 .github/**
+.env
+.env.*
 ARCHITECTURE.md
 src/**
 node_modules/**
@@ -32,3 +34,4 @@ preview.html
 assets/pixel/characters/Modern_Office_Revamped_v1/**
 assets/pixel/characters/moderninteriors-win/**
 idea1_script_draft.md
+releases/**

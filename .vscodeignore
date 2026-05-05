@@ -7,6 +7,16 @@
 .env.*
 ARCHITECTURE.md
 src/**
+# v2.89.58 — 개발용 헬퍼 스크립트와 별도 사이트 자산 제외 (Open VSX security scan 트리거).
+# extension_download_site/ 안에 옛날 vsix 파일이 같이 들어가 있어서 "recursive package"로 의심받음.
+mock-vscode.js
+fix_unicode.js
+restore_html.js
+scripts/**
+extension_download_site/**
+system_schema.json
+brain-viz.html
+**/*.vsix
 node_modules/**
 !node_modules/axios/**
 !node_modules/follow-redirects/**

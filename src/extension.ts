@@ -20524,6 +20524,15 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
 
             // 4) 각 specialist 순차 호출
             const outputs: Record<string, string> = {};
+            /* v2.89.51 — 작업 라운드 메타데이터 추적. 어떤 도구를 썼고, 어떤 데이터를
+               받았고, 핵심 산출이 뭔지를 CEO 보고에 포함시켜 사용자가 한눈에 파악. */
+            const agentMeta: Record<string, {
+                task: string;
+                toolsUsed: string[];           // 실행한 Python 도구 목록
+                prefetchSummary: string;       // prefetch가 가져온 데이터 요약 (1줄)
+                outputSummary: string;          // 산출물 첫 줄·평가
+                outputLength: number;
+            }> = {};
             for (const t of plan.tasks) {
                 if (isAborted()) {
                     post({ type: 'agentEnd', agent: t.agent });
@@ -20666,6 +20675,44 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     }
                 } catch { /* never let tool exec break the dispatch */ }
                 outputs[t.agent] = out;
+                /* v2.89.51 — 작업 라운드 메타데이터 수집. CEO 보고에 도구·데이터·핵심 인용. */
+                {
+                    /* prefetch summary: realtimeData 첫 의미있는 줄 (### 헤딩 다음) */
+                    let prefetchSummary = '';
+                    if (realtimeData) {
+                        const m = realtimeData.match(/###\s*([^\n]+)/);
+                        prefetchSummary = m ? m[1].trim() : '';
+                        /* 진짜 데이터의 핵심 숫자 한두개 뽑아내기 */
+                        const stats: string[] = [];
+                        const subM = realtimeData.match(/구독자[\s:]*([0-9.]+[KkMm]?[명]?)/);
+                        const viewsM = realtimeData.match(/조회수\s*중간값[:\s]*\*?\*?([0-9.]+[KkMm]?)/);
+                        const videoM = realtimeData.match(/영상\s*(\d+)\s*개/);
+                        if (subM) stats.push(`구독자 ${subM[1]}`);
+                        if (viewsM) stats.push(`중간값 ${viewsM[1]}`);
+                        if (videoM) stats.push(`영상 ${videoM[1]}개`);
+                        if (stats.length > 0) prefetchSummary = stats.join(' · ');
+                    }
+                    /* output summary: 첫 의미있는 줄 + 평가 라인 */
+                    const outLines = (out || '').split('\n').map(l => l.trim()).filter(Boolean);
+                    const firstReal = outLines.find(l => !l.startsWith('#') && !l.startsWith('---') && !/^[📺📊🔥💰🎨🔧🛠️]/.test(l) && l.length > 10) || (outLines[0] || '');
+                    const evalLine = outLines.find(l => l.startsWith('📊 평가:')) || '';
+                    const outputSummary = [firstReal.slice(0, 200), evalLine].filter(Boolean).join(' / ');
+                    /* 실행한 도구 이름 추출 — '🛠️ 도구 실행 결과' 섹션 또는 prefetch */
+                    const toolsUsed: string[] = [];
+                    const toolMatches = (out || '').matchAll(/실행:\s*`(?:cd[^&`]*&&\s*)?(?:python\d?\s+)?([\w_-]+\.py)/g);
+                    for (const m of toolMatches) toolsUsed.push(m[1]);
+                    /* youtube의 경우 prefetch가 my_videos_check.py 자동 실행하니 추가 */
+                    if (t.agent === 'youtube' && realtimeData.length > 100 && !toolsUsed.includes('my_videos_check.py')) {
+                        toolsUsed.push('my_videos_check.py (prefetch)');
+                    }
+                    agentMeta[t.agent] = {
+                        task: t.task,
+                        toolsUsed,
+                        prefetchSummary,
+                        outputSummary,
+                        outputLength: (out || '').length,
+                    };
+                }
                 /* v2.89.8 — 자동 트리거 토큰. 에이전트가 `<TRIGGER:youtube_oauth>`
                    를 출력하면 시스템이 OAuth 명령을 직접 실행해서 브라우저를 띄움.
                    사용자가 "버튼 어디 있냐" 헤매지 않고 진짜 비서처럼 자동으로
@@ -20895,22 +20942,57 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     `[응답 도착: ${validTasks.length}/${plan.tasks.length}명]\n\n` +
                     `[유효한 에이전트 산출물]\n${validTasks.map(t => `\n## ${AGENTS[t.agent]?.emoji} ${AGENTS[t.agent]?.name}\n${(outputs[t.agent] || '').slice(0, 2000)}`).join('\n')}\n\n` +
                     `규칙: 위 산출물 안의 실제 내용·숫자만 인용해 보고서 작성. "산출물을 기다리고 있습니다", "데이터가 제공되면" 같은 placeholder 표현 절대 금지 — 산출물은 이미 위에 있음.`;
+                let ceoNarrative = '';
                 try {
-                    finalReport = await this._callAgentLLM(
+                    ceoNarrative = await this._callAgentLLM(
                         `${_personalizePrompt(CEO_REPORT_PROMPT)}\n${readAgentSharedContext('ceo', { lean: true })}`,
                         reportInput,
                         modelName,
                         'ceo',
                         false
                     );
-                    /* CEO가 그래도 placeholder 뱉으면 catch — 실제 내용으로 교체 */
-                    if (/산출물을\s*기다|데이터가\s*제공|once\s+the\s+output|when\s+the\s+output/i.test(finalReport)) {
-                        finalReport = `## ✅ 완료된 작업\n${validTasks.map(t => `- **${AGENTS[t.agent]?.emoji} ${AGENTS[t.agent]?.name}**: ${(outputs[t.agent] || '').slice(0, 200).replace(/\n/g, ' ')}...`).join('\n')}\n\n_(CEO LLM이 placeholder 응답 → 시스템이 자동으로 산출물 1줄씩 정리)_`;
+                    /* CEO가 그래도 placeholder 뱉으면 무시 */
+                    if (/산출물을\s*기다|데이터가\s*제공|once\s+the\s+output|when\s+the\s+output/i.test(ceoNarrative)) {
+                        ceoNarrative = '';
                     }
-                } catch (e: any) {
-                    finalReport = `⚠️ 종합 보고서 작성 실패: ${e.message}\n\n각 에이전트 산출물:\n${validTasks.map(t => `\n## ${AGENTS[t.agent]?.emoji} ${AGENTS[t.agent]?.name}\n${(outputs[t.agent] || '').slice(0, 1000)}`).join('\n')}`;
-                }
+                } catch { ceoNarrative = ''; }
                 post({ type: 'agentEnd', agent: 'ceo' });
+                /* v2.89.51 — 메타데이터 기반 작업 라운드 보고. CEO LLM 답이 짧거나 빈 답이어도
+                   사용자가 "어떤 도구·어떤 데이터·각 에이전트 무엇을 했나" 한눈에 파악. */
+                const breakdownLines: string[] = [];
+                breakdownLines.push(`## 🗂 작업 라운드 — 누가 뭐 했나`);
+                breakdownLines.push('');
+                for (const t of plan.tasks) {
+                    const a = AGENTS[t.agent];
+                    const meta = agentMeta[t.agent];
+                    if (!a) continue;
+                    breakdownLines.push(`### ${a.emoji} ${a.name} _(${a.role})_`);
+                    breakdownLines.push(`> 📋 **지시**: ${t.task}`);
+                    if (meta?.toolsUsed && meta.toolsUsed.length > 0) {
+                        breakdownLines.push(`> 🔧 **도구 실행**: ${meta.toolsUsed.map(x => '`'+x+'`').join(', ')}`);
+                    } else {
+                        breakdownLines.push(`> 🔧 **도구 실행**: _(없음 — LLM 추론만)_`);
+                    }
+                    if (meta?.prefetchSummary) {
+                        breakdownLines.push(`> 📊 **수집 데이터**: ${meta.prefetchSummary}`);
+                    }
+                    if (meta?.outputSummary) {
+                        breakdownLines.push(`> 💡 **핵심 산출**: ${meta.outputSummary}`);
+                    } else {
+                        const out = outputs[t.agent] || '';
+                        if (!out.trim() || /^⚠️/.test(out)) {
+                            breakdownLines.push(`> ⚠️ **상태**: 빈 답변 또는 LLM 실패`);
+                        }
+                    }
+                    breakdownLines.push(`> 📝 산출물 길이: ${meta?.outputLength || 0}자`);
+                    breakdownLines.push('');
+                }
+                if (ceoNarrative && ceoNarrative.trim()) {
+                    finalReport = `${breakdownLines.join('\n')}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n## 👔 CEO 종합\n\n${ceoNarrative.trim()}`;
+                } else {
+                    /* CEO LLM 실패해도 메타 보고서는 항상 보임 */
+                    finalReport = `${breakdownLines.join('\n')}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n_(CEO 종합 단계 스킵 — 위 작업 라운드 메타가 답입니다)_`;
+                }
             }
 
             try {

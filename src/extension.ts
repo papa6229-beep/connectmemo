@@ -23114,7 +23114,8 @@ function send(opts){
   document.body.classList.remove('init');
   const w=document.querySelector('.welcome');if(w)w.remove();
   document.querySelectorAll('.quick-actions').forEach(e=>e.remove());
-  const displayText=text+(pendingFiles.length>0?'\\\\n\�\� '+pendingFiles.map(f=>f.name).join(', '):'');
+  /* v2.89.56 — 이전엔 '\\\\n' (4 backslash) 였어서 runtime에 literal '\\n' 텍스트로 보임. 진짜 줄바꿈으로. */
+  const displayText=text+(pendingFiles.length>0?'\\n📎 '+pendingFiles.map(f=>f.name).join(', '):'');
   /* corporate 모드인데 아직 셋업 안 끝났으면 명령 차단 */
   if(corp && !companyState.configured){
     setSending(false);
@@ -25146,12 +25147,17 @@ function appendAgentChunk(agent,value){
   if(!s){startAgentMsg(agent,'');s=agentStreamEls[agent];}
   if(!s)return;
   s.raw=(s.raw||'')+value;
-  s.body.innerHTML=fmt(s.raw);
+  /* v2.89.56 — 스트리밍 중엔 fmt() 호출 X. 부분 markdown 깨짐 + 코드 placeholder 인덱스
+     race 방지. plain text로 escape만 하고 \\n→<br/> 만 처리. fmt()는 endAgentMsg에서. */
+  const safe = s.raw.replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));
+  s.body.innerHTML = safe.replace(/\\n/g, '<br/>');
   scrollChatToBottomIfNear();
 }
 
 function endAgentMsg(agent){
   const s=agentStreamEls[agent];if(!s)return;
+  /* v2.89.56 — 스트리밍 끝났으니 누적 raw에 한 번에 fmt() 적용 → 헤딩·표·인용·리스트 정상 렌더 */
+  if(s.body && s.raw) s.body.innerHTML = fmt(s.raw);
   s.el.classList.remove('streaming');
   if(s.tick)clearInterval(s.tick);
   delete agentStreamEls[agent];

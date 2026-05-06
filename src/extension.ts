@@ -804,24 +804,48 @@ function _autoOrchestrateModelMap(installed: { id: string; backend: string }[]):
   return map;
 }
 
+/* v2.89.67 — 사용자가 선택한 AI 엔진(설정의 ollamaUrl 포트로 판별)만 쿼리.
+   이전엔 Ollama+LM Studio 둘 다 무조건 쿼리해서 한 엔진만 쓰는 사용자한테
+   다른 엔진 모델이 오케스트레이션 드롭다운에 섞여 나옴 → 모델 선택해도
+   "model not found" 에러. 이제 활성 엔진의 모델만 보여줌.
+
+   엔진 판별: ollamaUrl 설정 포트로
+   - 1234 또는 'v1' 경로 포함 → LM Studio
+   - 11434 또는 그 외 → Ollama (default)
+
+   양 엔진 둘 다 띄운 사용자(드물지만) 위해 fallback: 활성 엔진이 비어있으면
+   다른 엔진도 시도. */
 async function listInstalledModels(): Promise<{ id: string; backend: 'ollama' | 'lmstudio' }[]> {
   const out: { id: string; backend: 'ollama' | 'lmstudio' }[] = [];
-  /* Ollama: GET /api/tags */
-  try {
-    const r = await axios.get('http://127.0.0.1:11434/api/tags', { timeout: 1500 });
-    const models = r.data?.models || [];
-    for (const m of models) {
-      if (m?.name) out.push({ id: m.name, backend: 'ollama' });
-    }
-  } catch { /* ollama not running — silent */ }
-  /* LM Studio: GET /v1/models */
-  try {
-    const r = await axios.get('http://127.0.0.1:1234/v1/models', { timeout: 1500 });
-    const models = r.data?.data || [];
-    for (const m of models) {
-      if (m?.id) out.push({ id: m.id, backend: 'lmstudio' });
-    }
-  } catch { /* LM Studio not running — silent */ }
+  const { ollamaBase } = getConfig();
+  const isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+  const queryOllama = async () => {
+    try {
+      const r = await axios.get('http://127.0.0.1:11434/api/tags', { timeout: 1500 });
+      const models = r.data?.models || [];
+      for (const m of models) {
+        if (m?.name) out.push({ id: m.name, backend: 'ollama' });
+      }
+    } catch { /* ollama not running */ }
+  };
+  const queryLMStudio = async () => {
+    try {
+      const r = await axios.get('http://127.0.0.1:1234/v1/models', { timeout: 1500 });
+      const models = r.data?.data || [];
+      for (const m of models) {
+        if (m?.id) out.push({ id: m.id, backend: 'lmstudio' });
+      }
+    } catch { /* LM Studio not running */ }
+  };
+  /* 활성 엔진만 쿼리. */
+  if (isLMStudio) {
+    await queryLMStudio();
+    /* LM Studio가 비어있고 Ollama가 살아있으면 fallback (양쪽 다 써본 사용자 케이스) */
+    if (out.length === 0) await queryOllama();
+  } else {
+    await queryOllama();
+    if (out.length === 0) await queryLMStudio();
+  }
   return out;
 }
 

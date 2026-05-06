@@ -294,21 +294,9 @@ function getConfig() {
     };
 }
 
-function _getBrainDir(): string {
-    const { localBrainPath } = getConfig();
-    if (localBrainPath && localBrainPath.trim() !== '') {
-        if (localBrainPath.startsWith('~/')) {
-            return path.join(os.homedir(), localBrainPath.substring(2));
-        }
-        return localBrainPath.trim();
-    }
-    return path.join(os.homedir(), '.connect-ai-brain');
-}
-
-function _isBrainDirExplicitlySet(): boolean {
-    const { localBrainPath } = getConfig();
-    return !!(localBrainPath && localBrainPath.trim() !== '');
-}
+/* v2.89.66 — _getBrainDir, _isBrainDirExplicitlySet, getCompanyDir, COMPANY_SUBDIR,
+   _expandTilde, _resolvePathInput 모두 ./paths.ts 로 이동. 모듈 간 import 일원화. */
+import { _getBrainDir, _isBrainDirExplicitlySet, getCompanyDir, COMPANY_SUBDIR, _expandTilde, _resolvePathInput } from './paths';
 
 async function _ensureBrainDir(): Promise<string | null> {
     if (_isBrainDirExplicitlySet()) {
@@ -515,29 +503,9 @@ function buildWorldDeskPositions(): Record<string, DeskPos> {
 //      path. Company lives wherever they want — e.g., team-shared folder,
 //      separate git repo, different cloud sync. Brain stays at brain root,
 //      independent.
-const COMPANY_SUBDIR = '_company';
+/* COMPANY_SUBDIR, _resolvePathInput, getCompanyDir 모두 ./paths.ts 로 이동.
+   여기엔 COMPANY_SUBDIR과 무관한 INTERNAL_DIRS 만 남김. */
 const COMPANY_INTERNAL_DIRS = new Set(['_cache', '_tmp']);
-
-function _resolvePathInput(raw: string): string {
-  let s = (raw || '').trim();
-  if (!s) return '';
-  if (s.startsWith('~/') || s === '~') {
-    s = s.replace(/^~/, os.homedir());
-  }
-  if (!path.isAbsolute(s)) return ''; // ignore non-absolute to avoid surprise
-  return path.normalize(s);
-}
-
-function getCompanyDir(): string {
-  /* User-configured detached path takes priority. Falls back to nested
-     under the brain folder. */
-  try {
-    const raw = vscode.workspace.getConfiguration('connectAiLab').get<string>('companyDir', '') || '';
-    const resolved = _resolvePathInput(raw);
-    if (resolved) return resolved;
-  } catch { /* config unavailable in some hot paths — fall through */ }
-  return path.join(_getBrainDir(), COMPANY_SUBDIR);
-}
 
 /* One-shot migration: when the user upgrades from a layout where company
    files lived at the brain root, transparently move them under _company/.

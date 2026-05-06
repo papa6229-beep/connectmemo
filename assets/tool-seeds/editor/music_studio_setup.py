@@ -1,28 +1,66 @@
 #!/usr/bin/env python3
-"""ACE-Step 1.5 Music Studio — 원클릭 설치/검증.
+"""음악 스튜디오 — 다중 모델 지원 원클릭 설치.
 
-이 스크립트가 하는 일:
-  1. 의존성 점검: python3, git, pip 존재 확인
-  2. ~/connect-ai-music/ace-step 에 ACE-Step 1.5 base 모델 클론·설치
-  3. 모델 weight 자동 다운로드 (HuggingFace)
-  4. 설치 위치를 music_studio_setup.json 에 기록 → 다른 도구가 참조
+선택 가능한 모델 (디스크·메모리·품질 트레이드오프):
 
-사용자는 이 스크립트 실행 한 번만 누르면 끝. 진행상황 stderr로 출력.
-설치 디스크 사용량: ~10GB (모델 weight). 첫 실행 5~15분 (인터넷 속도에 따라).
+  ┌────────────────────────┬────────┬───────────┬─────────────┐
+  │ MODEL                  │ 디스크 │ 메모리    │ 추천        │
+  ├────────────────────────┼────────┼───────────┼─────────────┤
+  │ musicgen-small (기본)  │ 300MB  │ 4GB+      │ 모든 기기   │
+  │ musicgen-medium        │ 1.5GB  │ 6GB+      │ 8GB+ RAM    │
+  │ musicgen-large         │ 3.3GB  │ 12GB+     │ 16GB+ RAM   │
+  │ acestep-base           │ 10GB   │ 16GB+     │ 16GB+ Mac   │
+  │ acestep-xl             │ 15GB+  │ 24GB+     │ 32GB+ 머신  │
+  └────────────────────────┴────────┴───────────┴─────────────┘
 
-이미 설치돼있으면 (config 존재 + weight 있음) → "이미 설치 완료" 보고 후 종료.
+기본값: musicgen-small — 300MB만 받고 30초만에 첫 음악. 사용자 RAM이 크면
+설치 시 더 큰 모델 추천. config에서 언제든 변경 가능.
+
+⚙️ MODEL 필드를 위 5개 중 하나로 설정. 설치는 한 번에 한 모델만 (선택한 거).
 """
 import os, sys, json, subprocess, shutil, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "music_studio_setup.json")
 
-DEFAULT_INSTALL_DIR = os.path.expanduser("~/connect-ai-music/ace-step")
-ACE_STEP_REPO = "https://github.com/ace-step/ACE-Step-1.5.git"
+# 모델 메타 — 디스크·RAM 추천·HuggingFace 경로·설치 방식
+MODELS = {
+    "musicgen-small": {
+        "disk_gb": 0.3, "ram_gb": 4,
+        "kind": "transformers", "hf_id": "facebook/musicgen-small",
+        "deps": ["torch", "torchaudio", "transformers", "scipy", "soundfile"],
+        "label": "MusicGen Small (300MB · 모든 기기)",
+    },
+    "musicgen-medium": {
+        "disk_gb": 1.5, "ram_gb": 6,
+        "kind": "transformers", "hf_id": "facebook/musicgen-medium",
+        "deps": ["torch", "torchaudio", "transformers", "scipy", "soundfile"],
+        "label": "MusicGen Medium (1.5GB · 8GB+ RAM)",
+    },
+    "musicgen-large": {
+        "disk_gb": 3.3, "ram_gb": 12,
+        "kind": "transformers", "hf_id": "facebook/musicgen-large",
+        "deps": ["torch", "torchaudio", "transformers", "scipy", "soundfile"],
+        "label": "MusicGen Large (3.3GB · 16GB+ RAM)",
+    },
+    "acestep-base": {
+        "disk_gb": 10, "ram_gb": 16,
+        "kind": "acestep", "hf_id": "ACE-Step/Ace-Step1.5",
+        "repo": "https://github.com/ace-step/ACE-Step-1.5.git",
+        "label": "ACE-Step 1.5 Base (10GB · 16GB+ Mac/CUDA)",
+    },
+    "acestep-xl": {
+        "disk_gb": 15, "ram_gb": 24,
+        "kind": "acestep", "hf_id": "ACE-Step/acestep-v15-xl-base",
+        "repo": "https://github.com/ace-step/ACE-Step-1.5.git",
+        "label": "ACE-Step 1.5 XL (15GB · 32GB+ 머신)",
+    },
+}
+
+DEFAULT_INSTALL_DIR = os.path.expanduser("~/connect-ai-music")
 
 
 def _log(msg, kind="info"):
-    """stderr로 진행상황. stdout엔 최종 보고만."""
     prefix = {"info": "🔧", "ok": "✅", "warn": "⚠️ ", "err": "❌"}.get(kind, "•")
     print(f"{prefix} {msg}", file=sys.stderr, flush=True)
 
@@ -31,36 +69,52 @@ def _which(cmd):
     return shutil.which(cmd) is not None
 
 
-def _run(cmd, cwd=None, env=None, log_prefix=""):
-    """서브프로세스 실행. stdout·stderr 모두 stderr로 흘려보내서 진행상황 보임."""
+def _system_ram_gb():
+    """Detect system RAM. Cross-platform best effort."""
+    try:
+        import psutil
+        return psutil.virtual_memory().total / (1024 ** 3)
+    except ImportError:
+        pass
+    try:
+        if sys.platform == "darwin":
+            r = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True)
+            return int(r.stdout.strip()) / (1024 ** 3)
+        if sys.platform == "linux":
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        return int(line.split()[1]) / (1024 ** 2)
+    except Exception:
+        pass
+    return 16  # 보수적 default
+
+
+def _recommend_model(ram_gb):
+    """RAM 기반 추천 모델."""
+    if ram_gb >= 32:
+        return "musicgen-large"  # XL은 너무 부담스러우니 large 디폴트
+    if ram_gb >= 16:
+        return "musicgen-medium"
+    return "musicgen-small"
+
+
+def _run(cmd, cwd=None):
     _log(f"$ {' '.join(cmd) if isinstance(cmd, list) else cmd}")
     try:
         result = subprocess.run(
             cmd if isinstance(cmd, list) else cmd.split(),
-            cwd=cwd, env=env, check=False, capture_output=True, text=True
+            cwd=cwd, check=False, capture_output=True, text=True
         )
-        if result.stdout.strip():
-            for line in result.stdout.splitlines():
-                _log(f"  {log_prefix}{line}")
-        if result.stderr.strip():
-            for line in result.stderr.splitlines():
-                _log(f"  {log_prefix}{line}")
+        # stderr가 진짜 에러면 표시, 아니면 진행상황으로 간주 (pip 등은 진행상황을 stderr에)
+        for stream in (result.stdout, result.stderr):
+            if stream and stream.strip():
+                for line in stream.splitlines()[-20:]:  # 마지막 20줄만
+                    _log(f"  {line}")
         return result.returncode == 0
     except Exception as e:
         _log(f"실행 오류: {e}", "err")
         return False
-
-
-def _check_deps():
-    """필수 도구들이 깔려있는지 확인."""
-    missing = []
-    if not _which("python3"):
-        missing.append("python3 (https://www.python.org/downloads/)")
-    if not _which("git"):
-        missing.append("git (https://git-scm.com/downloads)")
-    if not _which("pip3") and not _which("pip"):
-        missing.append("pip (Python 설치하면 같이 옴)")
-    return missing
 
 
 def _load_config():
@@ -78,105 +132,149 @@ def _save_config(cfg):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
-def _verify_install(install_dir):
-    """설치가 정상인지 빠르게 점검."""
-    if not os.path.isdir(install_dir):
-        return False, "디렉토리 없음"
-    if not os.path.isdir(os.path.join(install_dir, ".git")):
-        return False, "git repo 아님"
+def _install_transformers_model(model_key, install_dir):
+    """MusicGen 류 — pip + huggingface 다운로드. 가벼운 경로."""
+    info = MODELS[model_key]
     venv = os.path.join(install_dir, ".venv")
+
+    # venv 생성
     if not os.path.isdir(venv):
-        return False, "venv 없음"
-    return True, "OK"
+        _log("Python venv 생성...")
+        if not _run(["python3", "-m", "venv", venv]):
+            return False, "venv 생성 실패"
+
+    venv_pip = os.path.join(venv, "bin", "pip")
+    venv_python = os.path.join(venv, "bin", "python")
+    if not os.path.exists(venv_pip):
+        venv_pip = os.path.join(venv, "Scripts", "pip.exe")
+        venv_python = os.path.join(venv, "Scripts", "python.exe")
+
+    _log("Python 의존성 설치 (1~3분, ~500MB)...")
+    _run([venv_pip, "install", "--upgrade", "pip", "--quiet"])
+    if not _run([venv_pip, "install", "--quiet"] + info["deps"]):
+        return False, "pip install 실패"
+
+    # 모델 weight 다운로드
+    _log(f"모델 다운로드 중: {info['hf_id']} ({info['disk_gb']}GB)...")
+    download_script = (
+        "from transformers import MusicgenForConditionalGeneration, AutoProcessor; "
+        f"AutoProcessor.from_pretrained('{info['hf_id']}'); "
+        f"MusicgenForConditionalGeneration.from_pretrained('{info['hf_id']}'); "
+        "print('✅ 모델 다운로드 완료')"
+    )
+    if not _run([venv_python, "-c", download_script]):
+        return False, "모델 다운로드 실패 — 인터넷 연결 확인"
+
+    return True, venv_python
+
+
+def _install_acestep(model_key, install_dir):
+    """ACE-Step — git clone + 큰 의존성. 무거운 경로."""
+    info = MODELS[model_key]
+    repo_dir = os.path.join(install_dir, "ace-step")
+
+    if not os.path.isdir(repo_dir):
+        _log(f"ACE-Step 1.5 clone 중 → {repo_dir}")
+        if not _run(["git", "clone", "--depth", "1", info["repo"], repo_dir]):
+            return False, "git clone 실패"
+
+    venv = os.path.join(repo_dir, ".venv")
+    if not os.path.isdir(venv):
+        _log("Python venv 생성...")
+        if not _run(["python3", "-m", "venv", venv]):
+            return False, "venv 생성 실패"
+
+    venv_pip = os.path.join(venv, "bin", "pip")
+    venv_python = os.path.join(venv, "bin", "python")
+    if not os.path.exists(venv_pip):
+        venv_pip = os.path.join(venv, "Scripts", "pip.exe")
+        venv_python = os.path.join(venv, "Scripts", "python.exe")
+
+    requirements = os.path.join(repo_dir, "requirements.txt")
+    if os.path.exists(requirements):
+        _log(f"ACE-Step 의존성 설치 중 (5~10분, 큰 패키지 다운로드)...")
+        _run([venv_pip, "install", "--upgrade", "pip", "--quiet"])
+        if not _run([venv_pip, "install", "-r", requirements]):
+            return False, "pip install 일부 실패 — 다시 실행하면 이어짐"
+
+    _log(f"모델 weight (~{info['disk_gb']}GB) 는 첫 음악 생성 때 자동 다운로드", "info")
+    return True, venv_python
 
 
 def main():
     cfg = _load_config()
-    install_dir = cfg.get("INSTALL_DIR") or DEFAULT_INSTALL_DIR
 
-    # 이미 설치돼있는지 빠르게 확인
-    ok, reason = _verify_install(install_dir)
-    if ok and cfg.get("INSTALLED_AT"):
-        print(f"✅ ACE-Step 이미 설치됨")
-        print(f"  📁 위치: {install_dir}")
-        print(f"  📅 설치 시각: {cfg.get('INSTALLED_AT')}")
-        print(f"  🎵 사용: 영상 분석 후 BGM 생성 도구 호출하면 자동 사용")
-        return
-
-    # 의존성 점검
-    _log("의존성 점검 중...")
-    missing = _check_deps()
+    # 기본 의존성
+    missing = []
+    if not _which("python3"):
+        missing.append("python3 (https://www.python.org/downloads/)")
+    if not _which("git"):
+        missing.append("git (https://git-scm.com/downloads)")
     if missing:
         print("❌ 다음 도구 먼저 설치해주세요:")
         for m in missing:
             print(f"  - {m}")
         sys.exit(1)
-    _log("의존성 OK", "ok")
 
-    # 설치 디렉토리 준비
-    parent = os.path.dirname(install_dir)
-    os.makedirs(parent, exist_ok=True)
+    # 모델 선택: config의 MODEL 우선, 없으면 RAM 기반 추천
+    requested = (cfg.get("MODEL") or "").strip()
+    ram_gb = _system_ram_gb()
+    if not requested:
+        requested = _recommend_model(ram_gb)
+        _log(f"시스템 RAM {ram_gb:.0f}GB → 추천 모델: {requested}", "info")
 
-    # 1) 클론
-    if not os.path.isdir(install_dir):
-        _log(f"ACE-Step 1.5 클론 중 → {install_dir}")
-        _log("(약 50MB · 30초)")
-        if not _run(["git", "clone", "--depth", "1", ACE_STEP_REPO, install_dir]):
-            print("❌ git clone 실패. 인터넷 연결 확인 후 재시도.")
-            sys.exit(1)
-        _log("클론 완료", "ok")
+    if requested not in MODELS:
+        print(f"❌ 알 수 없는 MODEL: {requested}")
+        print(f"  사용 가능: {', '.join(MODELS.keys())}")
+        sys.exit(1)
+
+    info = MODELS[requested]
+    _log(f"설치 모델: {info['label']}")
+
+    # 이미 설치돼있으면 빠르게 종료
+    if cfg.get("INSTALLED_MODEL") == requested and cfg.get("VENV_PYTHON"):
+        venv_python = cfg.get("VENV_PYTHON")
+        if os.path.exists(venv_python):
+            print(f"✅ 이미 설치 완료: {info['label']}")
+            print(f"  📁 {cfg.get('INSTALL_DIR')}")
+            print(f"  🐍 {venv_python}")
+            return
+
+    install_dir = cfg.get("INSTALL_DIR") or DEFAULT_INSTALL_DIR
+    os.makedirs(install_dir, exist_ok=True)
+
+    if info["kind"] == "transformers":
+        ok, result = _install_transformers_model(requested, install_dir)
     else:
-        _log("이미 클론된 디렉토리 사용", "info")
+        ok, result = _install_acestep(requested, install_dir)
 
-    # 2) venv 생성
-    venv_dir = os.path.join(install_dir, ".venv")
-    if not os.path.isdir(venv_dir):
-        _log("Python venv 생성 중...")
-        if not _run(["python3", "-m", "venv", venv_dir]):
-            print("❌ venv 생성 실패")
-            sys.exit(1)
-        _log("venv OK", "ok")
+    if not ok:
+        print(f"❌ 설치 실패: {result}")
+        sys.exit(1)
 
-    venv_python = os.path.join(venv_dir, "bin", "python")
-    venv_pip = os.path.join(venv_dir, "bin", "pip")
-    if not os.path.exists(venv_python):
-        # Windows
-        venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
-        venv_pip = os.path.join(venv_dir, "Scripts", "pip.exe")
-
-    # 3) pip 의존성 설치
-    requirements = os.path.join(install_dir, "requirements.txt")
-    if os.path.exists(requirements):
-        _log("Python 의존성 설치 중 (5~10분 소요, 큰 파일 다운로드)...")
-        # pip 업그레이드 먼저
-        _run([venv_pip, "install", "--upgrade", "pip"])
-        if not _run([venv_pip, "install", "-r", requirements]):
-            print("⚠️  일부 의존성 설치 실패 — 다시 실행하면 이어서 진행됩니다.")
-            sys.exit(1)
-        _log("의존성 설치 완료", "ok")
-    else:
-        _log("requirements.txt 없음, 기본 의존성 추측 설치", "warn")
-        basic_deps = ["torch", "torchaudio", "transformers", "accelerate", "huggingface_hub", "soundfile"]
-        _run([venv_pip, "install"] + basic_deps)
-
-    # 4) 모델 weight 다운로드 안내
-    weights_dir = os.path.join(install_dir, "checkpoints")
-    os.makedirs(weights_dir, exist_ok=True)
-    _log("모델 weight는 첫 음악 생성 시 자동 다운로드됩니다 (~10GB).", "info")
-    _log("미리 받으려면: huggingface-cli download ACE-Step/Ace-Step1.5 --local-dir " + weights_dir)
-
-    # 5) 설정 저장
+    venv_python = result
+    cfg["INSTALLED_MODEL"] = requested
+    cfg["MODEL"] = requested
     cfg["INSTALL_DIR"] = install_dir
     cfg["VENV_PYTHON"] = venv_python
+    cfg["INSTALL_KIND"] = info["kind"]
+    cfg["HF_ID"] = info["hf_id"]
     cfg["INSTALLED_AT"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    cfg["MODEL_VARIANT"] = "base"  # base / xl-base / xl-turbo
+    if info["kind"] == "acestep":
+        cfg["ACE_STEP_DIR"] = os.path.join(install_dir, "ace-step")
     _save_config(cfg)
 
-    print("✅ ACE-Step 음악 스튜디오 설치 완료!")
+    print(f"✅ 음악 스튜디오 설치 완료")
+    print(f"  🎵 모델: {info['label']}")
     print(f"  📁 위치: {install_dir}")
-    print(f"  🐍 Python: {venv_python}")
-    print(f"  💾 모델 weight: 첫 BGM 생성 때 자동 다운로드 (~10GB)")
-    print(f"  🎵 다음 단계: '이 영상에 BGM 만들어줘' 같은 명령으로 사용")
+    print(f"  💾 디스크 사용: ~{info['disk_gb']}GB")
+    print(f"  🎼 다음: 'music_generate.py' 실행해서 첫 BGM 생성")
+    print()
+    print(f"💡 다른 모델로 바꾸고 싶으면:")
+    print(f"  ⚙️ → MODEL 필드를 다음 중 하나로 변경 후 이 도구 다시 실행:")
+    for k, m in MODELS.items():
+        marker = " ← 현재" if k == requested else ""
+        print(f"  - {k}: {m['label']}{marker}")
 
 
 if __name__ == "__main__":

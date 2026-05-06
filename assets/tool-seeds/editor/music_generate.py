@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""ACE-Step 1.5 BGM 생성기.
+"""BGM 생성 — 설치된 모델에 따라 자동 dispatch.
 
-프롬프트 → MP3. music_studio_setup.py 가 먼저 설치돼있어야 함.
-설정에서 PROMPT, DURATION, GENRE 변경 가능. config 파일에 저장된 LAST_PROMPT 자동 반복 가능.
+music_studio_setup.py 로 설치한 모델(MusicGen / ACE-Step)을 자동 감지해서
+같은 인터페이스로 BGM 생성. 사용자는 모델 차이 신경 쓸 필요 X.
 
-출력: ~/connect-ai-music/output/<timestamp>.mp3
+config:
+  PROMPT — 음악 묘사 (영어 권장)
+  DURATION_SEC — 길이 (초)
+  GENRE — 장르 힌트 (lo-fi, ambient, cinematic, edm 등)
+  OUTPUT_DIR — 저장 위치 (디폴트 ~/connect-ai-music/output/)
 """
 import os, sys, json, subprocess, time
 
@@ -28,17 +32,96 @@ def _load(p):
     return {}
 
 
+def _generate_musicgen(setup, prompt, duration_sec, output_path):
+    """MusicGen 류 (transformers 기반). 가벼움."""
+    venv_python = setup.get("VENV_PYTHON")
+    hf_id = setup.get("HF_ID", "facebook/musicgen-small")
+
+    # MusicGen은 약 50 토큰/초 (sample rate 32000Hz, 50hz token rate)
+    # duration → max_new_tokens 환산
+    max_tokens = max(64, int(duration_sec * 50))
+
+    script = f"""
+import torch, scipy.io.wavfile, sys, os
+from transformers import MusicgenForConditionalGeneration, AutoProcessor
+print('🔧 모델 로드 중...', file=sys.stderr, flush=True)
+processor = AutoProcessor.from_pretrained({hf_id!r})
+model = MusicgenForConditionalGeneration.from_pretrained({hf_id!r})
+device = 'mps' if torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
+model = model.to(device)
+print(f'🎵 디바이스: {{device}}', file=sys.stderr, flush=True)
+print(f'🎼 생성 중... (프롬프트: {prompt!r}, {duration_sec}초)', file=sys.stderr, flush=True)
+inputs = processor(text=[{prompt!r}], padding=True, return_tensors='pt').to(device)
+audio = model.generate(**inputs, max_new_tokens={max_tokens})
+audio_np = audio[0, 0].cpu().numpy()
+sr = model.config.audio_encoder.sampling_rate
+wav_path = {output_path.replace('.mp3', '.wav')!r}
+scipy.io.wavfile.write(wav_path, sr, audio_np)
+print(f'✅ wav: {{wav_path}}', file=sys.stderr, flush=True)
+"""
+    proc = subprocess.run([venv_python, "-c", script], capture_output=True, text=True)
+    if proc.stderr.strip():
+        for line in proc.stderr.splitlines():
+            _log(f"  {line}")
+    if proc.returncode != 0:
+        return False, f"MusicGen 추론 실패 (exit {proc.returncode})"
+
+    wav_path = output_path.replace('.mp3', '.wav')
+    if not os.path.exists(wav_path):
+        return False, "wav 파일 생성 안 됨"
+
+    # wav → mp3 변환 (ffmpeg 있을 때)
+    if subprocess.run(["which", "ffmpeg"], capture_output=True).returncode == 0:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", wav_path, "-codec:a", "libmp3lame", "-qscale:a", "2", output_path
+        ], capture_output=True)
+        if os.path.exists(output_path):
+            os.remove(wav_path)  # mp3로 변환했으니 wav는 삭제
+            return True, output_path
+    # ffmpeg 없으면 wav 그대로
+    return True, wav_path
+
+
+def _generate_acestep(setup, prompt, duration_sec, output_path):
+    """ACE-Step — repo의 infer 스크립트 호출. 무거움."""
+    venv_python = setup.get("VENV_PYTHON")
+    repo_dir = setup.get("ACE_STEP_DIR")
+
+    # ACE-Step entry point 자동 탐색
+    candidates = ["infer.py", "src/infer.py", "scripts/infer.py", "ace_step/infer.py", "main.py"]
+    infer_script = None
+    for c in candidates:
+        full = os.path.join(repo_dir, c)
+        if os.path.exists(full):
+            infer_script = full
+            break
+    if not infer_script:
+        return False, f"ACE-Step infer 스크립트 못 찾음 — {repo_dir} 의 README 확인 필요"
+
+    cmd = [venv_python, infer_script,
+           "--prompt", prompt, "--duration", str(duration_sec), "--output", output_path]
+    proc = subprocess.run(cmd, cwd=repo_dir, capture_output=True, text=True)
+    if proc.stderr.strip():
+        for line in proc.stderr.splitlines()[-30:]:
+            _log(f"  {line}")
+    if proc.returncode != 0:
+        return False, f"ACE-Step 실패 (exit {proc.returncode}). README의 명령 형식 확인 필요"
+    if not os.path.exists(output_path):
+        return False, "출력 파일 없음 — ACE-Step 명령 형식이 다를 수 있음"
+    return True, output_path
+
+
 def main():
     setup = _load(SETUP_CONFIG)
     if not setup.get("INSTALLED_AT"):
-        print("❌ ACE-Step 음악 스튜디오 미설치.")
+        print("❌ 음악 모델 미설치.")
         print("  먼저 같은 폴더의 'music_studio_setup.py' 실행해주세요 (▶ 클릭).")
+        print("  기본은 MusicGen Small (300MB) — 가벼움.")
         sys.exit(1)
 
-    install_dir = setup.get("INSTALL_DIR")
     venv_python = setup.get("VENV_PYTHON")
-    if not (install_dir and os.path.isdir(install_dir) and venv_python and os.path.exists(venv_python)):
-        print("❌ 설치 정보가 깨졌어요. music_studio_setup.py 다시 실행해주세요.")
+    if not (venv_python and os.path.exists(venv_python)):
+        print("❌ 설치 정보 손상. music_studio_setup.py 다시 실행해주세요.")
         sys.exit(1)
 
     cfg = _load(GEN_CONFIG)
@@ -53,64 +136,36 @@ def main():
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(output_dir, f"bgm_{timestamp}.mp3")
 
+    model_label = setup.get("INSTALLED_MODEL", "unknown")
+    _log(f"모델: {model_label}")
     _log(f"프롬프트: {prompt}")
     _log(f"길이: {duration}초")
     _log(f"출력: {output_path}")
 
-    # ACE-Step infer 호출 — 실제 명령은 ACE-Step repo의 infer 스크립트에 따라 조정 필요
-    # 첫 실행은 weight 다운로드 (~10GB) 발생 → 5~30분
-    infer_script = os.path.join(install_dir, "infer.py")
-    if not os.path.exists(infer_script):
-        # ACE-Step repo의 실제 entry point 자동 탐색
-        candidates = ["infer.py", "src/infer.py", "scripts/infer.py", "ace_step/infer.py"]
-        infer_script = None
-        for c in candidates:
-            full = os.path.join(install_dir, c)
-            if os.path.exists(full):
-                infer_script = full
-                break
-    if not infer_script:
-        print("❌ ACE-Step infer.py를 못 찾음. 설치 디렉토리 점검 필요.")
-        print(f"  위치: {install_dir}")
-        print(f"  README 참고: https://github.com/ace-step/ACE-Step-1.5")
+    install_kind = setup.get("INSTALL_KIND", "transformers")
+    if install_kind == "transformers":
+        ok, result = _generate_musicgen(setup, prompt, duration, output_path)
+    elif install_kind == "acestep":
+        ok, result = _generate_acestep(setup, prompt, duration, output_path)
+    else:
+        print(f"❌ 알 수 없는 INSTALL_KIND: {install_kind}")
         sys.exit(1)
 
-    cmd = [
-        venv_python, infer_script,
-        "--prompt", prompt,
-        "--duration", str(duration),
-        "--output", output_path,
-    ]
-    _log("음악 생성 중... (첫 실행은 모델 다운로드로 시간 걸림)")
-    _log(f"$ {' '.join(cmd)}")
-
-    proc = subprocess.run(cmd, cwd=install_dir, capture_output=True, text=True)
-    if proc.stdout.strip():
-        for line in proc.stdout.splitlines():
-            _log(f"  {line}")
-    if proc.stderr.strip():
-        for line in proc.stderr.splitlines():
-            _log(f"  {line}")
-
-    if proc.returncode != 0:
-        print(f"❌ 생성 실패 (exit {proc.returncode})")
-        print("  ACE-Step 설치 상태 점검 필요. music_studio_setup.py 다시 실행해보세요.")
+    if not ok:
+        print(f"❌ {result}")
         sys.exit(1)
 
-    if not os.path.exists(output_path):
-        print(f"❌ 출력 파일 없음 — ACE-Step 명령 형식이 다를 수 있어요.")
-        print(f"  README: https://github.com/ace-step/ACE-Step-1.5")
-        sys.exit(1)
-
-    file_size = os.path.getsize(output_path)
+    final_path = result
+    file_size = os.path.getsize(final_path)
     print(f"✅ BGM 생성 완료")
-    print(f"  📁 {output_path}")
+    print(f"  🎵 모델: {model_label}")
+    print(f"  📁 {final_path}")
     print(f"  📊 {file_size // 1024} KB · {duration}초")
-    print(f"  🎵 프롬프트: {prompt}")
-    print(f"  💡 영상에 합치려면: 같은 폴더의 'music_to_video.py' 실행")
+    print(f"  💬 프롬프트: {prompt}")
+    print(f"  🎬 영상에 합치려면: 같은 폴더의 'music_to_video.py' 실행")
 
-    # 마지막 출력 파일 기록 → music_to_video.py가 자동으로 사용
-    cfg["LAST_OUTPUT"] = output_path
+    # 다음 도구가 자동으로 사용
+    cfg["LAST_OUTPUT"] = final_path
     cfg["LAST_PROMPT"] = prompt
     with open(GEN_CONFIG, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)

@@ -5507,15 +5507,18 @@ function _seedAgentToolsIfMissing(agentId: string) {
 }
 
 /* v2.89.68 — Editor (사운드) 에이전트 시드 함수들. assets/tool-seeds/editor/ 의 .py·.md 파일을
-   회사 폴더의 _agents/editor/tools/ 로 복사. sentinel은 'music_v1' — 향후 ACE-Step XL 지원
+   회사 폴더의 _agents/editor/tools/ 로 복사. sentinel은 'music_v2' — 향후 ACE-Step XL 지원
    추가 시 'music_v2'로 올려서 자동 업그레이드. */
 function _seedEditorMusicStudioSetup(toolsDir: string) {
   const py = _loadToolSeed('editor/music_studio_setup.py');
   const md = _loadToolSeed('editor/music_studio_setup.md');
-  const json = JSON.stringify({}, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.py'), py, 'music_v1');
+  const json = JSON.stringify({
+    MODEL: '',  // 빈 값 = RAM 기반 자동 추천 (small/medium)
+    INSTALL_DIR: '',  // 빈 값 = ~/connect-ai-music/
+  }, null, 2);
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.py'), py, 'music_v2');
   _seedFile(path.join(toolsDir, 'music_studio_setup.json'), json);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.md'), md, 'music_v1');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.md'), md, 'music_v2');
 }
 
 function _seedEditorMusicGenerate(toolsDir: string) {
@@ -5527,9 +5530,9 @@ function _seedEditorMusicGenerate(toolsDir: string) {
     GENRE: '',
     OUTPUT_DIR: '',
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_generate.py'), py, 'music_v1');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_generate.py'), py, 'music_v2');
   _seedFile(path.join(toolsDir, 'music_generate.json'), json);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_generate.md'), md, 'music_v1');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_generate.md'), md, 'music_v2');
 }
 
 function _seedEditorMusicToVideo(toolsDir: string) {
@@ -5541,9 +5544,9 @@ function _seedEditorMusicToVideo(toolsDir: string) {
     BGM_VOLUME: 0.3,
     OUTPUT_PATH: '',
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_to_video.py'), py, 'music_v1');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_to_video.py'), py, 'music_v2');
   _seedFile(path.join(toolsDir, 'music_to_video.json'), json);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_to_video.md'), md, 'music_v1');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_to_video.md'), md, 'music_v2');
 }
 
 function _seedFile(p: string, content: string) {

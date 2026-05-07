@@ -5576,11 +5576,13 @@ function _seedYouTubeTrendSniper(toolsDir: string) {
     TARGET_KEYWORDS: ['유튜브 자동화', 'AI 비즈니스', '마케팅 트렌드', '생산성 툴'],
   }, null, 2);
   const md = _loadToolSeed('youtube/trend_sniper.md');
-  _seedFile(path.join(toolsDir, 'trend_sniper.py'), py);
+  /* v2.89.70 sentinel — LM Studio + Ollama 자동 감지 추가됨. 이전 사용자는 자동 업그레이드. */
+  _seedFileForceUpgrade(path.join(toolsDir, 'trend_sniper.py'), py, 'is_lm_studio');
   _seedFile(path.join(toolsDir, 'trend_sniper.json'), json);
   _seedFile(path.join(toolsDir, 'trend_sniper.md'), md);
 }
 
+/* v2.89.70 sentinel — Auto Planner에 첫 실행 검증 + blocking 명확 안내 추가. 자동 업그레이드. */
 function _seedYouTubeAutoPlanner(toolsDir: string) {
   const py = _loadToolSeed('youtube/auto_planner.py');
   const json = JSON.stringify({
@@ -5588,7 +5590,7 @@ function _seedYouTubeAutoPlanner(toolsDir: string) {
     TOTAL_RUN_HOURS: 8,
   }, null, 2);
   const md = _loadToolSeed('youtube/auto_planner.md');
-  _seedFile(path.join(toolsDir, 'auto_planner.py'), py);
+  _seedFileForceUpgrade(path.join(toolsDir, 'auto_planner.py'), py, '검증 중');
   _seedFile(path.join(toolsDir, 'auto_planner.json'), json);
   _seedFile(path.join(toolsDir, 'auto_planner.md'), md);
 }

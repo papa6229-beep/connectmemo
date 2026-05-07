@@ -5542,9 +5542,9 @@ function _seedEditorMusicStudioSetup(toolsDir: string) {
       MODEL: {
         type: 'select',
         label: '🎵 음악 모델',
-        hint: '비워두면 RAM 기반 자동 추천 (small 또는 medium)',
+        hint: '비워두면 small 자동 선택 (모든 기기 안전). 큰 모델은 명시 RAM의 1.5~2배 실제 압박',
         options: [
-          { value: '', label: '(자동 추천 — RAM 기반)' },
+          { value: '', label: '(자동 — 항상 small, 가장 안전)' },
           { value: 'musicgen-small',  label: '⚡ MusicGen Small  (300MB · 4GB+ RAM · 빠름)' },
           { value: 'musicgen-medium', label: '⚖️ MusicGen Medium (1.5GB · 8GB+ RAM · 균형)' },
           { value: 'musicgen-large',  label: '🎼 MusicGen Large  (3.3GB · 16GB+ RAM · 좋음)' },
@@ -5559,9 +5559,9 @@ function _seedEditorMusicStudioSetup(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.py'), py, 'music_v3');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.py'), py, 'music_v5');
   _seedFile(path.join(toolsDir, 'music_studio_setup.json'), json);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.md'), md, 'music_v3');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.md'), md, 'music_v5');
 }
 
 function _seedEditorMusicGenerate(toolsDir: string) {

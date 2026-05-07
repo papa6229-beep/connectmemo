@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: music_v3
+# version: music_v5
 """음악 스튜디오 — 다중 모델 지원 원클릭 설치.
 
 선택 가능한 모델 (디스크·메모리·품질 트레이드오프):
@@ -14,8 +14,9 @@
   │ acestep-xl             │ 15GB+  │ 24GB+     │ 32GB+ 머신  │
   └────────────────────────┴────────┴───────────┴─────────────┘
 
-기본값: musicgen-small — 300MB만 받고 30초만에 첫 음악. 사용자 RAM이 크면
-설치 시 더 큰 모델 추천. config에서 언제든 변경 가능.
+기본값: musicgen-small — 300MB만 받고 30초만에 첫 음악. 모든 기기에서 안정적.
+큰 모델은 추론 시 명시 RAM의 1.5~2배 실제 압박 발생해서 자동 선택은 무조건 small.
+medium/large 쓰고 싶으면 MODEL 필드에 직접 지정.
 
 ⚙️ MODEL 필드를 위 5개 중 하나로 설정. 설치는 한 번에 한 모델만 (선택한 거).
 """
@@ -92,11 +93,11 @@ def _system_ram_gb():
 
 
 def _recommend_model(ram_gb):
-    """RAM 기반 추천 모델."""
-    if ram_gb >= 32:
-        return "musicgen-large"  # XL은 너무 부담스러우니 large 디폴트
-    if ram_gb >= 16:
-        return "musicgen-medium"
+    """RAM 기반 추천 모델. v2.89.78 — 보수적으로 small 우선.
+    추론할 때 모델 weight + activation + scratch buffer 합쳐서 명시 RAM의 1.5~2배
+    실제 압박 발생. medium은 6GB 명시지만 실제로 12GB+ 압박. 16GB Mac에서 OS·브라우저·
+    VS Code 띄운 상태면 medium 추론 중 swap 폭발. small이 모든 환경에서 안정적이고
+    품질도 충분. 사용자가 원하면 MODEL 필드로 직접 medium/large 선택."""
     return "musicgen-small"
 
 
@@ -234,7 +235,7 @@ def main():
     ram_gb = _system_ram_gb()
     if not requested:
         requested = _recommend_model(ram_gb)
-        _log(f"시스템 RAM {ram_gb:.0f}GB → 추천 모델: {requested}", "info")
+        _log(f"시스템 RAM {ram_gb:.0f}GB → 안전하게 {requested} 선택 (medium/large는 ⚙️ MODEL 필드에서 직접 지정)", "info")
 
     if requested not in MODELS:
         print(f"❌ 알 수 없는 MODEL: {requested}")

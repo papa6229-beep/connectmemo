@@ -17184,13 +17184,16 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             this._view?.webview.postMessage({ type: 'streamChunk', value: headerMsg });
 
             try {
+                /* v2.89.77 — 60초 → 25분. 음악 생성·모델 설치·영상 합치기처럼 시간이
+                   오래 걸리는 도구가 chat 경로로도 실행됨. dispatch 경로(line 16386)와
+                   맞추는 게 자연스러움. 짧은 명령은 어차피 빨리 끝나니까 손해 없음. */
                 const result = await runCommandCaptured(cmd, rootPath, (chunk) => {
                     this._view?.webview.postMessage({ type: 'streamChunk', value: chunk });
-                });
+                }, 25 * 60 * 1000);
                 this._view?.webview.postMessage({ type: 'streamChunk', value: '\n```\n' });
 
                 const status = result.timedOut
-                    ? '⏱️ 60초 시간 초과로 중단됨'
+                    ? '⏱️ 25분 시간 초과로 중단됨'
                     : result.exitCode === 0
                         ? '✅ 종료 코드 0'
                         : `❌ 종료 코드 ${result.exitCode}`;

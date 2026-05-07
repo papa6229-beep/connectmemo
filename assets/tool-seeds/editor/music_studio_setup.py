@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# version: music_v3
 """음악 스튜디오 — 다중 모델 지원 원클릭 설치.
 
 선택 가능한 모델 (디스크·메모리·품질 트레이드오프):
@@ -155,13 +156,25 @@ def _install_transformers_model(model_key, install_dir):
         return False, "pip install 실패"
 
     # 모델 weight 다운로드
+    # v2.89.74 — transformers/HF Hub의 verbose 로그 억제. 이전엔 사용자한테
+    # "decoder.model.decoder.embed_positions.weights | UNEXPECTED" 같은 내부 로그 노출돼 혼란.
     _log(f"모델 다운로드 중: {info['hf_id']} ({info['disk_gb']}GB)...")
-    download_script = (
-        "from transformers import MusicgenForConditionalGeneration, AutoProcessor; "
-        f"AutoProcessor.from_pretrained('{info['hf_id']}'); "
-        f"MusicgenForConditionalGeneration.from_pretrained('{info['hf_id']}'); "
-        "print('✅ 모델 다운로드 완료')"
-    )
+    download_script = f"""
+import os
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
+import logging, warnings
+logging.getLogger('transformers').setLevel(logging.ERROR)
+logging.getLogger('huggingface_hub').setLevel(logging.WARNING)
+warnings.filterwarnings('ignore')
+print('🔧 라이브러리 로드 중...', flush=True)
+from transformers import MusicgenForConditionalGeneration, AutoProcessor
+print('🔧 토크나이저/프로세서 다운로드 중...', flush=True)
+AutoProcessor.from_pretrained('{info['hf_id']}')
+print('🔧 모델 weight 다운로드 중 (대용량, 시간 걸림)...', flush=True)
+MusicgenForConditionalGeneration.from_pretrained('{info['hf_id']}')
+print('✅ 모델 다운로드·로드 검증 완료')
+"""
     if not _run([venv_python, "-c", download_script]):
         return False, "모델 다운로드 실패 — 인터넷 연결 확인"
 
@@ -264,17 +277,25 @@ def main():
         cfg["ACE_STEP_DIR"] = os.path.join(install_dir, "ace-step")
     _save_config(cfg)
 
-    print(f"✅ 음악 스튜디오 설치 완료")
-    print(f"  🎵 모델: {info['label']}")
-    print(f"  📁 위치: {install_dir}")
-    print(f"  💾 디스크 사용: ~{info['disk_gb']}GB")
-    print(f"  🎼 다음: 'music_generate.py' 실행해서 첫 BGM 생성")
+    # v2.89.74 — 깔끔한 시각적 완료 카드
     print()
-    print(f"💡 다른 모델로 바꾸고 싶으면:")
-    print(f"  ⚙️ → MODEL 필드를 다음 중 하나로 변경 후 이 도구 다시 실행:")
-    for k, m in MODELS.items():
-        marker = " ← 현재" if k == requested else ""
-        print(f"  - {k}: {m['label']}{marker}")
+    print("━" * 50)
+    print(f"🎉 음악 스튜디오 설치 완료!")
+    print("━" * 50)
+    print()
+    print(f"📦 무엇이 깔렸나:")
+    print(f"   • 모델:   {info['label']}")
+    print(f"   • 위치:   {install_dir}")
+    print(f"   • 디스크: ~{info['disk_gb']}GB 사용 중")
+    print()
+    print(f"🎼 이제 뭐 할 수 있나:")
+    print(f"   • 'music_generate.py' ▶ 클릭 → 30초 BGM 생성")
+    print(f"   • 'music_to_video.py' ▶ 클릭 → 영상에 BGM 합성")
+    print()
+    print(f"⚙️  모델 바꾸고 싶으면 ⚙️ → MODEL 드롭다운에서 선택 → 이 도구 다시 ▶")
+    print()
+    print(f"💡 위 로그에 'WARNING / UNEXPECTED' 보였어도 무시해도 됩니다 —")
+    print(f"   transformers 라이브러리 내부 메시지. 설치는 정상 완료.")
 
 
 if __name__ == "__main__":

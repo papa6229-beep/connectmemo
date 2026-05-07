@@ -5529,8 +5529,8 @@ function _seedAgentToolsIfMissing(agentId: string) {
 }
 
 /* v2.89.68 — Editor (사운드) 에이전트 시드 함수들. assets/tool-seeds/editor/ 의 .py·.md 파일을
-   회사 폴더의 _agents/editor/tools/ 로 복사. sentinel은 'music_v2' — 향후 ACE-Step XL 지원
-   추가 시 'music_v2'로 올려서 자동 업그레이드. */
+   회사 폴더의 _agents/editor/tools/ 로 복사. sentinel은 'music_v3' — 향후 ACE-Step XL 지원
+   추가 시 'music_v3'로 올려서 자동 업그레이드. */
 function _seedEditorMusicStudioSetup(toolsDir: string) {
   const py = _loadToolSeed('editor/music_studio_setup.py');
   const md = _loadToolSeed('editor/music_studio_setup.md');
@@ -5559,9 +5559,9 @@ function _seedEditorMusicStudioSetup(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.py'), py, 'music_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.py'), py, 'music_v3');
   _seedFile(path.join(toolsDir, 'music_studio_setup.json'), json);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.md'), md, 'music_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.md'), md, 'music_v3');
 }
 
 function _seedEditorMusicGenerate(toolsDir: string) {
@@ -5573,9 +5573,9 @@ function _seedEditorMusicGenerate(toolsDir: string) {
     GENRE: '',
     OUTPUT_DIR: '',
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_generate.py'), py, 'music_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_generate.py'), py, 'music_v3');
   _seedFile(path.join(toolsDir, 'music_generate.json'), json);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_generate.md'), md, 'music_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_generate.md'), md, 'music_v3');
 }
 
 function _seedEditorMusicToVideo(toolsDir: string) {
@@ -5587,9 +5587,9 @@ function _seedEditorMusicToVideo(toolsDir: string) {
     BGM_VOLUME: 0.3,
     OUTPUT_PATH: '',
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_to_video.py'), py, 'music_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_to_video.py'), py, 'music_v3');
   _seedFile(path.join(toolsDir, 'music_to_video.json'), json);
-  _seedFileForceUpgrade(path.join(toolsDir, 'music_to_video.md'), md, 'music_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'music_to_video.md'), md, 'music_v3');
 }
 
 function _seedFile(p: string, content: string) {
@@ -16348,14 +16348,32 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                                 let lineBuf = '';
                                 let lastFlush = 0;
                                 const FLUSH_MS = 100;
+                                /* v2.89.74 — 라이브러리 내부 noise 필터. 사용자한테 의미 없는 줄은
+                                   채팅창에 안 보이게 (transformers LOAD REPORT, ANSI escape, HF auth
+                                   warning 등). 진짜 진행상황은 통과. */
+                                const noisePatterns = [
+                                    /\[transformers\]/,
+                                    /MusicgenForConditionalGeneration LOAD REPORT/,
+                                    /^\s*Key\s+\|\s+Status/,
+                                    /^\s*-+\+-+\+-+\+/,
+                                    /\bUNEXPECTED\b.*\|/,
+                                    /^\s*Notes:\s*$/,
+                                    /^\s*-\s*UNEXPECTED:/,
+                                    /You are sending unauthenticated requests to the HF Hub/,
+                                    /Please set a HF_TOKEN/,
+                                    /\x1b\[\d+m/,  /* ANSI color codes */
+                                ];
+                                const isNoise = (line: string) => noisePatterns.some(re => re.test(line));
                                 const flushChunk = (text: string, force = false) => {
                                     lineBuf += text;
-                                    /* 줄 단위로 끊어서 보냄 */
                                     const lines = lineBuf.split('\n');
-                                    /* 마지막 partial 라인은 buffer에 남김 (force일 때만 flush) */
                                     if (!force) lineBuf = lines.pop() || '';
                                     else lineBuf = '';
-                                    const out = lines.filter(l => l.trim()).join('\n');
+                                    /* ANSI escape 제거 + noise 필터 + 빈 줄 제거 */
+                                    const clean = lines
+                                        .map(l => l.replace(/\x1b\[[0-9;]*m/g, ''))
+                                        .filter(l => l.trim() && !isNoise(l));
+                                    const out = clean.join('\n');
                                     if (!out) return;
                                     const now = Date.now();
                                     if (force || now - lastFlush > FLUSH_MS) {

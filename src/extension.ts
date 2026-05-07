@@ -5585,14 +5585,17 @@ function _seedYouTubeTrendSniper(toolsDir: string) {
 /* v2.89.70 sentinel — Auto Planner에 첫 실행 검증 + blocking 명확 안내 추가. 자동 업그레이드. */
 function _seedYouTubeAutoPlanner(toolsDir: string) {
   const py = _loadToolSeed('youtube/auto_planner.py');
+  /* v2.89.71 — 24시간 자율 모드 디폴트. TOTAL_RUN_HOURS: 0 = 무한 반복 (사용자가 멈출 때까지).
+     INTERVAL_HOURS 6 = 하루 4번 = YouTube API 일일 quota(10000 unit) 안전권. */
   const json = JSON.stringify({
-    INTERVAL_HOURS: 2,
-    TOTAL_RUN_HOURS: 8,
+    INTERVAL_HOURS: 6,
+    TOTAL_RUN_HOURS: 0,
   }, null, 2);
   const md = _loadToolSeed('youtube/auto_planner.md');
-  _seedFileForceUpgrade(path.join(toolsDir, 'auto_planner.py'), py, '검증 중');
+  /* v2.89.71 sentinel — 24시간 자율 모드 (TOTAL_RUN_HOURS=0 무한). 자동 업그레이드. */
+  _seedFileForceUpgrade(path.join(toolsDir, 'auto_planner.py'), py, '24시간 자율 모드');
   _seedFile(path.join(toolsDir, 'auto_planner.json'), json);
-  _seedFile(path.join(toolsDir, 'auto_planner.md'), md);
+  _seedFileForceUpgrade(path.join(toolsDir, 'auto_planner.md'), md, '24시간 자율 모드');
 }
 
 /* ─── Shared YouTube account/channel config ────────────────────────────────

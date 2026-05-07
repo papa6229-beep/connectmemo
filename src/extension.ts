@@ -1611,7 +1611,7 @@ function _buildCapabilityReport(): string {
     /* LLM 기반 에이전트들 — 항상 가능 */
     agentSummary.push('  🎨 *디자이너* — ✅ 시안 카피·무드보드·브랜드 컬러 가이드');
     agentSummary.push('  ✍️ *작가* — ✅ 후크·스크립트·블로그·영상 카피');
-    agentSummary.push('  🎬 *편집자* — ✅ 영상 컷·자막·B-roll 디렉션');
+    agentSummary.push('  🎵 *사운드* — ✅ BGM 자동 생성·영상-음악 합성·사운드 디자인');
     agentSummary.push('  💼 *비즈니스* — ✅ 가격·KPI·전략 분석');
     agentSummary.push('  🛠 *개발자* — ✅ 사이트·자동화·API 코드');
     agentSummary.push('  🔍 *리서처* — ✅ 트렌드·경쟁사·사실 확인');
@@ -5108,19 +5108,20 @@ ${_GOAL_PREAMBLE}
 ## 작업 원칙
 - "정리"보다 "다음 액션 1개" 명시가 우선
 `,
-  editor: `# ✂️ Editor 에이전트 — 나의 미션
+  editor: `# 🎵 사운드(Editor) 에이전트 — 나의 미션
 
 ${_GOAL_PREAMBLE}
 ## 장기 목표 (3~6개월)
-- 영상 편집 디렉션 템플릿 (오프닝·B-roll·아웃트로) 표준화
-- 평균 컷 리듬·자막 톤 가이드 확립
+- 영상 톤별 BGM 라이브러리 구축 (cinematic·lo-fi·ambient·edm 등)
+- 채널 시그니처 사운드 (오프닝/엔딩 BGM) 정착
 
 ## 이번 주 목표
-- 최근 영상 1편 컷·자막·B-roll 디렉션 작성
-- 스크립트 1편 다듬기 (불필요 문장 제거)
+- 최근 영상 1편에 어울리는 BGM 1곡 자동 생성 + 합성
+- 다음 영상 5편의 무드 키워드(장르/BPM/분위기) 미리 잡아두기
 
 ## 작업 원칙
-- 막연한 "다듬어줘" X — 시간 코드 + 구체 액션
+- 막연한 "신나는 곡" X — 장르·BPM·길이 명시
+- 영상 길이에 맞춰 BGM loop/fade 자동 결정
 `,
   writer: `# ✍️ Writer 에이전트 — 나의 미션
 
@@ -5417,9 +5418,9 @@ const AGENT_TOOLS_CATALOG: Record<string, { tool: string; desc: string }[]> = {
         { tool: 'email_triage', desc: 'IMAP/Gmail 분류 + 답장 초안' }
     ],
     editor: [
-        { tool: 'ffmpeg_runner', desc: '컷·자막·B-roll 합성' },
-        { tool: 'whisper_local', desc: '로컬 자막 생성 (오프라인)' },
-        { tool: 'reframe_9_16', desc: '16:9 → 9:16 자동 리프레임 (릴스/숏츠)' }
+        { tool: 'music_studio_setup', desc: '음악 모델 설치 (MusicGen / ACE-Step)' },
+        { tool: 'music_generate', desc: 'BGM 자동 생성 (장르·길이 지정)' },
+        { tool: 'music_to_video', desc: '생성된 BGM을 영상에 합성 (loop/fade)' }
     ],
     writer: [
         { tool: 'tone_learner', desc: '사용자 과거 글 학습 → 톤 복제' },

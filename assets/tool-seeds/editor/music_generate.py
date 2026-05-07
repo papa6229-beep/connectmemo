@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# version: music_v4
 """BGM 생성 — 설치된 모델에 따라 자동 dispatch.
 
 music_studio_setup.py 로 설치한 모델(MusicGen / ACE-Step)을 자동 감지해서

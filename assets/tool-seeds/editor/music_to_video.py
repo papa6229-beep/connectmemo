@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# version: music_v3
 """생성된 BGM을 영상에 합치기 (ffmpeg 래퍼).
 
 설정에서 VIDEO_PATH 지정 (또는 LAST_GENERATED 자동 사용).

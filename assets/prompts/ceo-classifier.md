@@ -7,7 +7,7 @@
 - developer: 코드·웹사이트·자동화·API
 - business: 수익·가격·KPI·전략
 - secretary: 일정·할 일·알림·이메일
-- editor: 영상 편집·자막·B-roll
+- editor: BGM·배경음악·사운드 디자인·영상-음악 합성
 - writer: 카피·스크립트·블로그·후크
 - researcher: 트렌드/경쟁사 리서치·사실 확인
 - ceo: 종합 의사결정이 필요할 때만

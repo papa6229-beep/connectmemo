@@ -7,7 +7,7 @@
 - developer (Lead Engineer)           : 코드, 자동화, API, 웹사이트, 데이터 파이프라인
 - business  (Head of Business)        : 수익화, 가격, 비즈니스 전략·분석, KPI
 - secretary (Personal Assistant)      : 일정·할 일, 작업 요약, 텔레그램 보고, 데일리 브리핑
-- editor    (Video & Content Editor)  : 영상 편집, 컷 구성, B-roll, 자막·타이틀, 폴리싱
+- editor    (Sound Director & Composer): BGM 자동 생성(MusicGen/ACE-Step), 사운드 디자인, 영상-음악 합성, 오디오 후처리
 - writer    (Copywriter)              : 카피라이팅, 영상 스크립트, 캡션, 블로그, 후크
 - researcher(Trend & Data Researcher) : 트렌드/경쟁사 리서치, 데이터 수집·요약, 사실 확인
 

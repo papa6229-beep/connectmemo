@@ -16342,12 +16342,35 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                         const execLogs: string[] = [];
                         for (const cmd of cmds) {
                             try {
-                                /* spawnSync via runCommandCaptured-style — capture stdout */
-                                const r = await runCommandCaptured(cmd, cwd, () => { /* silent during exec */ }, 90000);
-                                const status = r.timedOut ? '⏱️ 90초 초과' : (r.exitCode === 0 ? '✅' : `❌ exit ${r.exitCode}`);
+                                /* v2.89.73 — 실시간 진행상황 streaming. 이전엔 명령 끝난 후에야 출력 보였음
+                                   (5~15분 음악 모델 설치 시 사용자가 "뭐가 되고 있나?" 답답). 이제 stdout/
+                                   stderr 라인 단위로 채팅창에 흘림. 라인이 너무 빠르면 100ms throttle. */
+                                let lineBuf = '';
+                                let lastFlush = 0;
+                                const FLUSH_MS = 100;
+                                const flushChunk = (text: string, force = false) => {
+                                    lineBuf += text;
+                                    /* 줄 단위로 끊어서 보냄 */
+                                    const lines = lineBuf.split('\n');
+                                    /* 마지막 partial 라인은 buffer에 남김 (force일 때만 flush) */
+                                    if (!force) lineBuf = lines.pop() || '';
+                                    else lineBuf = '';
+                                    const out = lines.filter(l => l.trim()).join('\n');
+                                    if (!out) return;
+                                    const now = Date.now();
+                                    if (force || now - lastFlush > FLUSH_MS) {
+                                        post({ type: 'response', value: `\`\`\`\n${out.slice(-2000)}\n\`\`\`` });
+                                        lastFlush = now;
+                                    }
+                                };
+                                /* 90초 → 25분(설치류 대비). music_studio_setup, project_scaffold 같은 게
+                                   시간 오래 걸려도 끊기지 않게. */
+                                const r = await runCommandCaptured(cmd, cwd, (chunk) => flushChunk(chunk), 25 * 60 * 1000);
+                                if (lineBuf.trim()) flushChunk('', true);
+                                const status = r.timedOut ? '⏱️ 25분 초과' : (r.exitCode === 0 ? '✅' : `❌ exit ${r.exitCode}`);
                                 const trimmedOut = (r.output || '').trim().slice(0, 4000);
                                 execLogs.push(`### 🔧 실행: \`${cmd.slice(0, 100)}\`\n\`\`\`\n${trimmedOut}\n\`\`\`\n_${status}_`);
-                                /* 도구 실행 결과를 텔레그램에도 미러 (사용자가 진행 보임) */
+                                post({ type: 'response', value: `${status} 명령 완료: \`${cmd.slice(0, 80)}\`` });
                                 if (this._telegramMirrorPending) {
                                     sendTelegramReport(`🔧 *${a.emoji} ${a.name}* 도구 실행 ${status}\n\n\`\`\`\n${trimmedOut.slice(0, 1500)}\n\`\`\``).catch(() => {});
                                 }

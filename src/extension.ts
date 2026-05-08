@@ -5674,6 +5674,7 @@ function _seedYouTubeAutoPlanner(toolsDir: string) {
    only enters their API key / channels / Telegram once. */
 function _seedYouTubeAccount(toolsDir: string) {
   const py = _loadToolSeed('youtube/youtube_account.py');
+  /* v2.89.81 — _schema 추가. 폼 렌더가 hint를 자동으로 표시. */
   const json = JSON.stringify({
     YOUTUBE_API_KEY: '',
     MY_CHANNEL_HANDLE: '',
@@ -5684,13 +5685,57 @@ function _seedYouTubeAccount(toolsDir: string) {
     TELEGRAM_CHAT_ID: '',
     OLLAMA_URL: 'http://127.0.0.1:11434',
     MODEL: '',
+    _schema: {
+      YOUTUBE_API_KEY: { label: '🔑 YouTube Data API 키', hint: 'Google Cloud Console → API & Services → 사용자 인증 정보에서 발급. 트렌드/통계 조회용 (일일 quota 10,000).' },
+      MY_CHANNEL_HANDLE: { label: '📺 내 채널 핸들', hint: '@로 시작하는 채널 핸들 (예: @leoyt). 안 적어도 ID만 있으면 동작.' },
+      MY_CHANNEL_ID: { label: '🆔 내 채널 ID', hint: 'UC로 시작하는 24자 ID. studio.youtube.com → 설정 → 채널 → 고급 설정에서 확인.' },
+      WATCHED_CHANNELS: { label: '👀 모니터링 채널들', hint: '내가 정기적으로 추적하고 싶은 채널 핸들. 트렌드 스나이퍼가 새 영상을 잡아옴.' },
+      COMPETITOR_CHANNELS: { label: '🎯 경쟁 채널들', hint: '벤치마킹할 채널 핸들. 비교 분석에 사용.' },
+      TELEGRAM_BOT_TOKEN: { label: '🤖 Telegram Bot 토큰', hint: '@BotFather에서 /newbot으로 발급. 형식: 123456789:AAH...' },
+      TELEGRAM_CHAT_ID: { label: '💬 Telegram Chat ID', hint: '봇과 첫 대화 시작 후 자동 채워짐. 직접 입력하지 않아도 됨.' },
+      OLLAMA_URL: { label: '🧠 LLM 서버 주소', hint: '로컬 Ollama/LM Studio 엔드포인트. 보통 그대로 두면 됨.' },
+      MODEL: { label: '🎚 사용할 모델', hint: '비워두면 설치된 모델 중 가장 작은 것 자동. 직접 지정하려면 모델명 (예: gemma2:2b).' },
+      YOUTUBE_OAUTH_CLIENT_ID: { label: '🔓 OAuth Client ID', hint: 'Google Cloud → OAuth 2.0 클라이언트 ID. 댓글 답글·통계 등 인증 필요한 기능에 사용.' },
+      YOUTUBE_OAUTH_CLIENT_SECRET: { label: '🔐 OAuth Client Secret', hint: 'OAuth 클라이언트 ID와 같이 발급되는 비밀 키. Authorized redirect URI: http://127.0.0.1:5814/yt-oauth-callback' },
+    },
   }, null, 2);
   const md = _loadToolSeed('youtube/youtube_account.md');
   _seedFile(path.join(toolsDir, 'youtube_account.py'), py);
-  _seedFile(path.join(toolsDir, 'youtube_account.json'), json);
+  /* Force-upgrade JSON so existing users get the new _schema. 사용자가 이미 입력한
+     값은 보존하고 _schema만 머지하는 게 이상적이지만, _schema는 사용자가 편집하지
+     않는 메타라 통째 덮어써도 안전. 단, 사용자 값이 있으면 보존해야 함 — 여기서
+     _seedFileForceUpgrade는 sentinel 없으면 통째 덮어쓰니까 사용자 값이 날아감.
+     그래서 별도 머지 함수 호출. */
+  _mergeSchemaIntoJson(path.join(toolsDir, 'youtube_account.json'), json);
   /* Force-upgrade to surface the new Secretary-canonical guidance to users
      on older versions. Sentinel = the new section header. */
   _seedFileForceUpgrade(path.join(toolsDir, 'youtube_account.md'), md, '비서(Secretary)에 입력');
+}
+
+/* JSON 시드 파일에 새 _schema를 머지. 사용자가 입력한 값은 절대 건드리지 않고,
+   _schema만 항상 최신으로 갱신. fresh에 새로 추가된 키는 빈 값으로 추가하고,
+   existing에만 있는 키도 보존 (예: 나중에 OAuth flow가 추가한 토큰). */
+function _mergeSchemaIntoJson(p: string, freshJson: string) {
+  if (!fs.existsSync(p)) {
+    fs.writeFileSync(p, freshJson);
+    return;
+  }
+  try {
+    const fresh = JSON.parse(freshJson);
+    const existing = JSON.parse(fs.readFileSync(p, 'utf-8') || '{}');
+    /* 1) existing의 모든 키 그대로 보존 (OAuth 토큰처럼 동적으로 추가된 값 포함) */
+    const merged: Record<string, any> = { ...existing };
+    /* 2) fresh에만 있는 새 키는 빈 값으로 추가 */
+    for (const k of Object.keys(fresh)) {
+      if (k === '_schema') continue;
+      if (!(k in merged)) merged[k] = fresh[k];
+    }
+    /* 3) _schema는 항상 최신 fresh로 덮어쓰기 (사용자가 편집하지 않는 메타) */
+    merged['_schema'] = fresh['_schema'];
+    fs.writeFileSync(p, JSON.stringify(merged, null, 2));
+  } catch {
+    fs.writeFileSync(p, freshJson);
+  }
 }
 
 /* ─── My Videos Check — own channel performance (pro_v1) ────────────────────
@@ -9242,10 +9287,11 @@ class CompanyDashboardPanel {
                     const cleanName = dn.replace(/^[\p{Extended_Pictographic}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\s*/u, '').slice(0, 18);
                     const schema = (t as any).configSchema || [];
                     const locked = schema.some((f: any) => f.type === 'password' && (!f.value || String(f.value).trim() === ''));
-                    /* 도구 자체 config — 메타 키(_) 제외, 사용자가 편집할 수 있는 키만 */
+                    /* 도구 자체 config — 메타 키(_) 제외, 사용자가 편집할 수 있는 키만.
+                       v2.89.81 — _schema는 통과시켜서 폼이 hint·label 렌더에 사용. */
                     const cleanConfig: Record<string, any> = {};
                     for (const [k, v] of Object.entries(t.config || {})) {
-                        if (k.startsWith('_')) continue;
+                        if (k.startsWith('_') && k !== '_schema') continue;
                         cleanConfig[k] = v;
                     }
                     /* YouTube 도구들은 youtube_account.json도 같이 쓰니까 일부 키가 거기서

@@ -312,15 +312,19 @@ function showSkillDetail(agent, skill){
      쓸지 분기. 폼은 ⚙️ 토글로 펼침/접힘. */
   const configFields = [];
   const cfg = skill.config || {};
+  /* v2.89.81 — _schema를 통과 받아 hint·label·options 메타로 사용. */
+  const toolSchema = (cfg && typeof cfg._schema === 'object' && cfg._schema) || {};
+  const sharedSchema = (skill.sharedConfig && typeof skill.sharedConfig._schema === 'object' && skill.sharedConfig._schema) || {};
   for (const [k, v] of Object.entries(cfg)) {
-    configFields.push({ key: k, value: v, source: 'tool' });
+    if (k === '_schema' || k.startsWith('_')) continue;
+    configFields.push({ key: k, value: v, source: 'tool', meta: toolSchema[k] || null });
   }
   if (skill.sharedConfig) {
     for (const [k, v] of Object.entries(skill.sharedConfig)) {
       if (k.startsWith('_')) continue;
       /* 도구 자체 config에 같은 키 있으면 도구 우선 */
       if (configFields.find(f => f.key === k)) continue;
-      configFields.push({ key: k, value: v, source: 'shared' });
+      configFields.push({ key: k, value: v, source: 'shared', meta: sharedSchema[k] || null });
     }
   }
   function renderConfigForm() {
@@ -328,22 +332,38 @@ function showSkillDetail(agent, skill){
     return '<div class="adm-skill-detail-form" id="admSkillForm">'
       + '<div class="adm-skill-detail-form-head">⚙️ 도구 설정 <span class="adm-skill-detail-form-sub">바로 편집 후 저장 → 다음 실행에 반영</span></div>'
       + configFields.map((f, i) => {
+          const meta = f.meta || {};
           const lower = String(f.key).toLowerCase();
           const isSecret = /key|token|secret|password/.test(lower);
           const isList = Array.isArray(f.value);
-          const isMultiline = isList || (typeof f.value === 'string' && f.value.length > 60);
+          const isSelect = meta.type === 'select' && Array.isArray(meta.options);
+          const isMultiline = isList || (!isSelect && typeof f.value === 'string' && f.value.length > 60);
           let valStr = '';
           if (isList) valStr = (f.value || []).join('\n');
           else if (typeof f.value === 'string') valStr = f.value;
           else if (f.value == null) valStr = '';
           else valStr = String(f.value);
-          const helpHint = isList ? '한 줄에 한 개씩 (예: @channel_a 다음 줄에 @channel_b)' : '';
+          /* v2.89.81 — meta.hint 우선. 없으면 list 기본 안내. */
+          const helpHint = meta.hint || (isList ? '한 줄에 한 개씩 (예: @channel_a 다음 줄에 @channel_b)' : '');
+          const labelText = meta.label || f.key;
           const sharedTag = f.source === 'shared' ? '<span class="adm-skill-detail-form-shared" title="공유 파일 (다른 YouTube 도구도 함께 사용): '+esc(skill.sharedConfigName||'shared')+'">🔗 공유</span>' : '';
-          return '<div class="adm-skill-detail-form-field" data-key="'+esc(f.key)+'" data-source="'+f.source+'" data-list="'+(isList?'1':'0')+'">'
-            + '<label class="adm-skill-detail-form-label">'+esc(f.key)+sharedTag+'</label>'
-            + (isMultiline
-                ? '<textarea class="adm-skill-detail-form-input" rows="3">'+esc(valStr)+'</textarea>'
-                : '<input class="adm-skill-detail-form-input" type="'+(isSecret?'password':'text')+'" value="'+esc(valStr)+'" />')
+          let inputHtml = '';
+          if (isSelect) {
+            const opts = meta.options.map(function(o){
+              const ov = (typeof o === 'object' && o !== null) ? o.value : o;
+              const ol = (typeof o === 'object' && o !== null) ? (o.label || o.value) : o;
+              const sel = String(ov) === String(valStr) ? ' selected' : '';
+              return '<option value="'+esc(String(ov))+'"'+sel+'>'+esc(String(ol))+'</option>';
+            }).join('');
+            inputHtml = '<select class="adm-skill-detail-form-input">'+opts+'</select>';
+          } else if (isMultiline) {
+            inputHtml = '<textarea class="adm-skill-detail-form-input" rows="3">'+esc(valStr)+'</textarea>';
+          } else {
+            inputHtml = '<input class="adm-skill-detail-form-input" type="'+(isSecret?'password':'text')+'" value="'+esc(valStr)+'" />';
+          }
+          return '<div class="adm-skill-detail-form-field" data-key="'+esc(f.key)+'" data-source="'+f.source+'" data-list="'+(isList?'1':'0')+'" data-select="'+(isSelect?'1':'0')+'">'
+            + '<label class="adm-skill-detail-form-label">'+esc(labelText)+sharedTag+'</label>'
+            + inputHtml
             + (helpHint ? '<div class="adm-skill-detail-form-help">'+esc(helpHint)+'</div>' : '')
             + '</div>';
         }).join('')

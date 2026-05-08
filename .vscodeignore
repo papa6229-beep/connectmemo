@@ -7,13 +7,11 @@
 .env.*
 ARCHITECTURE.md
 src/**
-# v2.89.58 — 개발용 헬퍼 스크립트와 별도 사이트 자산 제외 (Open VSX security scan 트리거).
-# extension_download_site/ 안에 옛날 vsix 파일이 같이 들어가 있어서 "recursive package"로 의심받음.
-# v2.89.83 — mock-vscode/fix_unicode/restore_html/brain-viz/idea1_script_draft 모두 삭제됨.
+# v2.89.84 — extension_download_site/ 와 releases/ 디렉토리 삭제됨.
+# scripts/cycle.js 는 standalone 24h cron 옵션 도구로 유지 (vsix 제외).
 scripts/**
-extension_download_site/**
 system_schema.json
-# v2.89.83 — 한글 파일명이 vsix에 깨진 상태로 들어가던 튜토리얼 docs 제외.
+# 한글 파일명이 vsix에 깨진 상태로 들어가던 튜토리얼 docs 제외.
 **/*.md
 !readme.md
 !README.md
@@ -45,4 +43,3 @@ preview.html
 # Nested duplicate copies (user dragged folders into multiple paths)
 assets/pixel/characters/Modern_Office_Revamped_v1/**
 assets/pixel/characters/moderninteriors-win/**
-releases/**

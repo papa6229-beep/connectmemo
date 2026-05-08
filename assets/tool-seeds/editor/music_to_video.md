@@ -1,3 +1,4 @@
+<!-- version: music_v3 -->
 # 🎬 영상 + BGM 합성
 
 생성한 BGM을 영상에 자동으로 합쳐서 새 mp4 만들기. ffmpeg 사용.

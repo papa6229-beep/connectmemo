@@ -1,3 +1,4 @@
+<!-- version: music_v4 -->
 # 🎵 BGM 생성 — ACE-Step
 
 영상에 어울리는 BGM을 텍스트 프롬프트로 생성. ACE-Step 1.5 로컬 모델 사용.

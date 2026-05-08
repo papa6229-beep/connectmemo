@@ -5370,52 +5370,65 @@ function setToolEnabled(agentId: string, toolName: string, enabled: boolean) {
   fs.writeFileSync(p, JSON.stringify(config, null, 2));
 }
 
-/** Catalog of tools each specialist will eventually own. Drives the `tools.md`
- *  manifest seeding. Real implementations land iteratively — this file
- *  declares "what's coming" so the user can already pick autonomy levels. */
-const AGENT_TOOLS_CATALOG: Record<string, { tool: string; desc: string }[]> = {
+/** Catalog of tools each specialist owns or is planned to own. Drives the
+ *  `tools.md` manifest the user reads. Items marked `planned: true` are
+ *  roadmap-only — they don't actually exist as .py seeds yet. The LLM never
+ *  sees this list (it sees `listAgentTools()` from disk instead), so this is
+ *  purely user-facing documentation.
+ *
+ *  v2.89.82 — 미구현 도구를 명확히 구분. 이전엔 instagram/designer/developer/
+ *  business/writer/researcher 의 카탈로그 도구가 모두 "있는 것처럼" 표시돼서
+ *  사용자가 _agents/<id>/tools.md 열고 "왜 작동 안 하지?" 혼란 발생. */
+const AGENT_TOOLS_CATALOG: Record<string, { tool: string; desc: string; planned?: boolean }[]> = {
     ceo: [
-        { tool: 'approval_gate', desc: '위험 액션(deploy/post/send/rm) 사용자 승인 게이트' },
-        { tool: 'team_briefing', desc: '주간 전체 회의 자동 진행 + 회의록 정리' },
-        { tool: 'router', desc: '사용자 명령 → 적합한 specialist로 분배' }
+        { tool: 'approval_gate', desc: '위험 액션(deploy/post/send/rm) 사용자 승인 게이트', planned: true },
+        { tool: 'team_briefing', desc: '주간 전체 회의 자동 진행 + 회의록 정리', planned: true },
+        { tool: 'router', desc: '사용자 명령 → 적합한 specialist로 분배 (CEO 클래시파이어 내장)' }
     ],
     youtube: [
-        { tool: 'youtube_account', desc: 'YouTube Data API v3 OAuth 연결' },
-        { tool: 'comment_replier', desc: '댓글 분류 + 답글 초안 (Draft 레벨에서 동작)' },
-        { tool: 'video_uploader', desc: '제목·태그·썸네일·예약발행 업로드' },
-        { tool: 'analytics_pull', desc: '주간 인사이트 (조회수·시청 지속률·구독 전환)' },
-        { tool: 'trend_sniper', desc: '내 분야 트렌드 → Writer에게 아이디어 전달' }
+        { tool: 'youtube_account', desc: 'YouTube Data API v3 + OAuth 연결' },
+        { tool: 'trend_sniper', desc: '키워드 기반 떡상 영상 패턴 분석' },
+        { tool: 'auto_planner', desc: '트렌드 스나이퍼 무인 반복 실행 (24시간 자율)' },
+        { tool: 'my_videos_check', desc: '내 채널 영상 성과 종합 분석' },
+        { tool: 'channel_full_analysis', desc: '채널 전체 그림 — 메타·업로드 패턴·참여율' },
+        { tool: 'comment_harvester', desc: '감시 채널 댓글 → memory.md 누적' },
+        { tool: 'competitor_brief', desc: '경쟁 채널 → 지시문 형식 다음 액션' },
+        { tool: 'telegram_notify', desc: '다른 도구 보고를 메신저로 자동 푸시' },
+        { tool: 'comment_replier', desc: '댓글 분류 + 답글 초안 (Draft 레벨)', planned: true },
+        { tool: 'video_uploader', desc: '제목·태그·썸네일·예약발행 업로드', planned: true },
+        { tool: 'analytics_pull', desc: '주간 인사이트 (조회수·시청 지속률·구독 전환)', planned: true }
     ],
     instagram: [
-        { tool: 'instagram_account', desc: 'Meta Graph API OAuth (비즈니스 계정)' },
-        { tool: 'feed_poster', desc: '피드/스토리/릴스 게시 (Draft → 승인 → 게시)' },
-        { tool: 'dm_responder', desc: 'DM·댓글 분류 + 답글 초안' },
-        { tool: 'insights_pull', desc: '도달·참여·팔로워 추이' }
+        { tool: 'instagram_account', desc: 'Meta Graph API OAuth (비즈니스 계정)', planned: true },
+        { tool: 'feed_poster', desc: '피드/스토리/릴스 게시 (Draft → 승인 → 게시)', planned: true },
+        { tool: 'dm_responder', desc: 'DM·댓글 분류 + 답글 초안', planned: true },
+        { tool: 'insights_pull', desc: '도달·참여·팔로워 추이', planned: true }
     ],
     designer: [
-        { tool: 'image_local', desc: '로컬 SDXL/FLUX 이미지 생성 (오프라인 정체성)' },
-        { tool: 'image_cloud', desc: 'DALL-E/Replicate (Connected 모드 토글)' },
-        { tool: 'brand_check', desc: '브랜드 색상 팔레트·타이포 일관성 검증' },
-        { tool: 'asset_library', desc: '_company/assets/ 자동 정리·태깅' }
+        { tool: 'image_local', desc: '로컬 SDXL/FLUX 이미지 생성 (오프라인 정체성)', planned: true },
+        { tool: 'image_cloud', desc: 'DALL-E/Replicate (Connected 모드 토글)', planned: true },
+        { tool: 'brand_check', desc: '브랜드 색상 팔레트·타이포 일관성 검증', planned: true },
+        { tool: 'asset_library', desc: '_company/assets/ 자동 정리·태깅', planned: true }
     ],
     developer: [
-        { tool: 'project_scaffolder', desc: '_company/projects/<name>/ 폴더 자동 생성 (vite/next/astro)' },
-        { tool: 'dev_server', desc: '자체 dev server + 포트 매니저 + 라이브 미리보기 푸시' },
-        { tool: 'git_committer', desc: '작업 단위 자동 커밋' },
-        { tool: 'deploy_cli', desc: 'Vercel/Netlify/Cloudflare 배포 (deploy --prod는 항상 승인)' },
-        { tool: 'lint_test', desc: '테스트·린트·타입체크 자동 실행' }
+        { tool: 'project_scaffolder', desc: '_company/projects/<name>/ 폴더 자동 생성 (vite/next/astro)', planned: true },
+        { tool: 'dev_server', desc: '자체 dev server + 포트 매니저 + 라이브 미리보기 푸시', planned: true },
+        { tool: 'git_committer', desc: '작업 단위 자동 커밋', planned: true },
+        { tool: 'deploy_cli', desc: 'Vercel/Netlify/Cloudflare 배포 (deploy --prod는 항상 승인)', planned: true },
+        { tool: 'lint_test', desc: '테스트·린트·타입체크 자동 실행', planned: true }
     ],
     business: [
-        { tool: 'revenue_pull', desc: 'Stripe/Toss/PayPal 매출 데이터' },
-        { tool: 'analytics_pull', desc: 'Google Analytics / Plausible 트래픽' },
-        { tool: 'pnl_generator', desc: '월별 P&L 마크다운 자동 생성' }
+        { tool: 'revenue_pull', desc: 'Stripe/Toss/PayPal 매출 데이터', planned: true },
+        { tool: 'analytics_pull', desc: 'Google Analytics / Plausible 트래픽', planned: true },
+        { tool: 'pnl_generator', desc: '월별 P&L 마크다운 자동 생성', planned: true }
     ],
     secretary: [
-        { tool: 'calendar_local', desc: '_agents/secretary/calendar.md (Lv.1 오프라인)' },
-        { tool: 'calendar_caldav', desc: 'CalDAV (iCloud/Google 호환, Connected 토글)' },
-        { tool: 'telegram_bot', desc: '텔레그램 양방향 봇 (이미 활성)' },
-        { tool: 'kakao_alert', desc: '카카오톡 "나에게 보내기" 단방향 알림' },
-        { tool: 'email_triage', desc: 'IMAP/Gmail 분류 + 답장 초안' }
+        { tool: 'telegram_setup', desc: '텔레그램 양방향 봇 (Bot Token + Chat ID)' },
+        { tool: 'google_calendar_write', desc: 'Google Calendar OAuth 읽기·쓰기' },
+        { tool: 'calendar_local', desc: '_agents/secretary/calendar.md (Lv.1 오프라인)', planned: true },
+        { tool: 'calendar_caldav', desc: 'CalDAV (iCloud/Google 호환)', planned: true },
+        { tool: 'kakao_alert', desc: '카카오톡 "나에게 보내기" 단방향 알림', planned: true },
+        { tool: 'email_triage', desc: 'IMAP/Gmail 분류 + 답장 초안', planned: true }
     ],
     editor: [
         { tool: 'music_studio_setup', desc: '음악 모델 설치 (MusicGen / ACE-Step)' },
@@ -5423,14 +5436,14 @@ const AGENT_TOOLS_CATALOG: Record<string, { tool: string; desc: string }[]> = {
         { tool: 'music_to_video', desc: '생성된 BGM을 영상에 합성 (loop/fade)' }
     ],
     writer: [
-        { tool: 'tone_learner', desc: '사용자 과거 글 학습 → 톤 복제' },
-        { tool: 'multi_platform_adapt', desc: '하나의 스크립트 → YouTube/IG/블로그 자동 변환' },
-        { tool: 'hook_library', desc: '후크·CTA 라이브러리 운영' }
+        { tool: 'tone_learner', desc: '사용자 과거 글 학습 → 톤 복제', planned: true },
+        { tool: 'multi_platform_adapt', desc: '하나의 스크립트 → YouTube/IG/블로그 자동 변환', planned: true },
+        { tool: 'hook_library', desc: '후크·CTA 라이브러리 운영', planned: true }
     ],
     researcher: [
-        { tool: 'web_search', desc: 'Brave/DuckDuckGo 검색 (Connected)' },
-        { tool: 'page_fetcher', desc: '본문 추출 + 출처 인용' },
-        { tool: 'monitor_daily', desc: '매일 내 분야 뉴스 → CEO 브리핑' }
+        { tool: 'web_search', desc: 'Brave/DuckDuckGo 검색 (Connected)', planned: true },
+        { tool: 'page_fetcher', desc: '본문 추출 + 출처 인용', planned: true },
+        { tool: 'monitor_daily', desc: '매일 내 분야 뉴스 → CEO 브리핑', planned: true }
     ]
 };
 
@@ -5444,9 +5457,25 @@ function _seedAgentToolsManifestIfMissing(agentId: string) {
         const a = AGENTS[agentId];
         if (!a) return;
         const tools = AGENT_TOOLS_CATALOG[agentId] || [];
-        const toolsBody = tools.length === 0
-            ? '_(이 에이전트는 아직 등록된 도구가 없습니다. 추후 추가 예정.)_'
-            : tools.map(t => `### \`${t.tool}\`\n${t.desc}\n\n- \`enabled\`: true\n- \`requires_credentials\`: \`config.md\` 참조\n`).join('\n');
+        /* v2.89.82 — 실제 시드된 도구와 미구현(planned) 도구를 시각적으로 분리.
+           이전엔 모든 도구를 enabled:true로 광고해서 미구현 도구도 동작하는 것처럼 보였음. */
+        const ready = tools.filter(t => !t.planned);
+        const planned = tools.filter(t => t.planned);
+        const renderTool = (t: { tool: string; desc: string }) =>
+            `### \`${t.tool}\`\n${t.desc}\n\n- \`enabled\`: true\n- \`requires_credentials\`: \`config.md\` 참조\n`;
+        const renderPlanned = (t: { tool: string; desc: string }) =>
+            `### \`${t.tool}\` _(예정)_\n${t.desc}\n\n- 아직 구현되지 않은 도구입니다. 로드맵에 있으며 향후 버전에서 추가 예정.\n`;
+        let toolsBody: string;
+        if (tools.length === 0) {
+            toolsBody = '_(이 에이전트는 아직 등록된 도구가 없습니다. 추후 추가 예정.)_';
+        } else if (ready.length === 0) {
+            toolsBody = '_⚠️ 이 에이전트의 도구는 모두 로드맵 단계입니다. 현재 LLM 추론만 가능하고, 외부 API 호출이나 파일 생성은 아직 동작하지 않습니다._\n\n## 로드맵 (예정)\n\n' + planned.map(renderPlanned).join('\n');
+        } else {
+            toolsBody = ready.map(renderTool).join('\n');
+            if (planned.length > 0) {
+                toolsBody += '\n\n---\n\n## 로드맵 (예정)\n\n_아래 도구들은 향후 버전에서 추가 예정. 지금은 카탈로그에만 있음._\n\n' + planned.map(renderPlanned).join('\n');
+            }
+        }
 
         const body = `# ${a.emoji} ${a.name} — 도구 매니페스트
 

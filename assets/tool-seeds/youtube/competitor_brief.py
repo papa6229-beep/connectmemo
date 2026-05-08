@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# version: telegram_v3
 """Competitor Brief — for every channel in COMPETITOR_CHANNELS, pulls their
 recent top-performing videos and asks the local LLM for a *prescriptive*
 brief: what should YOU do next, given what's working for them.

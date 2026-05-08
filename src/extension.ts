@@ -2160,13 +2160,6 @@ function startReportScheduler() {
     /* 첫 tick은 30초 후 — 활성화 직후 폭주 방지 */
     setTimeout(_scheduleTick, 30_000);
 }
-function stopReportScheduler() {
-    if (_reportSchedulerTimer) {
-        clearInterval(_reportSchedulerTimer);
-        _reportSchedulerTimer = null;
-    }
-}
-
 function startTelegramPolling() {
     if (_telegramPollTimer) return;
     // Restore last known offset so we never replay messages after a restart
@@ -6008,24 +6001,6 @@ function _isCasualChat(text: string): boolean {
     // Pure emoji/laughter
     if (/^[\sㅋㅎ.!?~ㅠㅜ😂🙂😊👍❤️]+$/u.test(t)) return true;
     return false;
-}
-
-/* v2.89.38 — 사용자 명령의 의도 분류. info(데이터 조회)와 creative(창작·기획) 명령을
-   확실히 구분해서 info일 때는 절대 multi-agent로 안 가게 막음. 이전엔 작은 LLM이
-   "내 채널 분석"을 받아서 designer/business까지 분배하는 사고가 났음. */
-type PromptIntent = 'info' | 'creative' | 'unknown';
-function classifyPromptIntent(text: string): PromptIntent {
-    const t = (text || '').trim().toLowerCase();
-    if (!t) return 'unknown';
-    /* 정보 조회 키워드 — 분석/체크/확인/조회/얼마/어때 ... 단 창작 키워드가 동시 등장하면
-       creative 우선 (예: "분석해서 영상 기획해줘" = creative). */
-    const infoSignals = /(분석|체크|상태|알려줘|얼마|어때|어떻게|확인|조회|뭐\s*있어|있어\?|있나|보여줘|봐줘|how\s+is|status|check|analyze|list|show)/i;
-    const creativeSignals = /(만들|생성|기획|디자인|작성|코딩|코드\s*짜|영상\s*기획|썸네일|카피|스크립트|블로그|글\s*써|초안|시안|design|create|generate|build|write|script|plan)/i;
-    const hasInfo = infoSignals.test(t);
-    const hasCreative = creativeSignals.test(t);
-    if (hasCreative) return 'creative';
-    if (hasInfo) return 'info';
-    return 'unknown';
 }
 
 const CEO_REPORT_PROMPT = _loadPrompt('ceo-report.md');
@@ -11148,117 +11123,6 @@ textarea.amd-input{resize:vertical;min-height:50px;line-height:1.45}
 .amd-save-status.success{color:var(--accent);background:rgba(0,255,65,.08)}
 .amd-save-status.error{color:#ef4444;background:rgba(239,68,68,.08)}
 
-/* ════════════════════════════════════════════════════════════════════════
-   Corporate Gate v2 — sci-fi clearance terminal
-   Stage backdrop: dark with drifting hex grid + horizontal scan
-   Modal:         lock crest with rotating ring, PIN-style 4-box input,
-                  status console line, cancel/unlock actions
-   ──────────────────────────────────────────────────────────────────────── */
-/* IMPORTANT — body uses display:flex column. Some webview hosts (Antigravity,
-   older Electron) drop position:fixed back into the flex flow when the
-   element is a child of a flex column body, anchoring it at the bottom-left
-   instead of covering the viewport. Force absolute coverage with !important
-   on every dimension and center via inner flex. */
-.cg-backdrop{position:fixed !important;top:0 !important;right:0 !important;bottom:0 !important;left:0 !important;width:100vw !important;height:100vh !important;inset:0;z-index:99999;display:flex !important;align-items:center;justify-content:center;background:radial-gradient(ellipse at top,rgba(0,30,8,.92) 0%,rgba(0,0,0,.97) 70%);backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);animation:cgBdIn .35s ease-out;padding:24px;overflow-y:auto;box-sizing:border-box}
-.cg-backdrop[hidden]{display:none}
-@keyframes cgBdIn{from{opacity:0;backdrop-filter:blur(0)}to{opacity:1;backdrop-filter:blur(14px)}}
-/* drifting grid */
-.cg-backdrop::before{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(0,255,65,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,65,.045) 1px,transparent 1px);background-size:38px 38px;opacity:.55;animation:cgGrid 22s linear infinite;pointer-events:none}
-@keyframes cgGrid{from{transform:translateY(0)}to{transform:translateY(38px)}}
-/* horizontal scan */
-.cg-backdrop::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 0,transparent 50%,rgba(0,255,65,.07) 50.2%,transparent 51%);background-size:100% 220px;animation:cgScan2 5.5s linear infinite;pointer-events:none;mix-blend-mode:screen}
-@keyframes cgScan2{from{background-position:0 -220px}to{background-position:0 100vh}}
-
-.cg-modal{position:relative;width:min(420px,100%);background:linear-gradient(180deg,rgba(8,14,10,.98),rgba(2,6,3,.995));border:1px solid rgba(0,255,65,.45);border-radius:18px;padding:34px 30px 26px;box-shadow:0 0 0 1px rgba(0,255,65,.08) inset,0 30px 100px rgba(0,0,0,.88),0 0 80px rgba(0,255,65,.22),0 0 160px rgba(0,255,65,.08);animation:cgIn .65s cubic-bezier(.16,1,.3,1);transform-origin:center}
-.cg-modal::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:reportLine 3s ease-in-out infinite;border-top-left-radius:18px;border-top-right-radius:18px}
-/* aura behind the modal */
-.cg-modal::after{content:'';position:absolute;top:-150px;left:50%;transform:translateX(-50%);width:520px;height:520px;background:radial-gradient(circle,rgba(0,255,65,.18) 0%,transparent 60%);pointer-events:none;animation:cgAura 7s ease-in-out infinite alternate;opacity:.6;filter:blur(12px);z-index:-1}
-@keyframes cgAura{0%{opacity:.4;transform:translateX(-50%) scale(.95)}100%{opacity:.75;transform:translateX(-50%) scale(1.05)}}
-.cg-modal.shake{animation:cgShake .5s cubic-bezier(.36,.07,.19,.97);border-color:rgba(239,68,68,.7)}
-.cg-modal.shake::before{background:linear-gradient(90deg,transparent,#ef4444,transparent)}
-@keyframes cgIn{0%{opacity:0;transform:translateY(24px) scale(.93);filter:blur(8px)}60%{opacity:1;transform:translateY(-3px) scale(1.01);filter:blur(0)}100%{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}}
-@keyframes cgShake{0%,100%{transform:translateX(0)}10%{transform:translateX(-9px)}20%{transform:translateX(8px)}30%{transform:translateX(-7px)}40%{transform:translateX(6px)}50%{transform:translateX(-4px)}60%{transform:translateX(3px)}70%{transform:translateX(-2px)}80%{transform:translateX(1px)}}
-
-/* HUD corner brackets — 4 explicit spans, larger and offset slightly inside */
-.cg-corner{position:absolute;width:24px;height:24px;border:1.5px solid var(--accent);pointer-events:none;filter:drop-shadow(0 0 6px var(--accent-glow));opacity:.85}
-.cg-corner.tl{top:14px;left:14px;border-right:none;border-bottom:none}
-.cg-corner.tr{top:14px;right:14px;border-left:none;border-bottom:none}
-.cg-corner.bl{bottom:14px;left:14px;border-right:none;border-top:none}
-.cg-corner.br{bottom:14px;right:14px;border-left:none;border-top:none}
-
-/* Brand bar */
-.cg-brand{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:18px;font-family:'SF Mono','JetBrains Mono',monospace;font-size:9.5px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;opacity:.75;text-shadow:0 0 6px var(--accent-glow)}
-.cg-brand .cg-brand-line{flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(0,255,65,.3),transparent);max-width:80px}
-
-/* Lock crest with spinning ring + glow */
-.cg-crest{position:relative;display:flex;align-items:center;justify-content:center;width:108px;height:108px;margin:0 auto 18px}
-.cg-crest::before,.cg-crest::after{content:'';position:absolute;inset:0;border-radius:50%;border:1.5px solid rgba(0,255,65,.55);border-top-color:transparent;border-right-color:transparent;animation:cgRing 3.5s linear infinite;filter:drop-shadow(0 0 6px var(--accent-glow))}
-.cg-crest::after{inset:10px;border-color:rgba(0,255,65,.35);border-bottom-color:transparent;border-left-color:transparent;animation:cgRing 5s linear infinite reverse}
-@keyframes cgRing{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-.cg-crest .cg-crest-bg{position:absolute;inset:18px;border-radius:50%;background:radial-gradient(circle,rgba(0,255,65,.18),rgba(0,30,10,.6) 70%,transparent);animation:cgCrestPulse 2.4s ease-in-out infinite}
-@keyframes cgCrestPulse{0%,100%{opacity:.7;transform:scale(1)}50%{opacity:1;transform:scale(1.04)}}
-.cg-lock{position:relative;font-size:44px;line-height:1;filter:drop-shadow(0 0 14px var(--accent-glow)) drop-shadow(0 0 28px var(--accent-glow));z-index:2;animation:cgLockBob 3s ease-in-out infinite}
-@keyframes cgLockBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
-
-/* Tag pill */
-.cg-tag{display:inline-flex;align-items:center;gap:7px;font-family:'SF Mono','JetBrains Mono',monospace;font-size:9px;letter-spacing:2.5px;color:var(--accent);text-transform:uppercase;padding:4px 11px;border:1px solid rgba(0,255,65,.3);border-radius:20px;background:rgba(0,255,65,.05);margin:0 auto 14px;text-shadow:0 0 8px var(--accent-glow)}
-.cg-tag-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);animation:cgBlink 1.4s ease-in-out infinite}
-.cg-tag-wrap{display:flex;justify-content:center}
-@keyframes cgBlink{0%,100%{opacity:1}50%{opacity:.3}}
-
-.cg-title{text-align:center;font-size:22px;font-weight:800;letter-spacing:.2px;color:#F8FAFC;text-shadow:0 0 18px rgba(0,255,65,.18);margin-bottom:6px;font-family:inherit}
-.cg-title .cg-title-accent{color:var(--accent);text-shadow:0 0 12px var(--accent-glow)}
-.cg-sub{text-align:center;font-size:12px;color:var(--text-dim);line-height:1.55;margin-bottom:22px;letter-spacing:.2px;max-width:320px;margin-left:auto;margin-right:auto}
-
-/* PIN-style 4-box input. Hidden text input under the hood drives the boxes. */
-.cg-pin-wrap{position:relative;margin-bottom:14px}
-.cg-pin-row{display:flex;justify-content:center;gap:10px;margin-bottom:10px}
-.cg-pin-cell{width:54px;height:62px;border:1.5px solid rgba(0,255,65,.32);border-radius:10px;background:linear-gradient(180deg,rgba(0,28,10,.6),rgba(0,12,4,.8));display:flex;align-items:center;justify-content:center;font-family:'SF Mono',monospace;font-size:24px;color:var(--accent);text-shadow:0 0 10px var(--accent-glow);position:relative;transition:all .25s;overflow:hidden}
-.cg-pin-cell::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at center,rgba(0,255,65,.15),transparent 70%);opacity:0;transition:opacity .3s}
-.cg-pin-cell.active{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,255,65,.1),0 0 18px rgba(0,255,65,.35);background:linear-gradient(180deg,rgba(0,42,14,.7),rgba(0,18,6,.85))}
-.cg-pin-cell.active::before{opacity:1}
-.cg-pin-cell.filled{border-color:var(--accent);box-shadow:0 0 14px rgba(0,255,65,.3) inset}
-/* Caret-like blink line under the active cell */
-.cg-pin-cell.active::after{content:'';position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:18px;height:2px;background:var(--accent);box-shadow:0 0 6px var(--accent);animation:cgCaret 1s steps(1) infinite}
-@keyframes cgCaret{0%,49%{opacity:1}50%,100%{opacity:0}}
-.cg-pin-input{position:absolute;inset:0;opacity:0;width:100%;height:100%;border:none;background:transparent;outline:none;font-size:24px;color:transparent;caret-color:transparent;cursor:pointer}
-.cg-modal.success .cg-pin-cell{border-color:#00cc77;box-shadow:0 0 18px rgba(0,204,119,.5);color:#00cc77;text-shadow:0 0 12px rgba(0,204,119,.7);background:linear-gradient(180deg,rgba(0,40,20,.8),rgba(0,18,8,.85))}
-.cg-modal.success .cg-crest::before,.cg-modal.success .cg-crest::after{border-color:#00cc77;animation-duration:.8s}
-.cg-modal.success .cg-lock{filter:drop-shadow(0 0 16px rgba(0,204,119,.7)) drop-shadow(0 0 32px rgba(0,204,119,.5))}
-
-/* Status console line */
-.cg-status{font-family:'SF Mono','JetBrains Mono',monospace;font-size:10px;letter-spacing:1.4px;text-align:center;text-transform:uppercase;color:var(--text-dim);min-height:14px;margin-bottom:14px;transition:color .3s}
-.cg-status.info{color:var(--accent);text-shadow:0 0 6px var(--accent-glow)}
-.cg-status.error{color:#ef4444;text-shadow:0 0 6px rgba(239,68,68,.5)}
-.cg-status.ok{color:#00cc77;text-shadow:0 0 8px rgba(0,204,119,.6)}
-.cg-status .cg-status-cursor{display:inline-block;width:6px;height:11px;background:currentColor;margin-left:5px;vertical-align:middle;animation:cgCaret 1s steps(1) infinite}
-
-/* Hint footer */
-.cg-hint{text-align:center;font-family:'SF Mono',monospace;font-size:9.5px;color:var(--text-dim);letter-spacing:1.2px;margin-bottom:18px;opacity:.6}
-.cg-hint code{padding:1px 6px;border:1px solid rgba(0,255,65,.25);border-radius:4px;color:var(--accent);background:rgba(0,255,65,.05);letter-spacing:1px;font-size:9.5px}
-
-/* Action buttons */
-.cg-actions{display:flex;gap:10px}
-.cg-btn{flex:1;padding:12px 16px;border-radius:11px;font-family:'SF Mono',monospace;font-size:11px;letter-spacing:1.6px;text-transform:uppercase;cursor:pointer;transition:all .25s;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px}
-.cg-btn.cancel{background:transparent;border:1px solid rgba(255,255,255,.12);color:var(--text-dim)}
-.cg-btn.cancel:hover{border-color:rgba(255,255,255,.25);color:#fff;background:rgba(255,255,255,.04)}
-.cg-btn.ok{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#000;box-shadow:0 6px 24px rgba(0,255,65,.32)}
-.cg-btn.ok:hover{filter:brightness(1.15);box-shadow:0 8px 32px rgba(0,255,65,.5),0 0 24px rgba(0,255,65,.45);transform:translateY(-1px)}
-.cg-btn.ok:active{transform:translateY(0)}
-.cg-btn.ok:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
-
-/* Particle burst on success — reuses boot-particle animation */
-.cg-particles{position:absolute;inset:0;pointer-events:none;z-index:3;overflow:hidden}
-.cg-particle{position:absolute;width:4px;height:4px;background:var(--accent);border-radius:50%;box-shadow:0 0 8px var(--accent);opacity:0}
-.cg-particle.go{animation:cgPartFly 1.4s ease-out forwards}
-@keyframes cgPartFly{
-  0%{opacity:1;transform:translate(0,0) scale(1)}
-  100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(.2)}
-}
-
-/* Full-screen flash on success */
-@keyframes cgFlash{0%{opacity:0}25%{opacity:.65}100%{opacity:0}}
-.cg-flash{position:fixed;inset:0;background:radial-gradient(circle,rgba(0,255,65,.45) 0%,transparent 55%);pointer-events:none;z-index:10000;animation:cgFlash 1s ease-out forwards}
 
 /* Agent piece — inline-SVG character + nameplate. Furniture is CSS-drawn behind. */
 .agent{position:absolute;width:60px;display:flex;flex-direction:column;align-items:center;gap:3px;transition:left .9s cubic-bezier(.16,1,.3,1),top .9s cubic-bezier(.16,1,.3,1);z-index:6;filter:drop-shadow(0 4px 6px rgba(0,0,0,.65));transform:scale(var(--char-scale,1));transform-origin:50% 96px}
@@ -11757,13 +11621,6 @@ function showBubbleOn(agentId, text, ms){
   d.appendChild(b);
   const dur = ms || 2500;
   setTimeout(() => { try { b.style.opacity = '0'; setTimeout(() => b.remove(), 350); } catch{} }, dur);
-}
-
-function resetAllDesks(){
-  Object.keys(deskEls).forEach(id => setDeskState(id, 'idle'));
-  if (beams) beams.innerHTML = '';
-  whiteboard.classList.remove('active');
-  whiteboard.innerHTML = '대기 중 — 명령을 내리면 팀이 움직입니다';
 }
 
 /* ==== Auto-walking + idle chat ==== */

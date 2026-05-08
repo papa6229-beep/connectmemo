@@ -14228,8 +14228,14 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     this.resetChat();
                     break;
                 case 'ready':
-                    // 웹뷰가 준비되면 저장된 대화 기록 복원
+                    // 웹뷰가 준비되면 저장된 대화 기록 복원 + 회사 상태 동기화.
+                    // v2.89.86 — 이전엔 _sendCompanyState() 가 사용자 셋업 액션 후에만
+                    // 호출돼서, 사이드바 재로드 시 companyState.configured 가 false로
+                    // 시작했음. 그 결과 셋업 완료된 사용자가 👔 모드에서 메시지 보내도
+                    // send() 의 가드 (`corp && !companyState.configured`) 에 막혀서
+                    // 응답 없이 차단됐음. ready 시점에 한 번 더 동기화.
                     this._restoreDisplayMessages();
+                    this._sendCompanyState();
                     break;
                 case 'openSettings':
                     await this._handleSettingsMenu();

@@ -312,16 +312,25 @@ function showSkillDetail(agent, skill){
      쓸지 분기. 폼은 ⚙️ 토글로 펼침/접힘. */
   const configFields = [];
   const cfg = skill.config || {};
-  /* v2.89.81 — _schema를 통과 받아 hint·label·options 메타로 사용. */
+  /* v2.89.81 — _schema를 통과 받아 hint·label·options 메타로 사용.
+     v2.89.85 — _schema 가 정의된 도구는 schema 에 등록된 키만 폼에 노출.
+     이전엔 도구가 실행 중에 자동으로 채워넣은 메타 (INSTALLED_MODEL,
+     VENV_PYTHON, HF_ID, INSTALLED_AT 등) 가 폼에 같이 노출돼서 사용자가
+     "이걸 내가 편집해야 하나?" 헷갈렸음. 이제 _schema 있으면 화이트리스트
+     모드 — schema 에 명시한 키만 보임. */
   const toolSchema = (cfg && typeof cfg._schema === 'object' && cfg._schema) || {};
   const sharedSchema = (skill.sharedConfig && typeof skill.sharedConfig._schema === 'object' && skill.sharedConfig._schema) || {};
+  const toolHasSchema = Object.keys(toolSchema).length > 0;
+  const sharedHasSchema = Object.keys(sharedSchema).length > 0;
   for (const [k, v] of Object.entries(cfg)) {
     if (k === '_schema' || k.startsWith('_')) continue;
+    if (toolHasSchema && !(k in toolSchema)) continue; /* 화이트리스트 */
     configFields.push({ key: k, value: v, source: 'tool', meta: toolSchema[k] || null });
   }
   if (skill.sharedConfig) {
     for (const [k, v] of Object.entries(skill.sharedConfig)) {
       if (k.startsWith('_')) continue;
+      if (sharedHasSchema && !(k in sharedSchema)) continue; /* 화이트리스트 */
       /* 도구 자체 config에 같은 키 있으면 도구 우선 */
       if (configFields.find(f => f.key === k)) continue;
       configFields.push({ key: k, value: v, source: 'shared', meta: sharedSchema[k] || null });

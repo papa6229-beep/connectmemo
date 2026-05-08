@@ -1611,7 +1611,7 @@ function _buildCapabilityReport(): string {
     /* LLM 기반 에이전트들 — 항상 가능 */
     agentSummary.push('  🎨 *디자이너* — ✅ 시안 카피·무드보드·브랜드 컬러 가이드');
     agentSummary.push('  ✍️ *작가* — ✅ 후크·스크립트·블로그·영상 카피');
-    agentSummary.push('  🎵 *사운드* — ✅ BGM 자동 생성·영상-음악 합성·사운드 디자인');
+    agentSummary.push('  🎵 *루나* — ✅ BGM 자동 생성·영상-음악 합성·사운드 디자인');
     agentSummary.push('  💼 *비즈니스* — ✅ 가격·KPI·전략 분석');
     agentSummary.push('  🛠 *개발자* — ✅ 사이트·자동화·API 코드');
     agentSummary.push('  🔍 *리서처* — ✅ 트렌드·경쟁사·사실 확인');
@@ -5101,7 +5101,7 @@ ${_GOAL_PREAMBLE}
 ## 작업 원칙
 - "정리"보다 "다음 액션 1개" 명시가 우선
 `,
-  editor: `# 🎵 사운드(Editor) 에이전트 — 나의 미션
+  editor: `# 🎵 루나(Editor · Sound Director) 에이전트 — 나의 미션
 
 ${_GOAL_PREAMBLE}
 ## 장기 목표 (3~6개월)
@@ -5583,7 +5583,11 @@ function _seedEditorMusicStudioSetup(toolsDir: string) {
     },
   }, null, 2);
   _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.py'), py, 'music_v5');
-  _seedFile(path.join(toolsDir, 'music_studio_setup.json'), json);
+  // v2.89.85 — _seedFile → _mergeSchemaIntoJson. 기존 설치자의 json 에는
+  // _schema 가 없어서 폼에 드롭다운이 안 떴음. 머지 헬퍼가 사용자 입력값
+  // (MODEL/INSTALL_DIR) 과 도구가 자동 채워넣은 메타 (INSTALLED_·VENV_·
+  // HF_ID·INSTALLED_AT) 는 그대로 보존하면서 _schema 만 최신화.
+  _mergeSchemaIntoJson(path.join(toolsDir, 'music_studio_setup.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'music_studio_setup.md'), md, 'music_v5');
 }
 

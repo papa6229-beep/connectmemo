@@ -1730,7 +1730,12 @@ function _showAgentPanelInner(agent){
      their office. Agents have personality; we lean into it instead of cold
      section labels. */
   const firstSpec = (agent.specialty || '').split(/[·,，]/)[0].trim();
-  const _hi = '안녕하세요, ' + agent.name + '이에요. ';
+  /* v2.89.85 — 받침 있으면 '이에요' (영숙이에요), 없으면 '예요' (루나예요·레오예요).
+     마지막 한글 음절의 (charCode - 0xAC00) % 28 이 0이면 받침 없음. */
+  const _lastChar = (agent.name || '').slice(-1);
+  const _code = _lastChar.charCodeAt(0);
+  const _hasJongsung = _code >= 0xAC00 && _code <= 0xD7A3 && (_code - 0xAC00) % 28 !== 0;
+  const _hi = '안녕하세요, ' + agent.name + (_hasJongsung ? '이에요. ' : '예요. ');
   const greetingByRole = {
     youtube:    _hi + (firstSpec || '유튜브 채널') + ' 맡고 있어요.',
     instagram:  _hi + (firstSpec || '인스타 운영') + ' 도와드릴게요.',

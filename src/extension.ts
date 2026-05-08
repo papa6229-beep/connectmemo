@@ -208,6 +208,27 @@ function gitRun(args: string[], cwd: string, timeout = 30000): { status: number 
 let _autoSyncRunning = false;
 let _companySyncRunning = false; /* separate lock — brain & company can sync in parallel */
 
+/* v2.89.88 — 크로스플랫폼 파이썬 명령. 윈도우는 `python3`이 기본 PATH에 없고
+   `python`은 미설치 시 MS Store 스텁이 떠서 종료코드 9009를 내뱉음 (Python was
+   not found ... 메시지). 맥/리눅스는 `python3`이 표준. 플랫폼별로 분기해서
+   유튜브 채널 분석 같은 도구가 윈도우 사용자에게서 실패하던 문제 수정. */
+function _pythonCmd(): string {
+    return process.platform === 'win32' ? 'python' : 'python3';
+}
+/* 9009 (Windows command-not-found) 또는 "Python was not found" 스텁 메시지를
+   감지해서 명확한 한국어 안내로 바꿔줌. */
+function _isPythonMissing(exitCode: number, output: string): boolean {
+    if (exitCode === 9009) return true;
+    if (/Python was not found/i.test(output)) return true;
+    if (process.platform !== 'win32' && /command not found.*python/i.test(output)) return true;
+    return false;
+}
+function _pythonMissingHint(): string {
+    return process.platform === 'win32'
+        ? '⚠️ Python이 설치되어 있지 않습니다. https://www.python.org/downloads/ 에서 Python 3을 설치하고 설치 시 "Add Python to PATH" 체크박스를 꼭 켜주세요. 설치 후 안티그래비티(또는 VS Code) 완전 종료 → 재실행 필요.'
+        : '⚠️ python3 명령을 찾을 수 없습니다. 맥은 `brew install python3`, 우분투는 `sudo apt install python3` 로 설치 후 안티그래비티(또는 VS Code) 재시작.';
+}
+
 /**
  * Run a shell command and capture stdout+stderr live so the AI can act on the result.
  * - Streams output to onChunk for live display in the chat
@@ -2118,7 +2139,7 @@ async function _runScheduledReportEntry(entry: ReportScheduleEntry) {
                 console.warn(`[scheduler] tool not found: ${scriptPath}`);
                 return;
             }
-            const r = await runCommandCaptured(`python3 ${JSON.stringify(entry.tool + '.py')}`, toolDir, () => {}, 120000);
+            const r = await runCommandCaptured(`${_pythonCmd()} ${JSON.stringify(entry.tool + '.py')}`, toolDir, () => {}, 120000);
             const out = (r.output || '').trim();
             const status = r.exitCode === 0 ? '✅' : `❌ exit ${r.exitCode}`;
             const msg = `📆 *${entry.label}* (스케줄 자동 실행) ${status}\n\n\`\`\`\n${out.slice(0, 3000)}\n\`\`\``;
@@ -3453,7 +3474,7 @@ Developer 에이전트가 ${new Date().toISOString().slice(0, 10)}에 만든 프
 ## 다음 스텝
 
 ${template === 'static'
-    ? `\`\`\`bash\ncd site && python3 -m http.server 5173\n# 또는: npx serve site\n\`\`\`\n브라우저에서 http://127.0.0.1:5173 열기.`
+    ? `\`\`\`bash\ncd site && ${_pythonCmd()} -m http.server 5173\n# 또는: npx serve site\n\`\`\`\n브라우저에서 http://127.0.0.1:5173 열기.`
     : `\`\`\`bash\ncd site && npm install && npm run dev\n\`\`\`\nVite dev server가 http://localhost:5173 에서 실행됩니다.`}
 
 ## 결정 로그
@@ -3481,7 +3502,7 @@ _Developer 에이전트와 사용자가 내린 디자인·기술 의사결정이
             });
         } catch { /* ignore */ }
         /* Telegram ping so the user knows from any channel. */
-        sendTelegramReport(`💻 *Developer*: \`${safe}\` 프로젝트 만들었어요 (${template})\n\n로컬: \`${path.relative(getCompanyDir(), root)}\`\n다음: ${template === 'static' ? '`cd site && python3 -m http.server 5173`' : '`cd site && npm install && npm run dev`'}`).catch(() => { /* silent */ });
+        sendTelegramReport(`💻 *Developer*: \`${safe}\` 프로젝트 만들었어요 (${template})\n\n로컬: \`${path.relative(getCompanyDir(), root)}\`\n다음: ${template === 'static' ? `\`cd site && ${_pythonCmd()} -m http.server 5173\`` : '`cd site && npm install && npm run dev`'}`).catch(() => { /* silent */ });
         return { ok: true, path: root };
     } catch (e: any) {
         return { ok: false, error: e?.message || String(e) };
@@ -4830,7 +4851,7 @@ function readAgentSharedContext(agentId: string, opts?: { lean?: boolean }): str
   if (tools.length > 0) {
     ctx += `\n\n[사용 가능한 도구 — <run_command>로 직접 실행 가능]\n` + tools.map(t => {
       const cd = `cd "${path.dirname(t.scriptPath)}"`;
-      return `- 🛠️ \`${t.name}\` — ${t.description.replace(/\n/g, ' ').slice(0, 140)}\n  실행: <run_command>${cd} && python ${path.basename(t.scriptPath)}</run_command>\n  설정 파일(API 키 등): ${t.configPath}`;
+      return `- 🛠️ \`${t.name}\` — ${t.description.replace(/\n/g, ' ').slice(0, 140)}\n  실행: <run_command>${cd} && ${_pythonCmd()} ${path.basename(t.scriptPath)}</run_command>\n  설정 파일(API 키 등): ${t.configPath}`;
     }).join('\n');
     /* v2.89.31 — 도구 사용 의무화. 작은 LLM은 도구 카탈로그를 무시하고
        LLM 지식만으로 답변하는 경향이 있어서, 실데이터가 필요한 task일 때
@@ -6040,7 +6061,7 @@ async function prefetchAgentRealtimeData(agentId: string): Promise<string> {
     if (gotRealData) break;
     try {
       const r = await new Promise<{ exitCode: number; output: string; timedOut: boolean }>((resolve) => {
-        runCommandCaptured(`python3 ${JSON.stringify(c.tool)}`, toolsDir, () => { /* silent */ }, 90000)
+        runCommandCaptured(`${_pythonCmd()} ${JSON.stringify(c.tool)}`, toolsDir, () => { /* silent */ }, 90000)
           .then(resolve)
           .catch(() => resolve({ exitCode: -1, output: '', timedOut: false }));
       });
@@ -9092,7 +9113,7 @@ class CompanyDashboardPanel {
                         } else {
                             const scriptPath = tool.scriptPath;
                             const cwd = path.dirname(scriptPath);
-                            const cmd = `python3 ${JSON.stringify(path.basename(scriptPath))}`;
+                            const cmd = `${_pythonCmd()} ${JSON.stringify(path.basename(scriptPath))}`;
                             const r = await runCommandCaptured(cmd, cwd, () => { /* silent */ }, 90000);
                             this._panel.webview.postMessage({
                                 type: 'skillRunOutput',
@@ -13762,7 +13783,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     const prevSidebarBroadcast = this._sidebarCorpModeOn;
                     this._sidebarCorpModeOn = true;
                     this._handleCorporatePrompt(
-                        `[도구 실행 — ${name} → ${tool.displayName}] ${name} 에이전트에게 다음 도구를 즉시 실행하라고 지시하세요. 반드시 ${msg.agent} 에이전트에게 분배. 도구: ${tool.name}. 실행 명령 (정확히 이 형식): <run_command>cd "${path.dirname(tool.scriptPath)}" && python ${path.basename(tool.scriptPath)}</run_command>. 실행 후 출력을 분석해 다음 액션을 한 줄로 제안하세요.`,
+                        `[도구 실행 — ${name} → ${tool.displayName}] ${name} 에이전트에게 다음 도구를 즉시 실행하라고 지시하세요. 반드시 ${msg.agent} 에이전트에게 분배. 도구: ${tool.name}. 실행 명령 (정확히 이 형식): <run_command>cd "${path.dirname(tool.scriptPath)}" && ${_pythonCmd()} ${path.basename(tool.scriptPath)}</run_command>. 실행 후 출력을 분석해 다음 액션을 한 줄로 제안하세요.`,
                         model,
                     )
                         .then(() => {
@@ -15764,7 +15785,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
         let r: { exitCode: number; output: string; timedOut: boolean };
         try {
             /* v2.89.50 — stdout만 캡쳐. stderr (진행 메시지·DeprecationWarning) 채팅에 안 끼게. */
-            r = await runCommandCaptured(`python3 ${JSON.stringify(entry.tool)}`, toolsDir, () => {}, 90000, 'stdout');
+            r = await runCommandCaptured(`${_pythonCmd()} ${JSON.stringify(entry.tool)}`, toolsDir, () => {}, 90000, 'stdout');
         } catch (e: any) {
             post({ type: 'agentEnd', agent: entry.agentId });
             post({ type: 'error', value: `⚠️ 도구 실행 에러: ${e?.message || e}` });
@@ -15777,7 +15798,11 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
         const toolStatus = r.timedOut ? '⏱️ 90초 초과' : (toolOk ? '✅' : `❌ exit ${r.exitCode}`);
 
         if (!toolOk) {
-            const body = `${a.emoji} **${a.name}** — \`${entry.tool}\` 실행 실패\n\n\`\`\`\n${toolOut || '(출력 없음)'}\n\`\`\`\n\n_${toolStatus}_\n\n💡 흔한 원인: API 키 미설정, python3·필수 패키지 미설치`;
+            const pyMissing = _isPythonMissing(r.exitCode, toolOut);
+            const hint = pyMissing
+                ? _pythonMissingHint()
+                : '💡 흔한 원인: API 키 미설정, Python·필수 패키지 미설치';
+            const body = `${a.emoji} **${a.name}** — \`${entry.tool}\` 실행 실패\n\n\`\`\`\n${toolOut || '(출력 없음)'}\n\`\`\`\n\n_${toolStatus}_\n\n${hint}`;
             this._displayMessages.push({ text: body, role: 'ai' });
             post({ type: 'response', value: body });
             appendConversationLog({ speaker: a.name, emoji: a.emoji, section: `도구 실행 (${source})`, body: `${entry.tool} 실패: ${toolOut.slice(0, 500)}` });
@@ -15947,7 +15972,9 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 } catch { triage = null; }
                 if (triage && triage.mode === 'reply') {
                     const text = (triage.text || '').trim() || '네, 사장님. 더 자세히 말씀해 주세요.';
-                    this._displayMessages.push({ text: `📱 비서: ${text}`, role: 'ai' });
+                    const wrapped = `📱 비서: ${text}`;
+                    this._displayMessages.push({ text: wrapped, role: 'ai' });
+                    post({ type: 'response', value: wrapped });
                     appendConversationLog({ speaker: '비서', emoji: '📱', section: '브릿지(직접 응답)', body: text });
                     try { await this._maybeMirrorToTelegram(); } catch { /* ignore */ }
                     return;
@@ -15980,7 +16007,15 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     return;
                 }
                 post({ type: 'agentEnd', agent: 'ceo' });
-                const text = (chatReply || '').trim() || '안녕하세요, 사장님. 무엇을 도와드릴까요?';
+                const streamed = (chatReply || '').trim();
+                const text = streamed || '안녕하세요, 사장님. 무엇을 도와드릴까요?';
+                /* 스트리밍이 토큰을 한 글자도 못 받았으면 (LM Studio reasoning-only 모델이
+                   delta.reasoning_content만 내보내고 delta.content는 빈 채로 끝나는 케이스 등)
+                   webview에 아무것도 안 그려진 상태라 사용자는 "무응답"으로 봄. fallback 텍스트
+                   를 명시적으로 보내서 빈 응답일 때 화면이 비지 않게 함. */
+                if (!streamed) {
+                    post({ type: 'response', value: text });
+                }
                 this._displayMessages.push({ text, role: 'ai' });
                 appendConversationLog({ speaker: 'CEO', emoji: '👔', body: text });
                 try { await this._maybeMirrorToTelegram(); } catch { /* ignore */ }

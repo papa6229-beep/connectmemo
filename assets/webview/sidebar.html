@@ -3773,12 +3773,19 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
   }
   case 'error':hideLoader();setSending(false);addMsg(msg.value,'error');break;
   case 'streamStart':{
-    hideLoader();
+    /* v2.89.101 — 로더 hide를 streamStart에서 빼고 첫 streamChunk 도착 시점으로 옮김.
+       streamStart는 LLM이 응답 시작하기 전(POST 직후)에 미리 와서, 여기서 hide하면
+       사용자는 로더가 0.1초만 깜빡이고 사라지는 걸 봄. 진짜 긴 구간(모델 warmup,
+       reasoning)은 첫 토큰까지 — 그래서 첫 토큰 도착할 때까지 로더 유지. */
     streamEl=document.createElement('div');streamEl.className='msg';
     const h=document.createElement('div');h.className='msg-head';
     h.innerHTML='<div class="av av-ai">✦</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span>';
     streamBody=document.createElement('div');streamBody.className='msg-body stream-active';
-    streamEl.appendChild(h);streamEl.appendChild(streamBody);chat.appendChild(streamEl);scrollChatToBottomIfNear();
+    streamEl.appendChild(h);streamEl.appendChild(streamBody);chat.appendChild(streamEl);
+    /* streamEl을 미리 만들어두지만 첫 청크 전엔 숨겨둠 — 빈 메시지 박스가 로더 위/아래에
+       어색하게 떠 있는 걸 방지. */
+    streamEl.style.display='none';
+    scrollChatToBottomIfNear();
     break;}
   case 'streamChunk':{
     /* v2.89.55 — 스트리밍 중엔 fmt() 호출하지 않음. 부분 markdown ('## ti'까지만 도착하면)
@@ -3786,6 +3793,11 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
        사용자는 평문 → 헤딩 점프 봄. 더 심각한 건 코드블록·표 placeholder가 청크별 인덱스
        어긋나서 깨짐. 해법: 스트리밍 중엔 plain text만 누적·표시, streamEnd에서 한 번에 fmt(). */
     if(streamBody){
+      /* v2.89.101 — 첫 청크 도착 시 로더 정리 + 메시지 박스 노출 */
+      if(!streamBody._raw){
+        hideLoader();
+        if(streamEl) streamEl.style.display='';
+      }
       streamBody._raw=(streamBody._raw||'')+msg.value;
       const safe = streamBody._raw.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       streamBody.innerHTML = safe.replace(/\n/g, '<br/>');
@@ -3793,6 +3805,9 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     }
     break;}
   case 'streamEnd':{
+    /* v2.89.101 — 청크가 한 개도 안 와도 로더 정리 (빈 응답·즉시 종료 케이스) */
+    hideLoader();
+    if(streamEl && streamEl.style.display==='none') streamEl.style.display='';
     if(streamBody){
       /* 스트리밍 끝났으니 전체 누적 raw에 한 번에 fmt() 적용 → 헤딩·표·인용·리스트 정상 렌더 */
       streamBody.innerHTML = fmt(streamBody._raw||'');

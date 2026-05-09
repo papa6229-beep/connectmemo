@@ -71,27 +71,41 @@ function _resolveFlexiblePath(input: string, root: string): { abs: string; reaso
     if (typeof input !== 'string') return null;
     let s = input.trim();
     if (!s) return null;
-    /* env var expansion — 안전 화이트리스트만 */
-    s = s.replace(/\$\{?(HOME|USER|TMPDIR|TEMP|TMP|APPDATA|LOCALAPPDATA|USERPROFILE|HOMEDRIVE|HOMEPATH)\}?/g, (_m, k) => {
+    /* v2.89.101 — env var expansion. Windows에선 process.env.HOME이 비어있는
+       경우가 흔해서, HOME을 os.homedir()로 강제 fallback. USER는 USERNAME에서
+       읽고, TMP는 TMPDIR/TEMP/TMP 순으로 시도. */
+    s = s.replace(/\$\{?(HOME|USER|USERNAME|TMPDIR|TEMP|TMP|APPDATA|LOCALAPPDATA|USERPROFILE|HOMEDRIVE|HOMEPATH)\}?/g, (_m, k) => {
+        if (k === 'HOME') return process.env.HOME || os.homedir();
+        if (k === 'USER' || k === 'USERNAME') return process.env.USER || process.env.USERNAME || os.userInfo().username || _m;
+        if (k === 'TMPDIR' || k === 'TEMP' || k === 'TMP') return process.env.TMPDIR || process.env.TEMP || process.env.TMP || os.tmpdir();
         const v = process.env[k]; return v || _m;
     });
     /* tilde expansion */
     if (s === '~') s = os.homedir();
     else if (s.startsWith('~/') || s.startsWith('~\\')) s = path.join(os.homedir(), s.slice(2));
-    /* absolute or relative */
-    const abs = path.isAbsolute(s) ? path.resolve(s) : path.resolve(root, s);
+    /* absolute or relative — path.normalize로 혼재된 슬래시 통일 */
+    let abs = path.isAbsolute(s) ? path.resolve(s) : path.resolve(root, s);
+    abs = path.normalize(abs);
     /* 시스템 경로 차단 — 가벼운 보호. 사용자 홈·문서·외부 디스크는 자유. */
     for (const blocked of _SYSTEM_PATH_BLOCKLIST) {
         if (abs === blocked || abs.startsWith(blocked + path.sep)) {
             return { abs, reason: `시스템 보호 경로(${blocked})에는 쓰지 않습니다. 사용자 홈/워크스페이스 안의 경로를 지정해주세요.` };
         }
     }
-    /* Windows: C:\Windows / C:\Program Files 보호 */
+    /* Windows: C:\Windows / C:\Program Files / C:\ProgramData 보호 */
     if (process.platform === 'win32') {
         const upper = abs.toUpperCase();
-        const win = (process.env.WINDIR || 'C:\\WINDOWS').toUpperCase();
-        if (upper === win || upper.startsWith(win + path.sep)) {
-            return { abs, reason: `시스템 보호 경로(${win})에는 쓰지 않습니다.` };
+        const winDirs = [
+            (process.env.WINDIR || 'C:\\WINDOWS').toUpperCase(),
+            (process.env.PROGRAMFILES || 'C:\\PROGRAM FILES').toUpperCase(),
+            (process.env['PROGRAMFILES(X86)'] || 'C:\\PROGRAM FILES (X86)').toUpperCase(),
+            (process.env.PROGRAMDATA || 'C:\\PROGRAMDATA').toUpperCase(),
+            (process.env.SYSTEMROOT || 'C:\\WINDOWS').toUpperCase(),
+        ];
+        for (const w of winDirs) {
+            if (upper === w || upper.startsWith(w + path.sep)) {
+                return { abs, reason: `시스템 보호 경로(${w})에는 쓰지 않습니다. Documents·Desktop·다른 사용자 폴더로 지정해주세요.` };
+            }
         }
     }
     return { abs };
@@ -349,9 +363,15 @@ function runCommandCaptured(
         }
         const killTimer = setTimeout(() => {
             timedOut = true;
-            try { child.kill('SIGTERM'); } catch { /* already dead */ }
-            // Force-kill if SIGTERM didn't take after 2s
-            setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, 2000);
+            /* v2.89.101 — Windows는 SIGTERM/SIGKILL을 무시할 수 있음. taskkill /F 로
+               자식 프로세스 트리 전체 강제 종료. macOS/Linux는 기존대로 SIGTERM → SIGKILL. */
+            if (process.platform === 'win32' && child.pid) {
+                try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).unref(); }
+                catch { try { child.kill(); } catch { /* gone */ } }
+            } else {
+                try { child.kill('SIGTERM'); } catch { /* already dead */ }
+                setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, 2000);
+            }
         }, timeoutMs);
         child.on('close', (code) => {
             clearTimeout(killTimer);

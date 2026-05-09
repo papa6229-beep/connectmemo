@@ -7636,7 +7636,7 @@ async function showBrainNetwork(_context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage('지식 네트워크 열기 실패: ' + (err?.message || String(err)));
         if (panel) {
             const safe = String(detail).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'} as any)[c]);
-            panel.webview.html = '<!DOCTYPE html><html><body style="background:#131419;color:#e0e2e8;font-family:-apple-system;padding:40px;line-height:1.55"><h2 style="color:#FFB266;margin-top:0">⚠️ 지식 네트워크 로드 실패</h2><div style="color:#9094a0;font-size:13px;margin-bottom:14px">아래 에러 메시지를 그대로 알려주세요.</div><pre style="color:#e0e2e8;background:#1a1a1f;padding:14px;border-radius:8px;overflow:auto;font-size:12px">' + safe + '</pre></body></html>';
+            panel.webview.html = '<!DOCTYPE html><html><body style="background:#000;color:#B8B8C2;font-family:-apple-system,SF Pro Display,sans-serif;padding:40px;line-height:1.55"><div style="font-family:SF Mono,monospace;font-size:10px;letter-spacing:3px;color:rgba(0,255,65,.55);text-transform:uppercase;margin-bottom:18px">CONNECT · AI</div><h2 style="color:#00FF41;margin-top:0;text-shadow:0 0 14px rgba(0,255,65,.3)">⚠️ 지식 네트워크 로드 실패</h2><div style="color:#9090A0;font-size:13px;margin-bottom:14px">아래 에러 메시지를 그대로 알려주세요.</div><pre style="color:#B8B8C2;background:#0a0d0a;border:1px solid rgba(0,255,65,.15);padding:14px;border-radius:10px;overflow:auto;font-size:12px;font-family:SF Mono,JetBrains Mono,monospace">' + safe + '</pre></body></html>';
         }
     }
 }

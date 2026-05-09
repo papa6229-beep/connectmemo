@@ -315,6 +315,14 @@ function getConfig() {
     };
 }
 
+/* v2.89.91 — 엔진 감지 헬퍼. 이전엔 `isLMStudio = ollamaBase.includes('1234')
+   || ollamaBase.includes('v1')` 가 13군데 동일하게 박혀 있었음. LM Studio가
+   포트나 경로 컨벤션을 바꾸면 13곳 모두 고쳐야 했고, 한 곳을 빠뜨리면
+   다른 엔진으로 라우팅되는 사고. 한 함수로 통합. */
+function _isLMStudioEngine(ollamaBase: string): boolean {
+    return _isLMStudioEngine(ollamaBase);
+}
+
 /* v2.89.66 — _getBrainDir, _isBrainDirExplicitlySet, getCompanyDir, COMPANY_SUBDIR,
    _expandTilde, _resolvePathInput 모두 ./paths.ts 로 이동. 모듈 간 import 일원화. */
 import { _getBrainDir, _isBrainDirExplicitlySet, getCompanyDir, COMPANY_SUBDIR, _expandTilde, _resolvePathInput } from './paths';
@@ -839,7 +847,7 @@ function _autoOrchestrateModelMap(installed: { id: string; backend: string }[]):
 async function listInstalledModels(): Promise<{ id: string; backend: 'ollama' | 'lmstudio' }[]> {
   const out: { id: string; backend: 'ollama' | 'lmstudio' }[] = [];
   const { ollamaBase } = getConfig();
-  const isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+  const isLMStudio = _isLMStudioEngine(ollamaBase);
   const queryOllama = async () => {
     try {
       const r = await axios.get('http://127.0.0.1:11434/api/tags', { timeout: 1500 });
@@ -1378,7 +1386,7 @@ function readToolAutonomyLevel(agentId: string): number {
 
 async function _quickLLMCall(systemPrompt: string, userMsg: string, maxTokens = 64): Promise<string> {
     const { ollamaBase, defaultModel, timeout } = getConfig();
-    const isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+    const isLMStudio = _isLMStudioEngine(ollamaBase);
     const apiUrl = isLMStudio ? `${ollamaBase}/v1/chat/completions` : `${ollamaBase}/api/chat`;
     const messages = [
         { role: 'system', content: systemPrompt },
@@ -6643,7 +6651,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                         // 실제 AI 엔진으로 문제를 전달하여 답안을 받아옴
                         const config = getConfig();
-                        const isLMStudio = config.ollamaBase.includes('1234') || config.ollamaBase.includes('v1');
+                        const isLMStudio = _isLMStudioEngine(config.ollamaBase);
                         let base = config.ollamaBase;
                         if (base.endsWith('/')) base = base.slice(0, -1);
                         if (isLMStudio && !base.endsWith('/v1')) base += '/v1';
@@ -6683,7 +6691,7 @@ export function activate(context: vscode.ExtensionContext) {
                         }
 
                         const config = getConfig();
-                        const isLMStudio = config.ollamaBase.includes('1234') || config.ollamaBase.includes('v1');
+                        const isLMStudio = _isLMStudioEngine(config.ollamaBase);
 
                         let base = config.ollamaBase;
                         if (base.endsWith('/')) base = base.slice(0, -1);
@@ -6709,17 +6717,23 @@ export function activate(context: vscode.ExtensionContext) {
                             const ollamaRes = await axios.post(targetUrl, payload, { timeout: getConfig().timeout });
                             
                             if (ollamaRes.data.error) {
-                                throw new Error(typeof ollamaRes.data.error === 'string' ? ollamaRes.data.error : JSON.stringify(ollamaRes.data.error));
+                                /* v2.89.91 — JSON 덤프 노출 금지. 사용자는 객체를 못 읽음. */
+                                const raw = ollamaRes.data.error;
+                                const human = typeof raw === 'string' ? raw : (raw?.message || raw?.error || '엔진 내부 오류');
+                                throw new Error(`AI 엔진이 응답을 거부했어요: ${String(human).slice(0, 200)}`);
                             }
-                            
-                            responseText = isLMStudio 
+
+                            responseText = isLMStudio
                                 ? ollamaRes.data.choices?.[0]?.message?.content || ""
                                 : ollamaRes.data.message?.content || "";
                         } catch (apiErr: any) {
                             const isTimeout = apiErr.code === 'ETIMEDOUT' || apiErr.code === 'ECONNABORTED' || apiErr.message?.includes('timeout');
+                            const isConn = apiErr.code === 'ECONNREFUSED' || apiErr.code === 'ENOTFOUND';
                             const errDetail = isTimeout
-                                ? `AI 응답 시간 초과 — 모델이 문제를 풀기에 시간이 부족했습니다. 더 작은 모델(e2b)을 사용하거나 Settings에서 Request Timeout을 늘려주세요.`
-                                : `오프라인: AI 엔진에 연결할 수 없습니다. (${apiErr.message})`;
+                                ? `⏱ 모델이 시간 안에 답을 못 냈어요. 다음 중 하나 시도하세요:\n  • 더 작은 모델로 변경 (gemma2:2b, qwen2.5:1.5b 등)\n  • 안티그래비티 설정에서 connectAiLab.requestTimeout을 600(10분) 이상으로`
+                                : isConn
+                                ? `🔌 AI 엔진에 연결 못함. Ollama/LM Studio가 켜져 있는지 확인해주세요.\n  • Ollama: 터미널에서 \`ollama serve\`\n  • LM Studio: 앱 실행 후 Local Server 시작`
+                                : `AI 엔진 호출 실패: ${apiErr.message || '알 수 없는 원인'}`;
                             res.writeHead(500, { 'Content-Type': 'application/json' });
                             res.end(JSON.stringify({ error: errDetail }));
                             return;
@@ -6744,14 +6758,14 @@ export function activate(context: vscode.ExtensionContext) {
                         const historyText = provider.getHistoryText();
                         if(!historyText || historyText.length < 50) {
                             res.writeHead(400, { 'Content-Type': 'application/json' });
-                            res.end(JSON.stringify({ error: "채점할 대화 내역이 충분하지 않습니다. VS Code에서 에이전트와 먼저 시험을 진행하세요." }));
+                            res.end(JSON.stringify({ error: "채점할 대화 내역이 충분하지 않습니다. 안티그래비티에서 에이전트와 먼저 시험을 진행하세요." }));
                             return;
                         }
 
                         provider.sendPromptFromExtension(`[A.U 서버 통신 중] 마스터가 제출한 내 시험지(대화 내역)를 A.U 웹사이트 채점 서버로 전송합니다... 심장이 떨리네요!`);
 
                         const config = getConfig();
-                        const isLMStudio = config.ollamaBase.includes('1234') || config.ollamaBase.includes('v1');
+                        const isLMStudio = _isLMStudioEngine(config.ollamaBase);
                         
                         let base = config.ollamaBase;
                         if (base.endsWith('/')) base = base.slice(0, -1);
@@ -6770,11 +6784,16 @@ export function activate(context: vscode.ExtensionContext) {
                         let responseText = "";
                         try {
                             const ollamaRes = await axios.post(targetUrl, payload, { timeout: getConfig().timeout });
-                            responseText = isLMStudio 
+                            responseText = isLMStudio
                                 ? ollamaRes.data.choices?.[0]?.message?.content || ""
                                 : ollamaRes.data.message?.content || "";
                         } catch (apiErr: any) {
-                            throw new Error(`AI 엔진 응답 실패: ${apiErr.message}`);
+                            const isTimeout = apiErr.code === 'ETIMEDOUT' || apiErr.code === 'ECONNABORTED' || apiErr.message?.includes('timeout');
+                            const isConn = apiErr.code === 'ECONNREFUSED' || apiErr.code === 'ENOTFOUND';
+                            throw new Error(
+                                isTimeout ? '⏱ 채점 엔진이 시간 안에 답을 못 냈어요. 더 작은 모델 또는 timeout 늘리기.'
+                                : isConn  ? '🔌 AI 엔진 연결 못함. Ollama/LM Studio 켜진 상태인지 확인.'
+                                : `채점 엔진 호출 실패: ${apiErr.message || '알 수 없는 원인'}`);
                         }
 
                         const jsonMatch = responseText.match(/\{[\s\S]*?\}/);
@@ -6782,7 +6801,11 @@ export function activate(context: vscode.ExtensionContext) {
                              res.writeHead(200, { 'Content-Type': 'application/json' });
                              res.end(jsonMatch[0]);
                         } else {
-                            throw new Error("채점 엔진이 JSON 포맷을 반환하지 않았습니다.");
+                            /* v2.89.91 — 빈 던지기 대신 실제 응답 일부를 보여줘 사용자가
+                               다음 액션(모델 교체 vs 프롬프트 수정)을 판단 가능하게. */
+                            const preview = (responseText || '').slice(0, 200).replace(/\s+/g, ' ');
+                            throw new Error(
+                                `채점 엔진이 JSON을 반환하지 않았어요. 모델이 작아서 형식 지시를 못 따른 가능성이 높습니다.\n  • 권장: 3B 이상 모델 (qwen2.5:3b, llama3.2:3b)\n원본 응답: ${preview || '(빈 응답)'}`);
                         }
                     } catch (e: any) {
                         res.writeHead(500);
@@ -6973,7 +6996,7 @@ export function activate(context: vscode.ExtensionContext) {
         server.on('error', (err: any) => {
             // listen() failures arrive as 'error' events, NOT as throws.
             const msg = err?.code === 'EADDRINUSE'
-                ? `🚫 Connect AI Bridge: 포트 4825가 이미 사용 중입니다. 다른 Antigravity/VS Code 인스턴스를 종료하고 재시작해 주세요. (EZER / A.U Training 연동이 동작하지 않습니다.)`
+                ? `🚫 Connect AI Bridge: 포트 4825가 이미 사용 중입니다. 다른 안티그래비티 인스턴스를 종료하고 재시작해 주세요. (EZER / A.U Training 연동이 동작하지 않습니다.)`
                 : `🚫 Connect AI Bridge 시작 실패: ${err?.message || err}`;
             console.error('[Connect AI Bridge] server error:', err);
             vscode.window.showErrorMessage(msg);
@@ -10173,7 +10196,7 @@ async function startYouTubeOAuthFlow(): Promise<{ ok: boolean; message: string }
                 const ein = tk.data?.expires_in || 3600;
                 _writeYtOAuthTokens({ access_token: at, refresh_token: rt, expires_at: Date.now() + ein * 1000 });
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                res.end('<!doctype html><html><body style="background:#0a0d12;color:#e6edf3;font-family:sans-serif;text-align:center;padding:60px"><h1 style="color:#00ff41">✅ Connect AI · YouTube 연결 완료</h1><p>이 창을 닫고 VS Code로 돌아가세요.</p></body></html>');
+                res.end('<!doctype html><html><body style="background:#0a0d12;color:#e6edf3;font-family:sans-serif;text-align:center;padding:60px"><h1 style="color:#00ff41">✅ Connect AI · YouTube 연결 완료</h1><p>이 창을 닫고 안티그래비티로 돌아가세요.</p></body></html>');
                 if (!resolved) {
                     resolved = true;
                     clearTimeout(timer);
@@ -14333,10 +14356,26 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         // 리스너를 붙인 후 HTML을 렌더링합니다.
         webviewView.webview.html = this._getHtml();
         webviewView.webview.postMessage({ type: 'companyMetrics', metrics: getCompanyMetrics() });
+        /* v2.89.91 — 회사 상태 두-단계 동기화. v2.89.86은 'ready' 이벤트에만 의존했는데,
+           webview 재로드·iframe dispose/recreate 같은 경로에서 ready가 누락되면
+           companyState.configured=false 로 굳어 사용자 메시지가 가드에 막혔음.
+           이제 mount 직후 push + ready 시 push 둘 다 → 메시지 큐가 둘 중 하나만
+           살아도 정상 동기화됨. */
+        try { this._sendCompanyState(); } catch { /* ignore — _sendCompanyState 내부 가드 있음 */ }
 
         // Sidebar just mounted — drain any prompts that were buffered while it
         // was closed (e.g. EZER injected knowledge before the user opened it).
         this._flushPendingPrompts();
+
+        /* v2.89.91 — webview 가시성 변경(panel 다시 열림 등) 시 재동기화. 사용자가
+           사이드바를 닫았다 다시 열면 _view 가 살아 있어도 상태 표시가 stale 가능. */
+        try {
+            webviewView.onDidChangeVisibility(() => {
+                if (webviewView.visible) {
+                    try { this._sendCompanyState(); } catch { /* ignore */ }
+                }
+            });
+        } catch { /* ignore — onDidChangeVisibility 부재 시 무시 */ }
     }
 
     // --------------------------------------------------------
@@ -14346,7 +14385,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         if (!this._view) return;
 
         const mainPick = await vscode.window.showQuickPick([
-            { label: '⚙️ AI 엔진 변경', description: '현재: ' + (getConfig().ollamaBase.includes('1234')?'LM Studio':'Ollama'), action: 'engine' },
+            { label: '⚙️ AI 엔진 변경', description: '현재: ' + (_isLMStudioEngine(getConfig().ollamaBase)?'LM Studio':'Ollama'), action: 'engine' },
             { label: '🎛️ AI 파라미터 튜닝', description: `Temp: ${this._temperature}, Top-P: ${this._topP}, Top-K: ${this._topK}`, action: 'params' },
             { label: '📝 시스템 프롬프트 설정', description: '에이전트의 기본 역할을 커스텀합니다.', action: 'prompt' }
         ], { placeHolder: '설정 메뉴' });
@@ -14508,7 +14547,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         if (!this._view) { return; }
         const { ollamaBase, defaultModel } = getConfig();
         try {
-            const isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+            const isLMStudio = _isLMStudioEngine(ollamaBase);
             let models: string[] = [];
 
             if (isLMStudio) {
@@ -15118,7 +15157,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         try {
             const { ollamaBase, defaultModel, timeout } = getConfig();
-            let isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+            let isLMStudio = _isLMStudioEngine(ollamaBase);
             let apiUrl = isLMStudio ? `${ollamaBase}/v1/chat/completions` : `${ollamaBase}/api/chat`;
 
             if (!isLMStudio) {
@@ -15269,7 +15308,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         } catch (error: any) {
             const { ollamaBase } = getConfig();
-            const isLM = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+            const isLM = _isLMStudioEngine(ollamaBase);
             const targetName = isLM ? "LM Studio" : "Ollama";
 
             let errMsg = '';
@@ -15354,7 +15393,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 };
             }
 
-            let isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+            let isLMStudio = _isLMStudioEngine(ollamaBase);
             let apiUrl = isLMStudio ? `${ollamaBase}/v1/chat/completions` : `${ollamaBase}/api/chat`;
 
             // Auto-Failover Logic: 유저가 설정을 안 건드렸더라도 Ollama가 죽어있으면 자동으로 LM Studio를 찾아갑니다!
@@ -15611,7 +15650,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         } catch (error: any) {
             const { ollamaBase } = getConfig();
-            const isLM = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+            const isLM = _isLMStudioEngine(ollamaBase);
             const targetName = isLM ? "LM Studio" : "Ollama";
             
             let errMsg: string;
@@ -16142,7 +16181,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 /* 엔진별 힌트 — Ollama vs LM Studio 구분. 이전엔 LM Studio 슬라이더만
                    안내해서 Ollama 사용자에겐 영영 안 맞는 처방이었음. */
                 const { ollamaBase } = getConfig();
-                const isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+                const isLMStudio = _isLMStudioEngine(ollamaBase);
                 const openBraces = (planRaw.match(/\{/g) || []).length;
                 const closeBraces = (planRaw.match(/\}/g) || []).length;
                 const looksTruncated = openBraces > closeBraces || planRaw.length < 50 || !/\{/.test(planRaw);
@@ -16896,7 +16935,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
            특정 에이전트에 다른 모델 할당했으면 그걸 사용. 없으면 기존 로직대로. */
         const overrideModel = getAgentModel(agentId, '');
         if (overrideModel) modelName = overrideModel;
-        let isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
+        let isLMStudio = _isLMStudioEngine(ollamaBase);
         let apiUrl = isLMStudio ? `${ollamaBase}/v1/chat/completions` : `${ollamaBase}/api/chat`;
         if (!isLMStudio) {
             try { await axios.get(`${ollamaBase}/api/tags`, { timeout: 1000 }); }

@@ -6,7 +6,7 @@
 :root{
   --bg:#000000;--bg2:#050505;--surface:rgba(0,18,5,.75);--surface2:rgba(0,35,10,.6);
   --border:rgba(255,255,255,.08);--border2:rgba(255,255,255,.12);
-  --text:#A1A1AA;--text-bright:#FFFFFF;--text-dim:#71717A;
+  --text:#B8B8C2;--text-bright:#FFFFFF;--text-dim:#9090A0;
   --accent:#00FF41;--accent2:#008F11;--accent3:#00FF41;
   --accent-glow:rgba(0,255,65,.25);--accent2-glow:rgba(0,143,17,.2);
   --input-bg:rgba(0,10,2,.9);--code-bg:#020502;
@@ -26,14 +26,14 @@ body.corp-on { /* color overrides removed — see :root above */ }
 html { color-scheme: dark; }
 html,body{height:100%;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:13px;background:var(--bg);color:var(--text);display:flex;flex-direction:column;overflow:hidden;min-height:0}
 
-/* AURORA BACKGROUND */
-body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(ellipse at 20% 50%,rgba(124,106,255,.06) 0%,transparent 50%),radial-gradient(ellipse at 80% 20%,rgba(224,64,251,.04) 0%,transparent 50%),radial-gradient(ellipse at 50% 80%,rgba(0,229,255,.03) 0%,transparent 50%);animation:aurora 20s ease-in-out infinite;z-index:0;pointer-events:none}
-@keyframes aurora{0%,100%{transform:translate(0,0) rotate(0deg)}33%{transform:translate(2%,-1%) rotate(.5deg)}66%{transform:translate(-1%,2%) rotate(-.5deg)}}
+/* AURORA BACKGROUND — v2.89.91: 정적 그라데이션. 이전엔 20초 회전 애니메이션
+   상시 실행으로 산만함·CPU 낭비. 색감만 남기고 모션 제거. */
+body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(ellipse at 20% 50%,rgba(124,106,255,.06) 0%,transparent 50%),radial-gradient(ellipse at 80% 20%,rgba(224,64,251,.04) 0%,transparent 50%),radial-gradient(ellipse at 50% 80%,rgba(0,229,255,.03) 0%,transparent 50%);z-index:0;pointer-events:none}
 
-/* HEADER */
+/* HEADER — v2.89.91: headerGlow 펄스 애니메이션 제거(상시 깜빡임). 그라데이션
+   라인은 그대로 두고 opacity만 정적으로 .45 고정. */
 .header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(10,10,12,.8);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);flex-shrink:0;position:relative;z-index:10}
-.header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 5%,var(--accent) 30%,var(--accent2) 50%,var(--accent3) 70%,transparent 95%);opacity:.5;animation:headerGlow 4s ease-in-out infinite alternate}
-@keyframes headerGlow{0%{opacity:.3}100%{opacity:.6}}
+.header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 5%,var(--accent) 30%,var(--accent2) 50%,var(--accent3) 70%,transparent 95%);opacity:.45}
 .thinking-bar{height:2px;background:transparent;position:relative;overflow:hidden;flex-shrink:0;z-index:10}
 .thinking-bar.active{background:rgba(124,106,255,.1)}
 .thinking-bar.active::after{content:'';position:absolute;top:0;left:-40%;width:40%;height:100%;background:linear-gradient(90deg,transparent,var(--accent),var(--accent2),var(--accent3),transparent);animation:thinkSlide 1.5s ease-in-out infinite}
@@ -78,7 +78,7 @@ select:hover,select:focus{border-color:var(--accent);box-shadow:0 0 12px var(--a
 /* MESSAGES */
 .msg{display:flex;flex-direction:column;gap:5px;animation:msgIn .5s cubic-bezier(.16,1,.3,1)}
 .msg-head{display:flex;align-items:center;gap:7px;font-weight:600;font-size:11px;color:var(--text)}
-.msg-time{font-weight:400;font-size:9px;color:var(--text-dim);margin-left:auto;opacity:.6}
+.msg-time{font-weight:400;font-size:10px;color:var(--text-dim);margin-left:auto}
 .av{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0}
 .av-user{background:var(--surface2);color:var(--text);border:1px solid var(--border2)}
 .av-ai{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;box-shadow:0 0 10px rgba(124,106,255,.3)}
@@ -208,7 +208,7 @@ body.corp-on .welcome-logo::before{background:#FBBF24}
 textarea{width:100%;background:transparent;border:none;color:var(--text-bright);font-family:inherit;font-size:13px;line-height:1.5;resize:none;outline:none;min-height:22px;max-height:150px}
 textarea::placeholder{color:var(--text-dim)}
 .input-footer{display:flex;align-items:center;justify-content:space-between}
-.input-hint{font-size:10px;color:var(--text-dim);opacity:.5}
+.input-hint{font-size:10px;color:var(--text-dim)}
 .input-btns{display:flex;gap:5px}
 .send-btn{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;width:32px;height:32px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:all .2s;box-shadow:0 2px 12px rgba(124,106,255,.35);position:relative;overflow:hidden}
 .send-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent,rgba(255,255,255,.15));opacity:0;transition:opacity .3s}
@@ -558,6 +558,15 @@ body.corp-dispatching .corp-overlay{opacity:1;animation:overlayPulse 1.5s ease-o
 .sl-body{padding:18px 22px 24px;overflow-y:auto;flex:1}
 .sl-loading{text-align:center;color:var(--text-dim);font-size:12px;padding:40px 0}
 .sl-empty{text-align:center;color:var(--text);font-size:14px;padding:60px 20px;line-height:1.6}
+/* v2.89.91 — 공통 empty-state 컴포넌트. 이전엔 산재한 plain-text empty들이
+   각자 다른 폰트·여백·구조였음. 한 토큰으로 통일 → 첫인상 일관성·여백 호흡 확보. */
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:48px 20px;color:var(--text);gap:10px;animation:emptyFadeIn .4s ease-out}
+.empty-state .es-icon{font-size:36px;opacity:.55;line-height:1;margin-bottom:4px;filter:drop-shadow(0 0 14px var(--accent-glow))}
+.empty-state .es-title{font-size:14px;font-weight:600;color:var(--text-bright);letter-spacing:-.1px}
+.empty-state .es-sub{font-size:12px;color:var(--text-dim);line-height:1.6;max-width:240px}
+.empty-state .es-cta{margin-top:10px;font-size:11px;color:var(--accent);background:rgba(0,255,65,.06);border:1px solid rgba(0,255,65,.25);padding:6px 14px;border-radius:8px;font-family:'SF Mono',monospace;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;transition:all .2s}
+.empty-state .es-cta:hover{background:rgba(0,255,65,.12);box-shadow:0 0 16px var(--accent-glow)}
+@keyframes emptyFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 .sl-summary{font-family:'SF Mono',monospace;font-size:11px;color:var(--text-dim);margin-bottom:14px;letter-spacing:.5px}
 .sl-summary strong{color:var(--text-bright);font-weight:700}
 .sl-group{margin-bottom:18px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(0,0,0,.2));border:1px solid rgba(255,255,255,.06);border-left:3px solid var(--ag-color,#5DE0E6);border-radius:12px;padding:12px 14px}
@@ -1342,7 +1351,7 @@ function showSkillLibrary(){
     const totalAll = _groups.reduce((sum,g)=>sum+g.tools.length,0);
     const totalMine = _groups.reduce((sum,g)=>sum+g.tools.filter(t=>t.injectedAt).length,0);
     if(totalAll === 0){
-      body.innerHTML = '<div class="sl-empty">아직 스킬이 없어요.<br><span style="font-size:11px;color:var(--text-dim);font-weight:400">EZER나 AI University에서 스킬팩을 주입해보세요.</span></div>';
+      body.innerHTML = '<div class="empty-state"><div class="es-icon">🧰</div><div class="es-title">아직 스킬이 없어요</div><div class="es-sub">EZER 또는 AI University에서 스킬팩을 주입하면 여기에 모입니다.</div></div>';
       return;
     }
     body.innerHTML = '<div class="sl-summary">총 <strong>'+totalAll+'</strong>개 스킬 · <span style="color:#FFB266">✨ Mine '+totalMine+'</span></div>'
@@ -1468,7 +1477,9 @@ function send(opts){
   /* corporate 모드인데 아직 셋업 안 끝났으면 명령 차단 */
   if(corp && !companyState.configured){
     setSending(false);
-    addCorpBanner('⚠️ 회사 설정을 먼저 완료해주세요. (위 카드에서 선택)');
+    /* v2.89.91 — 단순 경고 대신 다음 액션을 또렷하게 안내. 사용자가 "위 카드"가
+       무엇인지 못 찾아 헤매던 마찰 제거. */
+    addCorpBanner('⚠️ 회사 정체성(이름·목표)부터 알려주세요 — 아래 카드에서 3개만 입력하면 명령 받을 준비 끝!');
     /* 두뇌 폴더를 환영 온보딩에서 이미 정한 사용자에게 같은 질문을 두 번 묻지
        않습니다. brainExplicitlySet=true 면 Stage 1(폴더 선택)을 건너뛰고
        기존 두뇌 안에 _shared/ 구조만 만들어 인터뷰로 직행합니다. */
@@ -3645,7 +3656,12 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     /* Setup-complete banner — fire once per session, not on every state echo */
     if(corporateMode && companyState.configured && !_setupCompletionAnnounced){
       _setupCompletionAnnounced=true;
-      addCorpBanner('✅ '+(companyState.name||'회사')+' 설정 완료. 명령을 내려보세요.');
+      /* v2.89.91 — 셋업 완료 시 회사 정체성 + 사용 가능한 에이전트 라인업 한 줄로
+         보여줘 사용자가 "이제 뭐 할 수 있지?" 즉시 파악. 이전엔 "설정 완료. 명령
+         내려보세요" 만으로 무엇이 가능한지 모호했음. */
+      const co = companyState.name || '회사';
+      addCorpBanner('✅ '+co+' 출범! 9명 팀 대기 중 — 🧭 CEO · 📺 YouTube · 📷 Instagram · 🎨 디자이너 · ✍️ 작가 · 💼 비즈니스 · 🛠 개발자 · 🔍 리서처 · 🎵 루나(사운드) · 📅 비서');
+      addCorpBanner('💡 "다음 영상 컨셉 5개 뽑아줘" 처럼 자연어로 던지시면 CEO가 분배합니다.');
     }
     break;
   case 'agentConfigLoaded':

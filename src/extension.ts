@@ -403,7 +403,12 @@ function getConfig() {
    포트나 경로 컨벤션을 바꾸면 13곳 모두 고쳐야 했고, 한 곳을 빠뜨리면
    다른 엔진으로 라우팅되는 사고. 한 함수로 통합. */
 function _isLMStudioEngine(ollamaBase: string): boolean {
-    return _isLMStudioEngine(ollamaBase);
+    /* v2.89.98 — 진짜 원인 잡힘! v2.89.91 sed 일괄 치환이 이 함수의 본체까지
+       `_isLMStudioEngine(ollamaBase)`로 바꿔버려 자기 자신을 무한 호출 →
+       Maximum call stack. 사용자가 chat·corp 양쪽 모드에서 어떤 LLM 호출도
+       이 헬퍼를 거치니 전 라인이 마비됐었음. 원래 로직 복원: 1234 포트 또는
+       /v1 경로면 LM Studio. */
+    return ollamaBase.includes('1234') || ollamaBase.includes('v1');
 }
 
 /* v2.89.66 — _getBrainDir, _isBrainDirExplicitlySet, getCompanyDir, COMPANY_SUBDIR,

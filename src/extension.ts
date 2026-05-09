@@ -16044,7 +16044,8 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     `[사용자 명령]\n${prompt}`,
                     modelName,
                     'ceo',
-                    false
+                    false,
+                    { jsonMode: true }
                 );
             } catch (e: any) {
                 post({ type: 'agentEnd', agent: 'ceo' });
@@ -16087,33 +16088,83 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             }
             post({ type: 'agentEnd', agent: 'ceo' });
 
-            // 2) JSON 파싱 (관대하게)
-            let plan: { brief: string; tasks: { agent: string; task: string }[] } | null = null;
-            try {
-                const m = planRaw.match(/\{[\s\S]*\}/);
-                plan = JSON.parse(m ? m[0] : planRaw);
-            } catch {
-                plan = null;
+            // 2) JSON 파싱 — 4단계 관대한 파이프라인.
+            // (a) 노이즈 제거(소형 양자화 모델이 토하는 <span> 류 HTML 잡음)
+            // (b) 견고한 balanced extractor (_extractFirstJsonObject)
+            // (c) 잘린 JSON → 정규식으로 task 항목만이라도 회수
+            // (d) 그래도 비면 jsonMode + 슬림 컨텍스트로 1회 자동 재시도
+            type Plan = { brief: string; tasks: { agent: string; task: string }[] };
+            const _parsePlan = (raw: string): Plan | null => {
+                if (!raw) return null;
+                /* (a) HTML/XML 잡음 제거 — `="num">2026</span>` 같은 토크나이저 사고. */
+                const cleaned = raw.replace(/<\/?[a-zA-Z][^>]*>/g, '').replace(/="[a-zA-Z0-9_-]+">/g, '');
+                /* (b) balanced extractor */
+                const obj = _extractFirstJsonObject(cleaned);
+                if (obj && Array.isArray(obj.tasks) && obj.tasks.length > 0) {
+                    return { brief: String(obj.brief || ''), tasks: obj.tasks };
+                }
+                /* (c) 잘린 JSON 복구 — agent/task 쌍을 직접 추출 */
+                const tasks: { agent: string; task: string }[] = [];
+                const re = /"agent"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"\s*,\s*"task"\s*:\s*"((?:[^"\\]|\\.)*?)(?:"|$)/g;
+                let mm: RegExpExecArray | null;
+                while ((mm = re.exec(cleaned))) {
+                    const agent = mm[1].trim();
+                    const task = mm[2].replace(/\\n/g, '\n').replace(/\\"/g, '"').trim();
+                    if (agent && task) tasks.push({ agent, task });
+                }
+                if (tasks.length > 0) {
+                    const briefM = cleaned.match(/"brief"\s*:\s*"((?:[^"\\]|\\.)*?)(?:"|$)/);
+                    const brief = briefM ? briefM[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').trim() : '';
+                    return { brief, tasks };
+                }
+                return null;
+            };
+            let plan: Plan | null = _parsePlan(planRaw);
+
+            /* (d) 1회 자동 재시도 — 회사 컨텍스트 빼고 더 강한 JSON 지시로. */
+            if (!plan) {
+                try { _activeChatProvider?.postSystemNote?.('CEO 첫 응답 파싱 실패 — JSON 모드로 1회 재시도', '🔄'); } catch { /* ignore */ }
+                try {
+                    const retryRaw = await this._callAgentLLM(
+                        `${_personalizePrompt(CEO_PLANNER_PROMPT)}\n\n[중요] 오직 JSON 한 객체만 출력. 설명/주석/마크다운 금지. 형식: {"brief":"…","tasks":[{"agent":"<id>","task":"…"}]}`,
+                        `[사용자 명령]\n${prompt}`,
+                        modelName,
+                        'ceo',
+                        false,
+                        { jsonMode: true }
+                    );
+                    plan = _parsePlan(retryRaw);
+                    if (plan) planRaw = retryRaw;
+                } catch { /* fall through to error */ }
             }
+
             if (!plan || !Array.isArray(plan.tasks) || plan.tasks.length === 0) {
-                /* Most common cause: LM Studio's default 4096-token context
-                   gets exceeded by the company prompt (goals + decisions +
-                   memory + brain knowledge), so the model truncates output
-                   mid-JSON. Detect heuristically — short raw / unbalanced
-                   braces / no JSON at all → context-length hint first. */
+                /* 엔진별 힌트 — Ollama vs LM Studio 구분. 이전엔 LM Studio 슬라이더만
+                   안내해서 Ollama 사용자에겐 영영 안 맞는 처방이었음. */
+                const { ollamaBase } = getConfig();
+                const isLMStudio = ollamaBase.includes('1234') || ollamaBase.includes('v1');
                 const openBraces = (planRaw.match(/\{/g) || []).length;
                 const closeBraces = (planRaw.match(/\}/g) || []).length;
                 const looksTruncated = openBraces > closeBraces || planRaw.length < 50 || !/\{/.test(planRaw);
                 let hint = '';
                 if (looksTruncated) {
-                    hint = '\n\n💡 가장 흔한 원인 — LM Studio 컨텍스트 한도 초과:'
-                         + '\n  1) LM Studio → 모델 로드 화면에서 **Context Length** 슬라이더를 8192 이상으로 (기본 4096은 회사 프롬프트엔 너무 작음)'
-                         + '\n  2) 모델 다시 로드 후 재시도'
-                         + '\n  3) 그래도 안 되면 회사 폴더 _shared/decisions.md / _agents/ceo/memory.md 길이 줄이기';
+                    if (isLMStudio) {
+                        hint = '\n\n💡 LM Studio 출력이 잘렸어요. 가장 흔한 원인:'
+                             + '\n  1) 모델 로드 화면 → **Context Length** 슬라이더 8192 이상으로 (기본 4096은 회사 프롬프트에 부족)'
+                             + '\n  2) 모델 다시 로드 후 재시도'
+                             + '\n  3) 그래도 안 되면 더 큰 모델(3B 이상) 또는 회사 폴더 `_shared/decisions.md` / `_agents/ceo/memory.md` 길이 줄이기';
+                    } else {
+                        hint = '\n\n💡 Ollama 출력이 잘렸어요. 가장 흔한 원인:'
+                             + '\n  1) 컨텍스트가 8192를 넘었을 가능성 — 회사 폴더 `_shared/decisions.md` / `_agents/ceo/memory.md` 길이 줄여보세요'
+                             + '\n  2) 더 큰 모델로 변경 (3B 이상 권장 — 1B 모델은 JSON 출력 실패가 잦음)'
+                             + '\n  3) Ollama 재시작 (`pkill ollama && ollama serve`) 후 재시도';
+                    }
                 } else {
                     hint = '\n\n💡 모델이 JSON 형식 지시를 못 따랐어요:'
-                         + '\n  1) 더 큰 모델로 변경 (3B 이상 권장 — 1B 모델은 JSON 출력 자주 실패)'
-                         + '\n  2) LM Studio 사용 시 Context Length 8192 이상으로 늘려보세요';
+                         + '\n  1) 더 큰 모델로 변경 (3B 이상 권장 — qwen2.5:3b, llama3.2:3b 등)'
+                         + (isLMStudio
+                             ? '\n  2) LM Studio Context Length 8192 이상으로 (모델 로드 화면 슬라이더)'
+                             : '\n  2) Ollama 재시작 후 재시도');
                 }
                 post({
                     type: 'error',
@@ -16837,7 +16888,8 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
         userMsg: string,
         modelName: string,
         agentId: string,
-        broadcast: boolean
+        broadcast: boolean,
+        opts?: { jsonMode?: boolean }
     ): Promise<string> {
         const { ollamaBase, defaultModel, timeout } = getConfig();
         /* v2.89.26 — 에이전트별 모델 override. 사용자가 외부 연결 패널에서
@@ -16861,15 +16913,23 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
 
         const signal = this._abortController?.signal;
 
+        /* v2.89.89 — 출력 cap 제거 + JSON 모드 지원. 이전엔 LM Studio max_tokens=4096,
+           Ollama num_predict=2048로 출력을 잘랐는데, 멀티태스크 plan(특히 한국어)이
+           이 천장에 부딪혀 잘린 JSON을 토하는 사고가 잦았음. 이제:
+           - Ollama: num_predict: -1 (모델이 EOS 만날 때까지 — 공식 옵션)
+           - LM Studio: max_tokens 미지정 (모델 자체 최대치 사용)
+           - jsonMode=true면 양쪽 다 JSON 강제(format/response_format) — 닫는 } 만나면
+             즉시 stop이라 cap 해제해도 무한 생성 위험 없음. 안전장치는
+             기존 first-token / idle timeout(line 16910)이 그대로 막아줌. */
         if (isLMStudio) {
-            const body = {
+            const body: any = {
                 model: modelName || defaultModel,
                 messages,
                 stream: true,
-                max_tokens: 4096,
                 temperature: this._temperature,
                 top_p: this._topP
             };
+            if (opts?.jsonMode) body.response_format = { type: 'json_object' };
             const response = await axios.post(apiUrl, body, { timeout, responseType: 'stream', signal });
             await this._consumeLLMStream(response.data, signal, true, (token) => {
                 result += token;
@@ -16880,8 +16940,9 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 model: modelName || defaultModel,
                 messages,
                 stream: true,
-                options: { num_ctx: 8192, num_predict: 2048, temperature: this._temperature, top_p: this._topP, top_k: this._topK }
+                options: { num_ctx: 8192, num_predict: -1, temperature: this._temperature, top_p: this._topP, top_k: this._topK }
             };
+            if (opts?.jsonMode) body.format = 'json';
             const response = await axios.post(apiUrl, body, { timeout, responseType: 'stream', signal });
             await this._consumeLLMStream(response.data, signal, false, (token) => {
                 result += token;

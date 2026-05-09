@@ -5403,7 +5403,7 @@ ${_GOAL_PREAMBLE}
 ## 작업 원칙
 - "정리"보다 "다음 액션 1개" 명시가 우선
 `,
-  editor: `# 🎵 루나(Editor · Sound Director) 에이전트 — 나의 미션
+  editor: `# 🎵 루나 — 사운드 감독 — 나의 미션
 
 ${_GOAL_PREAMBLE}
 ## 장기 목표 (3~6개월)
@@ -13509,6 +13509,87 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         });
     }
 
+    /* v2.89.106 — 대화 세션 아카이브.
+       기존엔 `+` (newChat) 누르면 _initHistory()가 즉시 메시지 다 날려버려서
+       사용자가 "어제 뭐 물어봤더라" 다시 못 봄. 이제는:
+       1. resetChat 직전에 현재 대화를 sessions 배열에 push (메시지 ≥ 1 일 때만)
+       2. 사용자가 "이전 대화" 메뉴 열면 리스트 → 클릭으로 복원
+       세션은 워크스페이스 globalState에 저장 (모든 워크스페이스 공유 — 사용자가
+       프로젝트 옮겨도 대화 보존).
+       세션당 시작 첫 user 메시지 80자를 title로 사용. 최근 50개만 유지. */
+    private _sessionsKey(): string {
+        return 'chatSessionsV1';
+    }
+    private _readSessions(): Array<{
+        id: string;
+        title: string;
+        createdAt: string;
+        updatedAt: string;
+        messageCount: number;
+        chat: any[];
+        display: any[];
+    }> {
+        try {
+            const arr = this._ctx.globalState.get<any[]>(this._sessionsKey(), []);
+            return Array.isArray(arr) ? arr : [];
+        } catch { return []; }
+    }
+    private _writeSessions(sessions: any[]) {
+        try {
+            const trimmed = sessions.slice(0, 50);
+            this._ctx.globalState.update(this._sessionsKey(), trimmed);
+        } catch { /* ignore */ }
+    }
+    private _archiveCurrentChat(): boolean {
+        if (this._displayMessages.length === 0) return false;
+        const sessions = this._readSessions();
+        const firstUser = this._displayMessages.find(m => m.role === 'user');
+        const titleSrc = firstUser?.text || this._displayMessages[0]?.text || '대화';
+        const title = titleSrc.replace(/\s+/g, ' ').trim().slice(0, 80) || '대화';
+        const now = new Date().toISOString();
+        const session = {
+            id: 'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+            title,
+            createdAt: now,
+            updatedAt: now,
+            messageCount: this._displayMessages.length,
+            chat: this._chatHistory,
+            display: this._displayMessages
+        };
+        sessions.unshift(session);  /* 최신이 위 */
+        this._writeSessions(sessions);
+        return true;
+    }
+    private _restoreSession(id: string): boolean {
+        const sessions = this._readSessions();
+        const sess = sessions.find(s => s.id === id);
+        if (!sess) return false;
+        /* 현재 대화도 안 잃게 — 비어있지 않으면 archive */
+        try { this._archiveCurrentChat(); } catch { /* ignore */ }
+        this._chatHistory = Array.isArray(sess.chat) ? sess.chat : [];
+        this._displayMessages = Array.isArray(sess.display) ? sess.display : [];
+        this._saveHistory();
+        if (this._view) {
+            this._view.webview.postMessage({ type: 'clearChat' });
+            for (const m of this._displayMessages) {
+                this._view.webview.postMessage({
+                    type: m.role === 'user' ? 'userEcho' : 'response',
+                    value: m.text
+                });
+            }
+            this._view.webview.postMessage({ type: 'systemNote', value: `📂 이전 대화로 복원했어요 — "${sess.title}"` });
+        }
+        return true;
+    }
+    private _deleteSession(id: string): boolean {
+        const sessions = this._readSessions();
+        const idx = sessions.findIndex(s => s.id === id);
+        if (idx < 0) return false;
+        sessions.splice(idx, 1);
+        this._writeSessions(sessions);
+        return true;
+    }
+
     // ============================================================
     // 🎬 Thinking Mode helpers
     // ============================================================
@@ -13618,7 +13699,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             // 회사가 출범한 이후 실제 경과일 (1일차 = 첫날).
             // HUD의 DAY 카운터가 가상 시간이 아니라 실제 달력에 동기화됨.
             companyDay: configured ? getCompanyDay() : 1,
-            note: noteToUser || ''
+            note: noteToUser || '',
+            /* v2.89.106 — 채용 상태 single source of truth. 사이드바가 자체 localStorage
+               대신 이 값을 우선 사용해서 대쉬보드와 즉시 일관. */
+            hiredAgents: readHiredAgents()
         });
     }
 
@@ -13752,12 +13836,19 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     }
 
     public resetChat() {
+        /* v2.89.106 — 새 대화 시작 전 현재 대화를 아카이브에 보관. 빈 대화면 skip. */
+        const archived = this._archiveCurrentChat();
         this._initHistory();
         this._saveHistory();
         if (this._view) {
             this._view.webview.postMessage({ type: 'clearChat' });
+            if (archived) {
+                this._view.webview.postMessage({
+                    type: 'systemNote',
+                    value: '✅ 이전 대화는 보관되었어요 (📂 메뉴에서 다시 열기).'
+                });
+            }
         }
-        vscode.window.showInformationMessage('Connect AI: 새 대화가 시작되었습니다.');
     }
 
     /** 대화를 Markdown 파일로 내보내기 */
@@ -14602,21 +14693,62 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 case 'newChat':
                     this.resetChat();
                     break;
-                /* v2.89.95 — 채용 PIN 통과 후 webview가 알림. 회사 폴더에 영구 저장
-                   해서 앱 재설치/사이드바 재시작 후에도 채용 상태 유지. */
+                /* v2.89.106 — 대화 세션 아카이브 명령 */
+                case 'listSessions': {
+                    const sessions = this._readSessions().map(s => ({
+                        id: s.id, title: s.title, createdAt: s.createdAt,
+                        updatedAt: s.updatedAt, messageCount: s.messageCount
+                    }));
+                    try { this._view?.webview.postMessage({ type: 'sessionsList', value: sessions }); } catch { /* ignore */ }
+                    break;
+                }
+                case 'restoreSession': {
+                    const id = String((msg as any).id || '').trim();
+                    if (!id) break;
+                    const ok = this._restoreSession(id);
+                    if (!ok) {
+                        try { this._view?.webview.postMessage({ type: 'systemNote', value: '⚠️ 세션을 찾을 수 없어요.' }); } catch { /* ignore */ }
+                    }
+                    break;
+                }
+                case 'deleteSession': {
+                    const id = String((msg as any).id || '').trim();
+                    if (!id) break;
+                    this._deleteSession(id);
+                    /* refresh list */
+                    const sessions = this._readSessions().map(s => ({
+                        id: s.id, title: s.title, createdAt: s.createdAt,
+                        updatedAt: s.updatedAt, messageCount: s.messageCount
+                    }));
+                    try { this._view?.webview.postMessage({ type: 'sessionsList', value: sessions }); } catch { /* ignore */ }
+                    break;
+                }
+                /* v2.89.95 — 채용 PIN 통과 후 webview가 알림. 회사 폴더에 영구 저장.
+                   v2.89.106 — PIN backend 재검증 + 두 화면 동기화. 사이드바·대쉬보드
+                   어디서 채용해도 backend가 단일 진실 소스. */
                 case 'agentHired':
                     try {
                         const aid = String((msg as any).agent || '').trim();
-                        if (aid) {
-                            const dir = path.join(getCompanyDir(), '_shared');
-                            try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
-                            const f = path.join(dir, 'hired.json');
-                            let cur: any = {};
-                            try { cur = JSON.parse(fs.readFileSync(f, 'utf-8') || '{}'); } catch { /* malformed */ }
-                            cur[aid] = { hiredAt: new Date().toISOString() };
-                            try { fs.writeFileSync(f, JSON.stringify(cur, null, 2)); } catch { /* readonly fs */ }
-                            try { vscode.window.showInformationMessage(`🎉 ${aid} 에이전트 채용 완료! 이제 활용 가능합니다.`); } catch { /* ignore */ }
+                        const pin = String((msg as any).pin || '');
+                        if (!aid || !LOCKED_AGENTS_DEFAULT[aid]) break;
+                        /* 잠긴 에이전트만 PIN 게이트 통과 가능. PIN 없거나 다르면 거부. */
+                        if (pin !== '0000') {
+                            try { this._view?.webview.postMessage({ type: 'systemNote', value: '❌ 인증 실패: 잘못된 코드입니다.' }); } catch { /* ignore */ }
+                            break;
                         }
+                        const ok = markAgentHired(aid);
+                        if (!ok) {
+                            try { this._view?.webview.postMessage({ type: 'systemNote', value: '⚠️ 채용 실패: 회사 폴더에 쓰기 권한이 없습니다.' }); } catch { /* ignore */ }
+                            break;
+                        }
+                        try { vscode.window.showInformationMessage(`🎉 ${aid} 에이전트 채용 완료! 이제 활용 가능합니다.`); } catch { /* ignore */ }
+                        /* 사이드바에 즉시 동기화 + 대쉬보드 패널 열려있으면 거기도 refresh */
+                        try {
+                            this._view?.webview.postMessage({ type: 'hiredAgents', value: readHiredAgents() });
+                        } catch { /* ignore */ }
+                        try {
+                            if (CompanyDashboardPanel.current) CompanyDashboardPanel.current.refresh();
+                        } catch { /* ignore */ }
                     } catch { /* ignore — UI 이미 잠금 해제됨 */ }
                     break;
                 case 'ready':

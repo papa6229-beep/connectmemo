@@ -16207,7 +16207,20 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 if (!streamed) {
                     post({ type: 'response', value: text });
                 }
-                this._displayMessages.push({ text, role: 'ai' });
+                /* v2.89.100 — 캐주얼 챗 응답에 파일 액션 태그가 들어있으면 실행. 이전엔
+                   text에 <list_files .../> 같은 태그가 raw로 출력만 되고 실제 동작 0이라
+                   사용자가 "왜 안 돼?" → 정답은 "여기서 안 부르고 있었음". */
+                try {
+                    const fileReport = await this._executeActions(text, { silent: true });
+                    if (fileReport.length > 0) {
+                        const reportMsg = `\n\n---\n**작업 결과**\n${fileReport.join('\n')}`;
+                        post({ type: 'response', value: reportMsg });
+                        appendConversationLog({ speaker: '시스템', emoji: '📁', body: fileReport.join('\n') });
+                    }
+                } catch (actErr: any) {
+                    console.error('[Connect AI] casual-chat 파일 액션 실패:', actErr?.message || actErr);
+                }
+                this._displayMessages.push({ text: this._stripActionTags(text), role: 'ai' });
                 appendConversationLog({ speaker: 'CEO', emoji: '👔', body: text });
                 try { await this._maybeMirrorToTelegram(); } catch { /* ignore */ }
                 return;
@@ -17186,7 +17199,38 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 top_p: this._topP
             };
             if (opts?.jsonMode) body.response_format = { type: 'json_object' };
-            const response = await axios.post(apiUrl, body, { timeout, responseType: 'stream', signal });
+            /* v2.89.100 — 일부 LM Studio 빌드(예: 0.3.x 일부)는 response_format에 'json_object'를
+               거부하고 'json_schema' 또는 'text' 만 허용 → 400 에러. 그럴 땐 response_format을
+               빼고 재시도. 시스템 프롬프트가 이미 JSON-only를 강제하고 있어서 안전. */
+            let response;
+            try {
+                response = await axios.post(apiUrl, body, { timeout, responseType: 'stream', signal });
+            } catch (err: any) {
+                const status = err?.response?.status;
+                const isStreamErr = err?.response?.data?.on;
+                let detail = '';
+                if (isStreamErr) {
+                    try {
+                        detail = await new Promise<string>((resolve) => {
+                            let acc = '';
+                            err.response.data.on('data', (c: Buffer) => { acc += c.toString(); });
+                            err.response.data.on('end', () => resolve(acc));
+                            err.response.data.on('error', () => resolve(acc));
+                        });
+                    } catch { /* ignore */ }
+                } else if (typeof err?.response?.data === 'string') {
+                    detail = err.response.data;
+                } else if (err?.response?.data) {
+                    try { detail = JSON.stringify(err.response.data); } catch { /* ignore */ }
+                }
+                const isFormatErr = status === 400 && /response_format|json_schema|json_object/i.test(detail || err?.message || '');
+                if (isFormatErr && body.response_format) {
+                    delete body.response_format;
+                    response = await axios.post(apiUrl, body, { timeout, responseType: 'stream', signal });
+                } else {
+                    throw err;
+                }
+            }
             await this._consumeLLMStream(response.data, signal, true, (token) => {
                 result += token;
                 if (broadcast) broadcast_fn(token);

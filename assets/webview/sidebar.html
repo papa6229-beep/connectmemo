@@ -1516,12 +1516,23 @@ function showSkillCard(payload){
 /* v2.89.99 — 멀티 단계 매트릭스 로더. 단계별로 터미널 스타일 마커가
    pending(◌) → active(▸) → done(✓) 로 전환. 활성 단계만 그린 펄스, 진행 막대 +
    경과 시간 표시. 절대 산만하지 않게 — 명료한 단일 정보 채널. */
-const LOADING_PHASES=[
+/* v2.89.100 — 일반 채팅 vs 1인 기업 모드별로 다른 단계 라벨. 같은 비주얼 언어,
+   다른 카피. 사용자가 "지금 어디까지 왔는지" 한눈에 알 수 있게. */
+const LOADING_PHASES_CHAT=[
   '워크스페이스 스캔',
   '컨텍스트 분석',
   '추론 시작',
   '응답 생성'
 ];
+const LOADING_PHASES_CORP=[
+  'CEO 작업 분해',
+  '에이전트 배정',
+  '실행 중',
+  '최종 보고 작성'
+];
+function _currentLoadingPhases(){
+  return corporateMode ? LOADING_PHASES_CORP : LOADING_PHASES_CHAT;
+}
 let _loaderTimer=null;
 let _loaderElapsedTimer=null;
 let _loaderStart=0;
@@ -1532,7 +1543,7 @@ function _formatElapsed(ms){
 }
 function showLoader(){
   loader=document.createElement('div');loader.className='msg';
-  const stepsHtml=LOADING_PHASES.map((p,i)=>(
+  const stepsHtml=_currentLoadingPhases().map((p,i)=>(
     '<div class="ml-step '+(i===0?'active':'pending')+'" data-step="'+i+'">'+
       '<span class="ml-mark">'+(i===0?'▸':'◌')+'</span>'+
       '<span class="ml-label">'+p+'</span>'+
@@ -1565,14 +1576,14 @@ function showLoader(){
       else { el.classList.add('pending'); if(mark) mark.textContent='◌'; }
     });
     if(barEl){
-      const pct=Math.min(96,((p+1)/LOADING_PHASES.length)*100 - 4);
+      const pct=Math.min(96,((p+1)/_currentLoadingPhases().length)*100 - 4);
       barEl.style.width=pct+'%';
     }
   };
   setPhase(0);
   if(_loaderTimer) clearInterval(_loaderTimer);
   _loaderTimer=setInterval(()=>{
-    phase=Math.min(phase+1,LOADING_PHASES.length-1);
+    phase=Math.min(phase+1,_currentLoadingPhases().length-1);
     setPhase(phase);
   },2200);
   if(_loaderElapsedTimer) clearInterval(_loaderElapsedTimer);
@@ -1621,11 +1632,10 @@ function send(opts){
   }
   addMsg(displayText,'user');
   input.value='';input.style.height='auto';setSending(true);
-  if(corp && pendingFiles.length===0){
-    /* 카드 보드가 시각화 담당 — 일반 로더 안 띄움 */
-  } else {
-    showLoader();
-  }
+  /* v2.89.100 — corp 모드에서도 로더 띄움. 카드 보드가 펄스로 시각화하긴 하지만
+     CEO 단계에서 시간이 길어지면 사용자에게 "뭐 일어나고 있는지" 단일 정보 채널이
+     필요. 매트릭스 4단계 로더가 그 역할 — 카드 보드와 병행해도 시각적으로 안 부딪힘. */
+  showLoader();
   if(pendingFiles.length>0){
     vscode.postMessage({type:'promptWithFile',value:text||'이 파일을 분석해주세요.',model:modelSel.value,files:pendingFiles,internet:internetEnabled});
     pendingFiles=[];attachPreview.innerHTML='';attachPreview.classList.remove('visible');

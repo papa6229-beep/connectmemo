@@ -414,18 +414,24 @@ body.corp-dispatching .ab-svg{opacity:1}
 .msg-agent.streaming .msg-body{box-shadow:inset 0 0 18px var(--ag-color-glow,transparent)}
 .msg-agent .ag-elapsed{font-size:9px;color:var(--text-dim);margin-left:auto;font-family:'SF Mono',monospace;opacity:.6}
 
-/* ===== CEO Brief Card (작업 분배 시작 알림) ===== */
-.brief-card{background:linear-gradient(135deg,rgba(248,250,252,.06),rgba(248,250,252,.02));border:1px solid rgba(248,250,252,.25);border-radius:14px;padding:14px 16px;margin-left:29px;animation:msgIn .5s cubic-bezier(.16,1,.3,1);position:relative;overflow:hidden;backdrop-filter:blur(8px)}
-.brief-card::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(248,250,252,.08),transparent);transform:translateX(-100%);animation:briefSweep 2s ease-out}
-@keyframes briefSweep{to{transform:translateX(100%)}}
-.brief-head{font-family:'SF Mono',monospace;font-size:10px;letter-spacing:2px;color:#F8FAFC;margin-bottom:8px;text-transform:uppercase;opacity:.85}
-.brief-text{font-size:13px;line-height:1.6;color:var(--text-bright);margin-bottom:10px;font-weight:500}
-.brief-tasks{display:flex;flex-direction:column;gap:5px;margin-top:8px}
-.brief-task{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text);padding:5px 8px;background:rgba(0,0,0,.3);border-radius:7px;border-left:2px solid var(--ag-color,var(--accent));animation:briefTaskIn .4s ease-out backwards}
-.brief-task .bt-emoji{font-size:13px}
-.brief-task .bt-name{font-family:'SF Mono',monospace;font-size:9.5px;font-weight:700;color:var(--ag-color,var(--accent));letter-spacing:.5px;text-transform:uppercase;min-width:62px}
-.brief-task .bt-text{flex:1;color:var(--text-bright);font-size:11.5px}
-@keyframes briefTaskIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
+/* ===== CEO Brief Card (작업 분배 시작 알림) — v2.89.102 매트릭스 터미널 재작업 =====
+   이전: 검은 알약(pill) + 좌측 컬러 보더 → "버튼 같다, 보기 안 좋다" 사용자 피드백.
+   이후: 터미널 로그 라인 스타일. 모노스페이스 + 화살표 prefix + 에이전트 컬러 글로우.
+   매트릭스 ml-loader / report-card 와 같은 비주얼 언어로 통일. */
+.brief-card{background:linear-gradient(180deg,rgba(0,15,5,.85),rgba(0,5,2,.95));border:1px solid rgba(0,255,65,.25);border-radius:12px;padding:14px 16px 12px;margin-left:29px;animation:msgIn .5s cubic-bezier(.16,1,.3,1);position:relative;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.4),0 0 22px rgba(0,255,65,.08);max-width:520px}
+.brief-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 5%,var(--accent) 50%,transparent 95%);opacity:.6;animation:briefTopGlow 3s ease-in-out infinite alternate}
+@keyframes briefTopGlow{0%{opacity:.25}100%{opacity:.7}}
+.brief-card::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,255,65,.025) 3px,rgba(0,255,65,.025) 4px);pointer-events:none;mix-blend-mode:overlay;border-radius:12px}
+.brief-head{font-family:'SF Mono','Consolas',monospace;font-size:10px;letter-spacing:2.4px;color:var(--accent);margin-bottom:10px;text-transform:uppercase;text-shadow:0 0 8px var(--accent-glow);display:flex;align-items:center;gap:8px;position:relative;z-index:1}
+.brief-head::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);animation:mlHeadDot 1.2s ease-in-out infinite}
+.brief-text{font-size:13px;line-height:1.65;color:var(--text-bright);margin-bottom:12px;font-weight:500;position:relative;z-index:1;padding-left:2px;border-left:2px solid rgba(0,255,65,.25);padding-left:10px}
+.brief-tasks{display:flex;flex-direction:column;gap:4px;margin-top:10px;position:relative;z-index:1;border-top:1px dashed rgba(0,255,65,.15);padding-top:10px}
+.brief-task{display:flex;align-items:flex-start;gap:8px;font-size:12px;line-height:1.55;color:var(--text-bright);padding:4px 0 4px 4px;background:transparent;border:none;border-radius:0;font-family:'SF Mono','Consolas',monospace;animation:briefTaskIn .4s ease-out backwards;position:relative}
+.brief-task::before{content:'›';color:var(--ag-color,var(--accent));font-weight:700;font-size:14px;line-height:1.4;flex-shrink:0;text-shadow:0 0 6px var(--ag-color,var(--accent));opacity:.85}
+.brief-task .bt-emoji{font-size:14px;line-height:1.4;flex-shrink:0;filter:drop-shadow(0 0 4px var(--ag-color,transparent))}
+.brief-task .bt-name{font-size:9.5px;font-weight:700;color:var(--ag-color,var(--accent));letter-spacing:.6px;text-transform:uppercase;flex-shrink:0;line-height:1.7;text-shadow:0 0 6px var(--ag-color,transparent);padding:0 6px;border:1px solid currentColor;border-radius:3px;background:rgba(0,0,0,.3)}
+.brief-task .bt-text{flex:1;color:var(--text);font-size:12px;font-family:'Inter','SF Pro Display',-apple-system,system-ui,sans-serif;font-weight:400}
+@keyframes briefTaskIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
 
 /* ===== CEO Final Report Card ===== */
 .report-card{background:linear-gradient(135deg,rgba(0,255,65,.04),rgba(0,143,17,.02));border:1px solid rgba(0,255,65,.3);border-radius:16px;padding:18px 20px;margin-left:29px;animation:msgIn .55s cubic-bezier(.16,1,.3,1);position:relative;overflow:hidden;backdrop-filter:blur(8px);box-shadow:0 8px 32px rgba(0,0,0,.4),0 0 24px rgba(0,255,65,.12)}
@@ -3673,7 +3679,7 @@ function showBriefCard(brief,tasks){
     const a=agentMap[t.agent];if(!a)return;
     tasksHtml+='<div class="brief-task" style="--ag-color:'+a.color+';animation-delay:'+(0.1+i*0.08)+'s"><span class="bt-emoji">'+a.emoji+'</span><span class="bt-name">'+a.name+'</span><span class="bt-text">'+esc(t.task)+'</span></div>';
   });
-  el.innerHTML='<div class="brief-head">🧭 CEO · 작업 분배</div><div class="brief-text">'+esc(brief)+'</div><div class="brief-tasks">'+tasksHtml+'</div>';
+  el.innerHTML='<div class="brief-head">CEO · DISPATCH PROTOCOL</div><div class="brief-text">'+esc(brief)+'</div><div class="brief-tasks">'+tasksHtml+'</div>';
   chat.appendChild(el);scrollChatToBottomIfNear();
 }
 
@@ -3949,7 +3955,9 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     if(_twizMessageHandler)_twizMessageHandler(msg);
     break;
   case 'agentDispatch':{
-    hideLoader();
+    /* v2.89.102 — hideLoader 제거. CEO 분배 직후 specialist가 실제 토큰을
+       내기까지 또 한참 걸리는데, 여기서 로더 죽이면 사용자는 다시 빈 화면 응시.
+       로더는 첫 agentChunk 도착 시점에서만 사라지도록 위임. */
     document.body.classList.add('corp-dispatching');
     const taskIds=(msg.tasks||[]).map(t=>t.agent);
     showBriefCard(msg.brief||'',msg.tasks||[]);
@@ -3961,13 +3969,17 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     break;
   }
   case 'agentStart':{
-    hideLoader();
+    /* v2.89.102 — 동일 — hideLoader는 첫 agentChunk에서. CEO planning 단계가
+       길어도 매트릭스 로더가 끝까지 떠 있어서 사용자가 진행 상황 인지 가능. */
     setCardState(msg.agent,'working',msg.task);
     /* CEO는 카드 펄스만, specialist는 채팅 메시지도 시작 */
     if(msg.agent!=='ceo'){startAgentMsg(msg.agent,msg.task||'');}
     break;
   }
   case 'agentChunk':{
+    /* v2.89.102 — 첫 specialist 토큰 도착 시 로더 정리. 실제 컨텐츠가 흐르기
+       시작하는 진짜 순간에만 hide. */
+    hideLoader();
     appendAgentChunk(msg.agent,msg.value||'');
     break;
   }
@@ -3989,6 +4001,8 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     break;
   }
   case 'corporateReport':{
+    /* v2.89.102 — 안전망. specialist가 한 번도 토큰 안 보내고 끝나도 로더 정리. */
+    hideLoader();
     showReportCard(msg.brief||'',msg.report||'',msg.sessionPath||'',msg.sessionRel||'');
     setSending(false);
     /* 잠시 후 모든 카드 idle로 복귀 */

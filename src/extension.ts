@@ -9993,11 +9993,17 @@ class CompanyDashboardPanel {
        Below that: today (tasks + approvals merged), then YouTube + Analytics
        only when the channel is connected. Card count: 9 → 4 (or 6 with YT). -->
 
-  <!-- 1) 우리 팀 — hero. Always present, 10 cards in responsive grid. -->
+  <!-- 1) 우리 팀 — hero. v2.89.108: 상태 필터 + 범례 추가. -->
   <section class="card span-12 hero-team" id="teamCard">
     <div class="card-head">
       <div class="card-title"><span class="title-icon">👥</span> 에이전트 매트릭스</div>
       <span class="badge" id="teamBadge">10명</span>
+    </div>
+    <div class="team-legend">
+      <span class="tl-chip tl-active" data-filter="all">전체 <span class="tl-count" id="tlAll">0</span></span>
+      <span class="tl-chip" data-filter="online" title="활성 — CEO가 호출 가능"><span class="tl-dot tl-dot-on"></span>활성 <span class="tl-count" id="tlOn">0</span></span>
+      <span class="tl-chip" data-filter="optional" title="OPT-IN 비활성 — 카드 클릭해서 활성화"><span class="tl-dot tl-dot-opt"></span>옵션 <span class="tl-count" id="tlOpt">0</span></span>
+      <span class="tl-chip" data-filter="locked" title="채용 PIN 필요"><span class="tl-dot tl-dot-lock"></span>채용 대기 <span class="tl-count" id="tlLock">0</span></span>
     </div>
     <div class="team-grid" id="teamBody"></div>
   </section>
@@ -13647,15 +13653,9 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     private _sessionsKey(): string {
         return 'chatSessionsV1';
     }
-    private _readSessions(): Array<{
-        id: string;
-        title: string;
-        createdAt: string;
-        updatedAt: string;
-        messageCount: number;
-        chat: any[];
-        display: any[];
-    }> {
+    private _readSessions(): any[] {
+        /* v2.89.108 — 타입 any[]로 완화. v2.89.106에선 좁은 타입이었지만, preview·workspace·
+           workspaceName 메타가 추가되면서 너무 좁아짐. 내부 storage라 any로 충분. */
         try {
             const arr = this._ctx.globalState.get<any[]>(this._sessionsKey(), []);
             return Array.isArray(arr) ? arr : [];
@@ -13667,16 +13667,33 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             this._ctx.globalState.update(this._sessionsKey(), trimmed);
         } catch { /* ignore */ }
     }
+    /* v2.89.108 — 세션을 프로젝트(워크스페이스)별로 그룹화하기 위한 메타 추가 */
+    private _currentWorkspaceMeta(): { workspace: string; workspaceName: string } {
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+        let name = '';
+        if (root) {
+            try { name = path.basename(root); } catch { name = root; }
+        } else {
+            name = '워크스페이스 없음';
+        }
+        return { workspace: root, workspaceName: name };
+    }
     private _archiveCurrentChat(): boolean {
         if (this._displayMessages.length === 0) return false;
         const sessions = this._readSessions();
         const firstUser = this._displayMessages.find(m => m.role === 'user');
         const titleSrc = firstUser?.text || this._displayMessages[0]?.text || '대화';
         const title = titleSrc.replace(/\s+/g, ' ').trim().slice(0, 80) || '대화';
+        const lastMsg = this._displayMessages[this._displayMessages.length - 1];
+        const preview = (lastMsg?.text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
         const now = new Date().toISOString();
-        const session = {
+        const ws = this._currentWorkspaceMeta();
+        const session: any = {
             id: 'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
             title,
+            preview,
+            workspace: ws.workspace,
+            workspaceName: ws.workspaceName,
             createdAt: now,
             updatedAt: now,
             messageCount: this._displayMessages.length,
@@ -13999,10 +14016,13 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         if (this._activeSessionId) {
             const idx = sessions.findIndex(s => s.id === this._activeSessionId);
             if (idx >= 0) {
+                const lastMsg = this._displayMessages[this._displayMessages.length - 1];
+                const preview = (lastMsg?.text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
                 sessions[idx] = {
                     ...sessions[idx],
                     updatedAt: now,
                     messageCount: this._displayMessages.length,
+                    preview,
                     chat: this._chatHistory,
                     display: this._displayMessages
                 };
@@ -14860,11 +14880,25 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     break;
                 /* v2.89.106 — 대화 세션 아카이브 명령 */
                 case 'listSessions': {
-                    const sessions = this._readSessions().map(s => ({
-                        id: s.id, title: s.title, createdAt: s.createdAt,
-                        updatedAt: s.updatedAt, messageCount: s.messageCount
-                    }));
-                    try { this._view?.webview.postMessage({ type: 'sessionsList', value: sessions }); } catch { /* ignore */ }
+                    const cur = this._currentWorkspaceMeta();
+                    const sessions = this._readSessions().map(s => {
+                        const ss: any = s;
+                        return {
+                            id: ss.id, title: ss.title, preview: ss.preview || '',
+                            workspace: ss.workspace || '', workspaceName: ss.workspaceName || '워크스페이스 없음',
+                            createdAt: ss.createdAt, updatedAt: ss.updatedAt,
+                            messageCount: ss.messageCount,
+                        };
+                    });
+                    try {
+                        this._view?.webview.postMessage({
+                            type: 'sessionsList',
+                            value: sessions,
+                            currentWorkspace: cur.workspace,
+                            currentWorkspaceName: cur.workspaceName,
+                            activeSessionId: this._activeSessionId
+                        });
+                    } catch { /* ignore */ }
                     break;
                 }
                 case 'restoreSession': {
@@ -14876,16 +14910,48 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     }
                     break;
                 }
+                case 'renameSession': {
+                    /* v2.89.108 — 세션 제목 수동 변경 */
+                    const id = String((msg as any).id || '').trim();
+                    const newTitle = String((msg as any).title || '').trim().slice(0, 80);
+                    if (!id || !newTitle) break;
+                    const sessions = this._readSessions();
+                    const idx = sessions.findIndex(s => s.id === id);
+                    if (idx >= 0) {
+                        sessions[idx].title = newTitle;
+                        sessions[idx].updatedAt = new Date().toISOString();
+                        this._writeSessions(sessions);
+                    }
+                    /* refresh list */
+                    const cur = this._currentWorkspaceMeta();
+                    const out = this._readSessions().map(s => {
+                        const ss: any = s;
+                        return {
+                            id: ss.id, title: ss.title, preview: ss.preview || '',
+                            workspace: ss.workspace || '', workspaceName: ss.workspaceName || '워크스페이스 없음',
+                            createdAt: ss.createdAt, updatedAt: ss.updatedAt,
+                            messageCount: ss.messageCount,
+                        };
+                    });
+                    try { this._view?.webview.postMessage({ type: 'sessionsList', value: out, currentWorkspace: cur.workspace, currentWorkspaceName: cur.workspaceName, activeSessionId: this._activeSessionId }); } catch { /* ignore */ }
+                    break;
+                }
                 case 'deleteSession': {
                     const id = String((msg as any).id || '').trim();
                     if (!id) break;
                     this._deleteSession(id);
                     /* refresh list */
-                    const sessions = this._readSessions().map(s => ({
-                        id: s.id, title: s.title, createdAt: s.createdAt,
-                        updatedAt: s.updatedAt, messageCount: s.messageCount
-                    }));
-                    try { this._view?.webview.postMessage({ type: 'sessionsList', value: sessions }); } catch { /* ignore */ }
+                    const cur = this._currentWorkspaceMeta();
+                    const sessions = this._readSessions().map(s => {
+                        const ss: any = s;
+                        return {
+                            id: ss.id, title: ss.title, preview: ss.preview || '',
+                            workspace: ss.workspace || '', workspaceName: ss.workspaceName || '워크스페이스 없음',
+                            createdAt: ss.createdAt, updatedAt: ss.updatedAt,
+                            messageCount: ss.messageCount,
+                        };
+                    });
+                    try { this._view?.webview.postMessage({ type: 'sessionsList', value: sessions, currentWorkspace: cur.workspace, currentWorkspaceName: cur.workspaceName, activeSessionId: this._activeSessionId }); } catch { /* ignore */ }
                     break;
                 }
                 /* v2.89.107 — 활성/비활성 토글 (사이드바). PIN 안 받음. */

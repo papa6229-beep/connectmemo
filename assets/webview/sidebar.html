@@ -384,6 +384,38 @@ body.corp-dispatching .ab-svg{opacity:1}
 .sessions-subhead{padding:6px 20px 14px;font-family:'SF Mono','Consolas',monospace;font-size:10.5px;color:rgba(0,255,65,.6);letter-spacing:.8px;border-bottom:1px solid rgba(0,255,65,.12);position:relative;z-index:1}
 .sessions-count{color:#fff;font-weight:700;font-size:12px;text-shadow:0 0 6px rgba(0,255,65,.4);padding:0 3px}
 .sessions-current{color:#FBBF24;font-weight:600;text-shadow:0 0 6px rgba(251,191,36,.4)}
+.sessions-current-ws{color:#fff;font-weight:600;text-shadow:0 0 6px rgba(0,255,65,.45);font-family:inherit}
+/* v2.89.108 — 검색·탭·그룹 */
+.sessions-toolbar{display:flex;gap:8px;padding:0 20px 10px;align-items:center;position:relative;z-index:1}
+.sessions-search{flex:1;background:rgba(0,0,0,.55);border:1px solid rgba(0,255,65,.2);border-radius:8px;color:#fff;font-family:'SF Mono','Consolas',monospace;font-size:12px;padding:8px 12px;outline:none;transition:all .2s;letter-spacing:.3px}
+.sessions-search::placeholder{color:rgba(255,255,255,.35)}
+.sessions-search:focus{border-color:#00FF41;box-shadow:0 0 14px rgba(0,255,65,.25);background:rgba(0,15,5,.75)}
+.sessions-tabs{display:flex;gap:0;background:rgba(0,0,0,.4);border:1px solid rgba(0,255,65,.18);border-radius:8px;padding:2px;flex-shrink:0}
+.sessions-tab{background:transparent;border:none;color:rgba(255,255,255,.6);font-family:'SF Mono','Consolas',monospace;font-size:10.5px;letter-spacing:.4px;padding:6px 11px;border-radius:6px;cursor:pointer;transition:all .15s}
+.sessions-tab:hover{color:#fff}
+.sessions-tab.active{background:rgba(0,255,65,.15);color:#00FF41;text-shadow:0 0 6px rgba(0,255,65,.45)}
+.sessions-group{padding:0;margin:0;animation:sessGroupIn .35s cubic-bezier(.16,1,.3,1)}
+@keyframes sessGroupIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.sessions-group-head{display:flex;align-items:center;gap:8px;padding:10px 18px 6px;font-family:'SF Mono','Consolas',monospace;font-size:10.5px;letter-spacing:1.2px;color:rgba(255,255,255,.55);text-transform:uppercase;cursor:pointer;border-top:1px solid rgba(0,255,65,.07);user-select:none;transition:color .15s}
+.sessions-group-head:first-child{border-top:none}
+.sessions-group-head:hover{color:rgba(0,255,65,.85)}
+.sessions-group-head.current{color:#00FF41;text-shadow:0 0 6px rgba(0,255,65,.4);background:linear-gradient(90deg,rgba(0,255,65,.05),transparent 60%)}
+.sgh-icon{font-size:13px;line-height:1;flex-shrink:0;font-family:inherit}
+.sgh-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sessions-group-count{background:rgba(0,255,65,.15);color:#00FF41;font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:9px;letter-spacing:.3px;text-shadow:0 0 4px rgba(0,255,65,.35)}
+.sessions-group-head.current .sessions-group-count{background:rgba(0,255,65,.25)}
+.sgh-toggle{font-size:10px;color:rgba(255,255,255,.45);transition:transform .25s;flex-shrink:0;font-family:inherit}
+.sessions-group.collapsed .sgh-toggle{transform:rotate(-90deg)}
+.sessions-group.collapsed .sessions-group-body{display:none}
+.sessions-group-body{padding:2px 0 8px}
+.sessions-time-bucket{padding:0}
+.sessions-time-label{font-family:'SF Mono','Consolas',monospace;font-size:9.5px;letter-spacing:1.5px;color:rgba(255,255,255,.4);padding:6px 18px 2px;text-transform:uppercase}
+.session-ws-tag{display:inline-block;margin-left:8px;font-size:9.5px;color:rgba(0,255,65,.6);background:rgba(0,255,65,.08);border:1px solid rgba(0,255,65,.18);border-radius:4px;padding:1px 6px;letter-spacing:.3px}
+.session-preview{font-size:11px;color:rgba(255,255,255,.55);margin-top:3px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;font-family:'Inter','SF Pro Display',-apple-system,system-ui,sans-serif;letter-spacing:.1px}
+.session-actions{display:flex;flex-direction:column;gap:2px;flex-shrink:0;align-self:flex-start;margin-top:-2px}
+.session-rename{background:transparent;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:5px 7px;border-radius:5px;transition:all .15s;opacity:.4}
+.session-row:hover .session-rename{opacity:.85}
+.session-rename:hover{background:rgba(0,255,65,.12);color:#00FF41}
 .sessions-body{overflow-y:auto;flex:1;padding:8px 0;min-height:0;position:relative;z-index:1}
 .sessions-body::-webkit-scrollbar{width:6px}
 .sessions-body::-webkit-scrollbar-thumb{background:rgba(0,255,65,.3);border-radius:3px}
@@ -1757,6 +1789,12 @@ const historyBtn = document.getElementById('historyBtn');
 let _sessionsBackdrop = null;
 let _activeSessionId = null;
 let _activeSessionTitle = null;
+/* v2.89.108 — ChatGPT/Gemini 스타일 프로젝트별 + 시간별 그룹화 패널 */
+let _sessionsRawList = [];          /* 마지막 받은 raw 세션 배열 */
+let _sessionsCurrentWs = '';        /* 현재 워크스페이스 path */
+let _sessionsCurrentWsName = '';
+let _sessionsFilter = '';           /* 검색어 */
+let _sessionsViewMode = 'project';  /* 'project' | 'time' */
 function openSessionsPanel(){
   if (_sessionsBackdrop) return;
   vscode.postMessage({ type: 'listSessions' });
@@ -1768,18 +1806,42 @@ function openSessionsPanel(){
         '<div class="sessions-eyebrow">▣ CONVERSATION ARCHIVE</div>'+
         '<button class="sessions-close" id="sessionsClose" title="닫기 (Esc)">✕</button>'+
       '</div>'+
+      '<div class="sessions-toolbar">'+
+        '<input class="sessions-search" id="sessionsSearch" type="text" placeholder="대화 검색…" autocomplete="off" />'+
+        '<div class="sessions-tabs">'+
+          '<button class="sessions-tab active" data-mode="project" id="tabProject">프로젝트별</button>'+
+          '<button class="sessions-tab" data-mode="time" id="tabTime">시간순</button>'+
+        '</div>'+
+      '</div>'+
       '<div class="sessions-subhead" id="sessionsSubhead">불러오는 중…</div>'+
       '<div class="sessions-body" id="sessionsBody"><div class="sessions-empty">불러오는 중…</div></div>'+
-      '<div class="sessions-foot">↑↓ 키 또는 클릭으로 선택 · 자동 보관 50개</div>'+
+      '<div class="sessions-foot">자동 보관 최대 50개 · 새 대화 시작 시 자동 저장</div>'+
     '</div>';
   document.body.appendChild(bd);
   _sessionsBackdrop = bd;
   bd.querySelector('#sessionsClose').addEventListener('click', closeSessionsPanel);
   bd.addEventListener('click', (e)=>{ if(e.target===bd) closeSessionsPanel(); });
+  /* 검색어 입력 */
+  const search = bd.querySelector('#sessionsSearch');
+  search.addEventListener('input', (e)=>{
+    _sessionsFilter = (e.target.value||'').trim().toLowerCase();
+    _renderSessionsView();
+  });
+  /* 탭 전환 */
+  bd.querySelectorAll('.sessions-tab').forEach(t => {
+    t.addEventListener('click', ()=>{
+      bd.querySelectorAll('.sessions-tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      _sessionsViewMode = t.getAttribute('data-mode') || 'project';
+      _renderSessionsView();
+    });
+  });
   /* ESC로 닫기 */
   const onKey = (e)=>{ if(e.key==='Escape'){ closeSessionsPanel(); document.removeEventListener('keydown', onKey); } };
   document.addEventListener('keydown', onKey);
   bd._onKey = onKey;
+  /* 검색창 자동 포커스 */
+  setTimeout(()=>{ try { search.focus(); } catch{} }, 100);
 }
 function closeSessionsPanel(){
   if (_sessionsBackdrop) {
@@ -1802,48 +1864,89 @@ function _formatRelativeTime(iso){
     return new Date(iso).toLocaleDateString('ko-KR', { month:'numeric', day:'numeric' });
   } catch { return ''; }
 }
-function renderSessionsList(sessions){
+function renderSessionsList(payload){
+  /* v2.89.108 — payload = {value, currentWorkspace, currentWorkspaceName, activeSessionId} */
+  if (!_sessionsBackdrop) return;
+  /* 호환: 옛 형식(plain array)도 받음 */
+  if (Array.isArray(payload)) {
+    _sessionsRawList = payload;
+  } else {
+    _sessionsRawList = payload.value || [];
+    _sessionsCurrentWs = payload.currentWorkspace || '';
+    _sessionsCurrentWsName = payload.currentWorkspaceName || '워크스페이스 없음';
+    if (payload.activeSessionId !== undefined) {
+      _activeSessionId = payload.activeSessionId;
+    }
+  }
+  _renderSessionsView();
+}
+function _filterSessions(sessions){
+  if (!_sessionsFilter) return sessions;
+  const q = _sessionsFilter;
+  return sessions.filter(s => {
+    return (s.title||'').toLowerCase().includes(q)
+        || (s.preview||'').toLowerCase().includes(q)
+        || (s.workspaceName||'').toLowerCase().includes(q);
+  });
+}
+function _timeBucket(iso){
+  /* Today / Yesterday / 지난 7일 / 지난 30일 / 더 오래 */
+  try {
+    const t = new Date(iso); const now = new Date();
+    const startOfDay = (d)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();
+    const today = startOfDay(now);
+    const dayMs = 86400000;
+    const tStart = startOfDay(t);
+    if (tStart === today) return { key:'today', label:'오늘', order:0 };
+    if (tStart === today - dayMs) return { key:'yesterday', label:'어제', order:1 };
+    if (tStart >= today - 6*dayMs) return { key:'week', label:'지난 7일', order:2 };
+    if (tStart >= today - 29*dayMs) return { key:'month', label:'지난 30일', order:3 };
+    return { key:'older', label:'더 오래', order:4 };
+  } catch { return { key:'older', label:'더 오래', order:4 }; }
+}
+function _renderSessionsView(){
   if (!_sessionsBackdrop) return;
   const body = _sessionsBackdrop.querySelector('#sessionsBody');
   const subhead = _sessionsBackdrop.querySelector('#sessionsSubhead');
   if (!body) return;
-  if (!sessions || sessions.length === 0) {
+  const filtered = _filterSessions(_sessionsRawList);
+  const total = _sessionsRawList.length;
+  if (total === 0) {
     if (subhead) subhead.innerHTML = '<span class="sessions-count">0</span> 보관됨';
     body.innerHTML =
       '<div class="sessions-empty">'+
         '<div class="sessions-empty-glyph">◌</div>'+
         '<div class="sessions-empty-title">아직 보관된 대화가 없어요</div>'+
-        '<div class="sessions-empty-hint">새 대화 (+) 누를 때 자동으로 저장됩니다.<br>대화 50개까지 보관, 그 후엔 오래된 것부터 자동 삭제.</div>'+
+        '<div class="sessions-empty-hint">새 대화 (+) 누를 때 자동으로 저장됩니다.<br>최대 50개 보관, 이후 오래된 것부터 자동 정리.</div>'+
       '</div>';
     return;
   }
   if (subhead) {
-    const activeNote = _activeSessionId ? ' · <span class="sessions-current">▸ 진행 중</span>' : '';
-    subhead.innerHTML = '<span class="sessions-count">'+sessions.length+'</span> 보관됨'+activeNote;
+    const filterNote = (_sessionsFilter && filtered.length !== total)
+      ? ' · 검색 결과 <span class="sessions-count">'+filtered.length+'</span>'
+      : '';
+    const wsNote = _sessionsCurrentWsName
+      ? ' · 현재 프로젝트: <span class="sessions-current-ws">'+_escapeHtml(_sessionsCurrentWsName)+'</span>'
+      : '';
+    subhead.innerHTML = '총 <span class="sessions-count">'+total+'</span>개'+filterNote+wsNote;
   }
-  body.innerHTML = sessions.map(s => {
-    const rel = _formatRelativeTime(s.updatedAt || s.createdAt);
-    const safeTitle = String(s.title||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const isActive = (_activeSessionId === s.id);
-    const activeBadge = isActive ? '<span class="session-active-badge">진행 중</span>' : '';
-    const cls = 'session-row' + (isActive ? ' active' : '');
-    return '<div class="'+cls+'" data-id="'+s.id+'">'+
-      '<div class="session-line">'+
-        '<span class="session-marker">›</span>'+
-        '<div class="session-meta">'+
-          '<div class="session-title-row">'+
-            '<span class="session-title">'+safeTitle+'</span>'+
-            activeBadge+
-          '</div>'+
-          '<div class="session-sub">'+rel+' · '+(s.messageCount||0)+'개 메시지</div>'+
-        '</div>'+
-        '<button class="session-del" data-del="'+s.id+'" title="이 대화 영구 삭제">🗑</button>'+
-      '</div>'+
-    '</div>';
-  }).join('');
+  if (filtered.length === 0) {
+    body.innerHTML =
+      '<div class="sessions-empty">'+
+        '<div class="sessions-empty-glyph">⌕</div>'+
+        '<div class="sessions-empty-title">"'+_escapeHtml(_sessionsFilter)+'" 결과 없음</div>'+
+        '<div class="sessions-empty-hint">다른 키워드로 시도하거나 위 ✕로 검색을 지우세요.</div>'+
+      '</div>';
+    return;
+  }
+  body.innerHTML = (_sessionsViewMode === 'project')
+    ? _renderProjectGroups(filtered)
+    : _renderTimeGroups(filtered);
+  /* 이벤트 위임 */
   body.querySelectorAll('.session-row').forEach(row => {
     row.addEventListener('click', (e) => {
-      if (e.target.classList.contains('session-del')) return;
+      const target = e.target;
+      if (target.classList.contains('session-del') || target.classList.contains('session-rename')) return;
       const id = row.getAttribute('data-id');
       if (id) {
         vscode.postMessage({ type:'restoreSession', id });
@@ -1860,7 +1963,108 @@ function renderSessionsList(sessions){
       }
     });
   });
+  body.querySelectorAll('.session-rename').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-rename');
+      const cur = btn.getAttribute('data-cur') || '';
+      const next = prompt('대화 제목을 변경하세요:', cur);
+      if (next !== null && next.trim() && next.trim() !== cur) {
+        vscode.postMessage({ type:'renameSession', id, title: next.trim() });
+      }
+    });
+  });
+  /* 그룹 접기/펴기 */
+  body.querySelectorAll('.sessions-group-head').forEach(head => {
+    head.addEventListener('click', () => {
+      const grp = head.parentElement;
+      if (grp) grp.classList.toggle('collapsed');
+    });
+  });
 }
+function _renderProjectGroups(sessions){
+  /* 현재 프로젝트가 가장 위, 그 다음 다른 프로젝트들 (최근 활동 순). 각 프로젝트 안에서
+     시간 bucket으로 추가 그룹화. */
+  const byWs = new Map();
+  for (const s of sessions) {
+    const key = s.workspace || '';
+    if (!byWs.has(key)) byWs.set(key, { workspace: key, workspaceName: s.workspaceName || '워크스페이스 없음', items: [] });
+    byWs.get(key).items.push(s);
+  }
+  const groups = Array.from(byWs.values());
+  groups.sort((a, b) => {
+    /* 현재 워크스페이스 최우선 */
+    if (a.workspace === _sessionsCurrentWs) return -1;
+    if (b.workspace === _sessionsCurrentWs) return 1;
+    /* 그 다음 가장 최근 업데이트된 워크스페이스 순 */
+    const ta = a.items[0]?.updatedAt || a.items[0]?.createdAt || '';
+    const tb = b.items[0]?.updatedAt || b.items[0]?.createdAt || '';
+    return tb.localeCompare(ta);
+  });
+  return groups.map(g => {
+    const isCurrent = (g.workspace === _sessionsCurrentWs);
+    const headLabel = (isCurrent ? '▸ ' : '') + (g.workspaceName || '워크스페이스 없음');
+    const headBadge = '<span class="sessions-group-count">'+g.items.length+'</span>';
+    const head = '<div class="sessions-group-head'+(isCurrent ? ' current' : '')+'"><span class="sgh-icon">'+(isCurrent ? '📂' : '📁')+'</span><span class="sgh-label">'+_escapeHtml(headLabel)+'</span>'+headBadge+'<span class="sgh-toggle">▾</span></div>';
+    /* 안에서 시간 bucket 그룹화 */
+    const buckets = _bucketByTime(g.items);
+    const bucketsHtml = buckets.map(b =>
+      '<div class="sessions-time-bucket"><div class="sessions-time-label">'+b.label+'</div>' +
+      b.items.map(_sessionRowHtml).join('') +
+      '</div>'
+    ).join('');
+    return '<div class="sessions-group'+(isCurrent ? ' current' : '')+'">'+head+'<div class="sessions-group-body">'+bucketsHtml+'</div></div>';
+  }).join('');
+}
+function _renderTimeGroups(sessions){
+  /* 워크스페이스 무시, 시간만 */
+  const buckets = _bucketByTime(sessions);
+  return buckets.map(b =>
+    '<div class="sessions-group"><div class="sessions-group-head"><span class="sgh-icon">⏱</span><span class="sgh-label">'+b.label+'</span><span class="sessions-group-count">'+b.items.length+'</span></div>' +
+    '<div class="sessions-group-body">' + b.items.map(_sessionRowHtml).join('') + '</div></div>'
+  ).join('');
+}
+function _bucketByTime(sessions){
+  const map = new Map();
+  for (const s of sessions) {
+    const b = _timeBucket(s.updatedAt || s.createdAt);
+    if (!map.has(b.key)) map.set(b.key, { ...b, items: [] });
+    map.get(b.key).items.push(s);
+  }
+  const arr = Array.from(map.values());
+  arr.sort((a, b) => a.order - b.order);
+  return arr;
+}
+function _sessionRowHtml(s){
+  const rel = _formatRelativeTime(s.updatedAt || s.createdAt);
+  const safeTitle = _escapeHtml(s.title||'');
+  const safePreview = _escapeHtml((s.preview||'').slice(0, 100));
+  const isActive = (_activeSessionId === s.id);
+  const activeBadge = isActive ? '<span class="session-active-badge">진행 중</span>' : '';
+  const cls = 'session-row' + (isActive ? ' active' : '');
+  const wsTag = (_sessionsViewMode === 'time' && s.workspaceName)
+    ? '<span class="session-ws-tag">📁 '+_escapeHtml(s.workspaceName)+'</span>'
+    : '';
+  return '<div class="'+cls+'" data-id="'+s.id+'">'+
+    '<div class="session-line">'+
+      '<span class="session-marker">›</span>'+
+      '<div class="session-meta">'+
+        '<div class="session-title-row">'+
+          '<span class="session-title">'+safeTitle+'</span>'+
+          activeBadge+
+        '</div>'+
+        (safePreview ? '<div class="session-preview">'+safePreview+'</div>' : '') +
+        '<div class="session-sub">'+rel+' · '+(s.messageCount||0)+'개 메시지'+wsTag+'</div>'+
+      '</div>'+
+      '<div class="session-actions">'+
+        '<button class="session-rename" data-rename="'+s.id+'" data-cur="'+_escapeAttr(s.title||'')+'" title="제목 변경">✎</button>'+
+        '<button class="session-del" data-del="'+s.id+'" title="삭제">🗑</button>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+function _escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _escapeAttr(s){ return _escapeHtml(s).replace(/"/g,'&quot;'); }
 if (historyBtn) historyBtn.addEventListener('click', openSessionsPanel);
 settingsBtn.addEventListener('click',()=>{vscode.postMessage({type:'openSettings'});closeMoreMenu();});
 const skillLibBtn=document.getElementById('skillLibBtn');
@@ -4177,8 +4381,9 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     }
     break;
   case 'sessionsList':
-    /* v2.89.106 — 보관된 대화 세션 목록 수신 */
-    renderSessionsList(msg.value || []);
+    /* v2.89.106-108 — 보관된 대화 세션 목록 수신.
+       v2.89.108: payload 통째로 전달 (currentWorkspace 등 포함). */
+    renderSessionsList(msg);
     break;
   case 'activeSession':
     /* v2.89.107 — 현재 활성 세션 ID 추적. 패널 열렸을 때 "현재" 라벨 붙이기 위함. */

@@ -249,6 +249,15 @@ function render(s) {
     const activeN = (typeof s.activeCount === 'number') ? s.activeCount
                   : (typeof s.hiredCount === 'number') ? s.hiredCount : s.agentTeam.length;
     teamBadge.textContent = activeN + ' / ' + total + ' ONLINE';
+    /* v2.89.108 — 범례 카운트 + 필터 칩 */
+    const lockedCount = s.agentTeam.filter(a => a.lockable && !a.hired).length;
+    const optionalOff = s.agentTeam.filter(a => !a.lockable && a.togglable && !a.active).length;
+    const onCount = s.agentTeam.filter(a => a.active && !(a.lockable && !a.hired)).length;
+    const setText = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n; };
+    setText('tlAll', total);
+    setText('tlOn', onCount);
+    setText('tlOpt', optionalOff);
+    setText('tlLock', lockedCount);
     teamBody.innerHTML = s.agentTeam.map(a => {
       const isLocked = (a.lockable && !a.hired);
       const isInactive = (!isLocked && a.togglable && !a.active);
@@ -320,6 +329,25 @@ function render(s) {
         showAgentDetailModal(a);
       });
       card.style.cursor = 'pointer';
+    });
+    /* v2.89.108 — 필터 칩 동작 */
+    const chips = document.querySelectorAll('.team-legend .tl-chip');
+    chips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        chips.forEach(c => c.classList.remove('tl-active'));
+        chip.classList.add('tl-active');
+        const filter = chip.getAttribute('data-filter') || 'all';
+        teamBody.querySelectorAll('.agent-card').forEach(card => {
+          const id = card.getAttribute('data-agent');
+          const a = (s.agentTeam || []).find(x => x.id === id);
+          if (!a) return;
+          let show = true;
+          if (filter === 'online') show = !!a.active && !(a.lockable && !a.hired);
+          else if (filter === 'optional') show = !a.lockable && a.togglable && !a.active;
+          else if (filter === 'locked') show = a.lockable && !a.hired;
+          card.style.display = show ? '' : 'none';
+        });
+      });
     });
   } else {
     teamBody.innerHTML = '<div class="empty subtle">에이전트 정보를 불러오는 중...</div>';

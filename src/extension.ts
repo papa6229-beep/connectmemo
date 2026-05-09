@@ -15442,6 +15442,62 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     }
 
     // --------------------------------------------------------
+    // v2.89.105 — Claude Code의 CLAUDE.md 호환 프로젝트 메모리 로더.
+    // 워크스페이스 루트에 AGENT.md / CONNECT-AI.md / .connect-ai/instructions.md 가
+    // 있으면 자동으로 시스템 프롬프트에 주입. 부모 디렉토리도 한 단계 거슬러
+    // 올라가서 모노레포 root 메모리도 캡처. 없으면 빈 문자열.
+    // 우선순위: 워크스페이스 root → 부모 → 홈(~/.connect-ai/global.md).
+    // 한 파일당 8KB cap, 총 24KB cap. 같은 파일 중복 주입 방지.
+    private _getProjectMemory(): string {
+        const candidatePaths: string[] = [];
+        const tried = new Set<string>();
+        const filenames = ['AGENT.md', 'CONNECT-AI.md', 'CONNECTAI.md', 'CLAUDE.md', '.connect-ai/instructions.md'];
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const editor = vscode.window.activeTextEditor;
+        const roots: string[] = [];
+        if (root) roots.push(root);
+        if (editor && editor.document.uri.scheme === 'file') {
+            const dir = path.dirname(editor.document.uri.fsPath);
+            if (!roots.includes(dir)) roots.push(dir);
+        }
+        /* 워크스페이스 root + 부모 root */
+        for (const r of roots) {
+            for (const fn of filenames) {
+                candidatePaths.push(path.join(r, fn));
+            }
+            const parent = path.dirname(r);
+            if (parent !== r) {
+                for (const fn of filenames) candidatePaths.push(path.join(parent, fn));
+            }
+        }
+        /* 홈 디렉토리 글로벌 메모리 */
+        try {
+            candidatePaths.push(path.join(os.homedir(), '.connect-ai', 'global.md'));
+        } catch { /* ignore */ }
+        const blocks: string[] = [];
+        let totalChars = 0;
+        const FILE_CAP = 8 * 1024;
+        const TOTAL_CAP = 24 * 1024;
+        for (const p of candidatePaths) {
+            if (tried.has(p)) continue;
+            tried.add(p);
+            try {
+                if (!fs.existsSync(p)) continue;
+                const stat = fs.statSync(p);
+                if (!stat.isFile() || stat.size === 0) continue;
+                const raw = fs.readFileSync(p, 'utf-8');
+                const truncated = raw.length > FILE_CAP;
+                const body = truncated ? raw.slice(0, FILE_CAP) + '\n[…잘림…]' : raw;
+                const display = p.replace(os.homedir(), '~');
+                blocks.push(`### 📌 ${display}\n${body.trim()}`);
+                totalChars += body.length;
+                if (totalChars >= TOTAL_CAP) break;
+            } catch { /* skip unreadable */ }
+        }
+        if (blocks.length === 0) return '';
+        return `\n\n[PROJECT MEMORY — 사용자가 명시적으로 정한 프로젝트 규칙·금지사항·우선순위. 절대 무시하지 말 것.]\n${blocks.join('\n\n')}`;
+    }
+
     // Build workspace file tree + read key files
     // --------------------------------------------------------
     private _getWorkspaceContext(): string {
@@ -15561,12 +15617,13 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 }
                 const workspaceCtx = this._getWorkspaceContext();
                 const brainCtx = this._brainEnabled ? this._getSecondBrainContext() : '';
-                const internetCtx = internetEnabled 
+                const projectMemory = this._getProjectMemory();
+                const internetCtx = internetEnabled
                     ? `\n\n[CRITICAL DIRECTIVE: INTERNET ACCESS IS ENABLED]\nCurrent Time: ${new Date().toLocaleString('ko-KR')}\nYou have FULL internet access via the <read_url> tool. You MUST NEVER say you cannot search, or that your capabilities are limited. To search, ALWAYS output:\n<read_url>https://html.duckduckgo.com/html/?q=YOUR+SEARCH+TERM</read_url>\nIf the user asks to search, or asks for recent info, DO NOT apologize. Just use the tag.`
                     : '';
                 reqMessages[0] = {
                     role: 'system',
-                    content: `${this._systemPrompt}\n\n[BACKGROUND CONTEXT]\n${contextBlock}\n${workspaceCtx}\n${brainCtx}${internetCtx}`
+                    content: `${this._systemPrompt}${projectMemory}\n\n[BACKGROUND CONTEXT]\n${contextBlock}\n${workspaceCtx}\n${brainCtx}${internetCtx}`
                 };
             }
 
@@ -15755,7 +15812,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     : '';
                 reqMessages[0] = {
                     role: 'system',
-                    content: `${this._systemPrompt}\n\n[BACKGROUND CONTEXT - DO NOT EXPLAIN THIS TO THE USER UNLESS ASKED]\n${contextBlock}\n${workspaceCtx}\n${brainCtx}${internetCtx}`
+                    content: `${this._systemPrompt}${this._getProjectMemory()}\n\n[BACKGROUND CONTEXT - DO NOT EXPLAIN THIS TO THE USER UNLESS ASKED]\n${contextBlock}\n${workspaceCtx}\n${brainCtx}${internetCtx}`
                 };
             }
 
@@ -16785,7 +16842,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                    lean 모드 = decisions·memory·brain RAG 생략 → 토큰 ~9000자 감소 →
                    추론 30~50% 빨라짐 + 환각 더 줄어듦 (메모리에서 끌어올 거리 없음). */
                 const useLeanContext = (realtimeData.length > 200) || (peerCtx.length > 500);
-                const sysPrompt = `${buildSpecialistPrompt(t.agent)}${buildAgentConfigStatus(t.agent)}${realtimeData}${readAgentSharedContext(t.agent, { lean: useLeanContext })}${peerCtx}${hallucinationGuard}`;
+                const sysPrompt = `${buildSpecialistPrompt(t.agent)}${this._getProjectMemory()}${buildAgentConfigStatus(t.agent)}${realtimeData}${readAgentSharedContext(t.agent, { lean: useLeanContext })}${peerCtx}${hallucinationGuard}`;
                 const userMsg = `[CEO의 지시]\n${t.task}\n\n[원 사용자 명령 참고]\n${prompt}`;
 
                 let out = '';

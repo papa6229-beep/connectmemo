@@ -838,6 +838,44 @@ function readCompanyName(): string {
   return _extractCompanyName(_safeReadText(idPath));
 }
 
+/* v2.89.103 — 채용 잠금 시스템. 일부 에이전트(현재: editor=루나)는 기본 잠금
+   상태로 시작하고, 사용자가 PIN(0000)을 입력해야 활성화됨. 이력서·게임적 보상감
+   조성 + 출시 단계 분리(루나는 "입사 준비 중" 컨셉). */
+const LOCKED_AGENTS_DEFAULT: Record<string, boolean> = { editor: true };
+
+function _hiredJsonPath(): string {
+  return path.join(getCompanyDir(), '_shared', 'hired.json');
+}
+
+function readHiredAgents(): Record<string, { hiredAt: string }> {
+  try {
+    const p = _hiredJsonPath();
+    if (!fs.existsSync(p)) return {};
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8') || '{}');
+    return (data && typeof data === 'object') ? data : {};
+  } catch { return {}; }
+}
+
+function isAgentHired(id: string): boolean {
+  /* 잠금 대상이 아니면 항상 채용된 상태(별도 표시 없음) */
+  if (!LOCKED_AGENTS_DEFAULT[id]) return true;
+  const map = readHiredAgents();
+  return !!map[id];
+}
+
+function markAgentHired(id: string): boolean {
+  try {
+    const dir = path.join(getCompanyDir(), '_shared');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+    const f = _hiredJsonPath();
+    let cur: Record<string, any> = {};
+    try { cur = JSON.parse(fs.readFileSync(f, 'utf-8') || '{}'); } catch { /* malformed */ }
+    cur[id] = { hiredAt: new Date().toISOString() };
+    fs.writeFileSync(f, JSON.stringify(cur, null, 2));
+    return true;
+  } catch { return false; }
+}
+
 /* v2.89.26 — 에이전트별 모델 라우팅. CEO·YouTube·디자이너 등 각자 다른
    로컬 LLM 사용 (작은 모델은 라우팅·결정에, 큰 모델은 분석·창작에).
    설정 파일: _shared/agent_models.json. 비어있으면 default 모델 사용. */
@@ -9077,6 +9115,24 @@ class CompanyDashboardPanel {
             try {
                 if (msg?.type === 'refresh') {
                     await this._sendState();
+                } else if (msg?.type === 'hireAgent' && msg.agent) {
+                    /* v2.89.103 — PIN 통과 후 webview가 알림. PIN 자체는 sidebar와
+                       동일하게 webview에서 검증(0000) — 백엔드는 영구 저장만 담당.
+                       서버에서도 PIN 재검증해서 위변조 방지. */
+                    const pin = String(msg.pin || '');
+                    const aid = String(msg.agent || '').trim();
+                    if (pin === '0000' && LOCKED_AGENTS_DEFAULT[aid]) {
+                        const ok = markAgentHired(aid);
+                        if (ok) {
+                            this._postToast(`🎉 ${aid} 에이전트 채용 완료. 이제 활용 가능합니다.`, false);
+                            try { vscode.window.showInformationMessage(`🎉 ${aid} 에이전트가 합류했어요!`); } catch { /* ignore */ }
+                        } else {
+                            this._postToast(`⚠️ 채용 실패: 회사 폴더에 쓰기 권한이 없습니다.`, true);
+                        }
+                        await this._sendState();
+                    } else {
+                        this._postToast(`❌ 인증 실패. 잘못된 코드입니다.`, true);
+                    }
                 } else if (msg?.type === 'queueComments') {
                     const r = await _youtubeCommentReplyDraftBatch({});
                     this._postToast(r.reason ? `⚠️ ${r.reason}` : `📺 ${r.drafted}건 큐 생성, ${r.skipped}건 스킵`, !!r.reason);
@@ -9518,8 +9574,15 @@ class CompanyDashboardPanel {
                 verifiedCount,
                 ragMode,
                 selfRagCriteria,
+                /* v2.89.103 — 채용 락 시스템. hired=false 면 잠금 카드로 렌더,
+                   클릭 시 PIN 모달 → 0000 통과해야 활성화. 잠금 대상 아닌 에이전트는
+                   항상 hired=true. */
+                hired: isAgentHired(id),
+                lockable: !!LOCKED_AGENTS_DEFAULT[id],
             };
         }).filter(Boolean);
+        const totalAgents = agentTeam.length;
+        const hiredCount = (agentTeam as any[]).filter(a => a && a.hired).length;
 
         try {
             this._panel.webview.postMessage({
@@ -9528,6 +9591,8 @@ class CompanyDashboardPanel {
                 oauthConnected,
                 yt,
                 agentTeam,
+                hiredCount,
+                totalAgents,
                 tasks: {
                     open: openTasks.length,
                     overdue: overdueTasks,
@@ -16268,7 +16333,24 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             let ceoStage = 'init';
             try {
                 ceoStage = '_personalizePrompt';
-                const base = _personalizePrompt(CEO_PLANNER_PROMPT);
+                let base = _personalizePrompt(CEO_PLANNER_PROMPT);
+                /* v2.89.103 — 채용 게이트. 잠긴(미채용) 에이전트는 CEO 팀 명단에서 제외해서
+                   CEO가 그쪽에 작업 분배 못 하게 함. 예: 루나 미채용 → editor 라인 삭제 +
+                   "현재 합류 안 한 에이전트" 안내 추가. CEO가 task 만든 후에도 백엔드에서
+                   필터하지만, 프롬프트 단계에서 거르는 게 가장 확실. */
+                try {
+                    const unhiredIds = AGENT_ORDER.filter(id => LOCKED_AGENTS_DEFAULT[id] && !isAgentHired(id));
+                    if (unhiredIds.length > 0) {
+                        const unhiredLabels = unhiredIds.map(id => `${AGENTS[id]?.emoji || ''} ${AGENTS[id]?.name || id} (${id})`).join(', ');
+                        for (const uid of unhiredIds) {
+                            const re = new RegExp(`^- ${uid}\\b.*$`, 'gm');
+                            base = base.replace(re, '');
+                        }
+                        base += `\n\n[채용 게이트] 다음 에이전트는 아직 합류 전 — 절대 tasks 배열에 넣지 마세요: ${unhiredLabels}\n`;
+                    }
+                } catch (gateErr: any) {
+                    console.error('[Connect AI] 채용 게이트 적용 실패:', gateErr?.message || gateErr);
+                }
                 ceoStage = 'readAgentSharedContext';
                 let shared = '';
                 try { shared = readAgentSharedContext('ceo'); }
@@ -16469,12 +16551,31 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     return null;
                 })
                 .filter((t): t is { agent: string; task: string } => !!t);
+            /* v2.89.103 — 채용 게이트 백엔드 보호. CEO가 프롬프트 무시하고 잠긴
+               에이전트(현재 루나 = editor)에 task 배정해도 여기서 제거. 사용자에게
+               안내 메시지 표시. */
+            const droppedLockedTasks: { agent: string; task: string }[] = [];
+            plan.tasks = plan.tasks.filter(t => {
+                if (LOCKED_AGENTS_DEFAULT[t.agent] && !isAgentHired(t.agent)) {
+                    droppedLockedTasks.push(t);
+                    return false;
+                }
+                return true;
+            });
+            if (droppedLockedTasks.length > 0) {
+                const lockedNames = droppedLockedTasks.map(t => `${AGENTS[t.agent]?.emoji || ''} ${AGENTS[t.agent]?.name || t.agent}`).join(', ');
+                post({ type: 'systemNote', value: `🔒 ${lockedNames} 는 아직 채용 전이라 이번 작업에서 제외됐어요. 직원 패널에서 채용 인증 후 다시 시도하세요.` });
+            }
             if (plan.tasks.length === 0) {
                 const wantedIds = originalTasks.map(t => `"${t.agent}"`).join(', ');
-                post({
-                    type: 'error',
-                    value: `⚠️ CEO가 호출한 에이전트(${wantedIds || '없음'})가 우리 팀에 없어요.\n사용 가능한 id: ${SPECIALIST_IDS.join(', ')}\n\nCEO 원본 응답 일부:\n${(planRaw || '').slice(0, 300)}`
-                });
+                if (droppedLockedTasks.length > 0) {
+                    post({ type: 'error', value: `⚠️ CEO가 잠긴 에이전트만 호출했어요. 직원 패널에서 채용 인증 후 다시 시도해주세요.` });
+                } else {
+                    post({
+                        type: 'error',
+                        value: `⚠️ CEO가 호출한 에이전트(${wantedIds || '없음'})가 우리 팀에 없어요.\n사용 가능한 id: ${SPECIALIST_IDS.join(', ')}\n\nCEO 원본 응답 일부:\n${(planRaw || '').slice(0, 300)}`
+                    });
+                }
                 return;
             }
 

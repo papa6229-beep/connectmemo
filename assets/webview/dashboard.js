@@ -243,8 +243,12 @@ function render(s) {
   const teamBody = $('teamBody');
   const teamBadge = $('teamBadge');
   if (s.agentTeam && s.agentTeam.length > 0) {
-    teamBadge.textContent = s.agentTeam.length + '명';
+    /* v2.89.103 — 채용 진행 카운트 표시. (8/9 ONLINE) 같은 게임적 신호. */
+    const total = (typeof s.totalAgents === 'number') ? s.totalAgents : s.agentTeam.length;
+    const hired = (typeof s.hiredCount === 'number') ? s.hiredCount : s.agentTeam.length;
+    teamBadge.textContent = hired + ' / ' + total + ' ONLINE';
     teamBody.innerHTML = s.agentTeam.map(a => {
+      const isLocked = (a.lockable && !a.hired);
       const photoHtml = a.profileImageUri
         ? '<div class="agent-photo" style="background-image:url(\'' + esc(a.profileImageUri) + '\')"></div>'
         : '<div class="agent-photo no-photo">' + esc(a.emoji) + '</div>';
@@ -257,7 +261,22 @@ function render(s) {
       const tooltip = (a.tagline || a.specialty)
         ? '<div class="agent-hover-info">' + esc((a.tagline || a.specialty || '').slice(0, 90)) + '</div>'
         : '';
-      return '<div class="agent-card" data-agent="' + esc(a.id) + '" style="--agent-color:' + esc(a.color || '#00ff8b') + '" title="' + esc(a.name + ' — ' + (a.role||'') + ' (클릭: 폴더 열기)') + '">'
+      /* 잠긴 에이전트: 사진 영역에 글리치 오버레이 + 락 배지 + 이름 가림 */
+      if (isLocked) {
+        const lockTitle = '🔒 ' + esc(a.name) + ' — 입사 준비 중 (클릭: 채용 인증)';
+        return '<div class="agent-card agent-card-locked" data-agent="' + esc(a.id) + '" style="--agent-color:' + esc(a.color || '#00ff8b') + '" title="' + lockTitle + '">'
+          +   photoHtml
+          +   '<div class="agent-overlay"></div>'
+          +   '<div class="agent-glitch"></div>'
+          +   '<div class="agent-lock-badge">🔒</div>'
+          +   '<div class="agent-hover-info">CLEARANCE REQUIRED · 클릭해서 채용 인증</div>'
+          +   '<div class="agent-name-strip">'
+          +     '<div>??? ??? ???</div>'
+          +     '<div class="agent-role-mini">[ ENCRYPTED ]</div>'
+          +   '</div>'
+          + '</div>';
+      }
+      return '<div class="agent-card" data-agent="' + esc(a.id) + '" style="--agent-color:' + esc(a.color || '#00ff8b') + '" title="' + esc(a.name + ' — ' + (a.role||'') + ' (클릭: 상세)') + '">'
         +   photoHtml
         +   '<div class="agent-overlay"></div>'
         +   activeDot
@@ -270,13 +289,16 @@ function render(s) {
         + '</div>';
     }).join('');
     /* v2.87.7 — 카드 클릭 시 인앱 모달. 비기술자도 폴더 안 뒤지고 에이전트
-       안에 뭐가 있는지 한 눈에 볼 수 있게. */
+       안에 뭐가 있는지 한 눈에 볼 수 있게.
+       v2.89.103 — 잠긴 카드 클릭은 PIN 채용 모달로 분기. */
     teamBody.querySelectorAll('.agent-card').forEach(card => {
       card.addEventListener('click', () => {
         const id = card.getAttribute('data-agent');
         if(!id) return;
         const a = (s.agentTeam || []).find(x => x.id === id);
-        if(a) showAgentDetailModal(a);
+        if(!a) return;
+        if (a.lockable && !a.hired) { openHirePinModal(a); return; }
+        showAgentDetailModal(a);
       });
       card.style.cursor = 'pointer';
     });
@@ -792,6 +814,108 @@ function showReportScheduleModal(entries){
     vscode.postMessage({ type: 'saveReportSchedule', entries: valid });
     close();
   });
+}
+
+/* v2.89.103 — 채용 PIN 모달. 잠긴 에이전트(현재 루나) 카드 클릭 시 등장.
+   힌트는 절대 노출 X — placeholder는 ••••, label은 "AUTHORIZATION CODE"만.
+   4자리 입력 시 자동 검증, 정답이면 글리치 효과 + 환영 시퀀스 → 백엔드 영구 저장. */
+let _hirePinBackdrop = null;
+function openHirePinModal(a){
+  if (_hirePinBackdrop) return;
+  const bd = document.createElement('div');
+  bd.className = 'hire-pin-backdrop';
+  bd.style.setProperty('--ag', a.color || '#A78BFA');
+  bd.style.setProperty('--ag-glow', (a.color||'#A78BFA')+'55');
+  bd.innerHTML =
+    '<div class="hire-pin-card">'+
+      '<div class="hire-pin-eyebrow">▣ INCOMING TRANSMISSION</div>'+
+      '<div class="hire-pin-portrait">'+
+        (a.profileImageUri
+          ? '<div class="hp-photo" style="background-image:url(\''+esc(a.profileImageUri)+'\')"></div>'
+          : '<div class="hp-photo hp-emoji">'+esc(a.emoji||'❓')+'</div>'
+        )+
+        '<div class="hp-glitch"></div>'+
+      '</div>'+
+      '<div class="hire-pin-meta">'+
+        '<div class="hp-row"><span class="hp-key">CANDIDATE</span><span class="hp-val">'+esc(a.emoji||'')+' '+esc(a.name||'???')+'</span></div>'+
+        '<div class="hp-row"><span class="hp-key">ROLE</span><span class="hp-val">'+esc(a.role||'CLASSIFIED')+'</span></div>'+
+        '<div class="hp-row"><span class="hp-key">STATUS</span><span class="hp-val hp-status">AWAITING CLEARANCE</span></div>'+
+      '</div>'+
+      '<div class="hire-pin-prompt">▓▓▓ AUTHORIZATION CODE ▓▓▓</div>'+
+      '<div class="hire-pin-row">'+
+        '<input class="hp-digit" type="tel" inputmode="numeric" maxlength="1" autocomplete="off" />'+
+        '<input class="hp-digit" type="tel" inputmode="numeric" maxlength="1" autocomplete="off" />'+
+        '<input class="hp-digit" type="tel" inputmode="numeric" maxlength="1" autocomplete="off" />'+
+        '<input class="hp-digit" type="tel" inputmode="numeric" maxlength="1" autocomplete="off" />'+
+      '</div>'+
+      '<div class="hire-pin-status" id="hpStatus">SYSTEM IDLE</div>'+
+      '<div class="hire-pin-actions">'+
+        '<button class="hp-btn hp-cancel" id="hpCancel">CANCEL</button>'+
+        '<button class="hp-btn hp-confirm" id="hpConfirm">AUTHORIZE →</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(bd);
+  _hirePinBackdrop = bd;
+  const digits = bd.querySelectorAll('.hp-digit');
+  const status = bd.querySelector('#hpStatus');
+  const close = () => { try { bd.remove(); } catch {} _hirePinBackdrop = null; };
+  digits.forEach((d, i) => {
+    d.addEventListener('input', (e) => {
+      const v = (e.target.value || '').replace(/\D/g, '').slice(-1);
+      e.target.value = v;
+      if (v) {
+        e.target.classList.add('filled');
+        if (i < digits.length - 1) digits[i+1].focus();
+        else verify();
+      } else {
+        e.target.classList.remove('filled');
+      }
+    });
+    d.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !e.target.value && i > 0) {
+        digits[i-1].focus();
+        digits[i-1].value = '';
+        digits[i-1].classList.remove('filled');
+      } else if (e.key === 'Escape') {
+        close();
+      } else if (e.key === 'Enter') {
+        verify();
+      }
+    });
+  });
+  function verify(){
+    const code = Array.from(digits).map(d => d.value).join('');
+    if (code.length < 4) {
+      status.textContent = '⚠ 4자리 코드를 모두 입력하세요';
+      status.className = 'hire-pin-status err';
+      return;
+    }
+    /* PIN은 frontend에서 1차 검증, 백엔드에서 재검증. 여기선 즉각적 시각 피드백만. */
+    if (code === '0000') {
+      status.textContent = '✓ AUTHORIZATION GRANTED · ENROLLING…';
+      status.className = 'hire-pin-status ok';
+      digits.forEach(d => d.disabled = true);
+      bd.querySelector('.hire-pin-card').classList.add('hp-success');
+      try { vscode.postMessage({ type: 'hireAgent', agent: a.id, pin: code }); } catch {}
+      setTimeout(close, 1400);
+    } else {
+      status.textContent = '⨯ ACCESS DENIED · INVALID CODE';
+      status.className = 'hire-pin-status err';
+      digits.forEach(d => { d.classList.add('error'); d.value = ''; d.classList.remove('filled'); });
+      bd.querySelector('.hire-pin-card').classList.add('hp-shake');
+      setTimeout(() => {
+        digits.forEach(d => d.classList.remove('error'));
+        bd.querySelector('.hire-pin-card').classList.remove('hp-shake');
+        digits[0].focus();
+        status.textContent = 'RETRY · 다시 시도';
+        status.className = 'hire-pin-status';
+      }, 700);
+    }
+  }
+  bd.querySelector('#hpCancel').addEventListener('click', close);
+  bd.querySelector('#hpConfirm').addEventListener('click', verify);
+  bd.addEventListener('click', (e) => { if (e.target === bd) close(); });
+  setTimeout(() => digits[0].focus(), 80);
 }
 
 function showAgentDetailModal(a){

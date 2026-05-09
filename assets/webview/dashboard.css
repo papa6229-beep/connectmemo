@@ -751,3 +751,286 @@ body::before {
 .adm-footer{display:flex;justify-content:center;margin-top:18px;padding:0 22px;width:100%}
 .adm-btn-folder{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:var(--dim);padding:8px 16px;border-radius:10px;font-size:11.5px;cursor:pointer;transition:all .15s;font-family:inherit}
 .adm-btn-folder:hover{background:rgba(255,255,255,.08);color:#fff;border-color:var(--ag,rgba(255,255,255,.18))}
+/* ============================================================
+   v2.89.103 — 채용 락 카드 + PIN 모달
+   사이드바의 매트릭스 비주얼 언어와 통일 (그린 글로우, 모노스페이스, 스캔라인)
+   ============================================================ */
+
+/* 잠긴 에이전트 카드 — 흑백 + 글리치 오버레이 + 락 배지 */
+.agent-card.agent-card-locked{
+  filter:grayscale(.92) brightness(.55) contrast(1.05);
+  border-color:rgba(255,255,255,.12);
+  cursor:pointer;
+  position:relative;
+}
+.agent-card.agent-card-locked:hover{
+  filter:grayscale(.7) brightness(.7) contrast(1.1);
+  transform:translateY(-2px) scale(1.01);
+  box-shadow:0 14px 36px rgba(0,0,0,.55), 0 0 28px rgba(167,139,250,.3);
+  border-color:rgba(167,139,250,.5);
+}
+.agent-card.agent-card-locked .agent-photo{
+  filter:blur(.5px);
+}
+.agent-card.agent-card-locked::before{
+  content:'';position:absolute;inset:0;z-index:2;
+  background:repeating-linear-gradient(0deg,
+    transparent 0, transparent 3px,
+    rgba(0,0,0,.55) 3px, rgba(0,0,0,.55) 4px);
+  pointer-events:none;mix-blend-mode:multiply;
+  border-radius:14px;
+}
+.agent-card.agent-card-locked .agent-glitch{
+  position:absolute;inset:0;z-index:3;
+  background:
+    repeating-linear-gradient(0deg, transparent 0, transparent 7px, rgba(167,139,250,.15) 7px, rgba(167,139,250,.15) 8px),
+    radial-gradient(ellipse at 30% 40%, rgba(167,139,250,.18), transparent 60%);
+  pointer-events:none;
+  animation:lockGlitch 4s steps(8) infinite;
+  border-radius:14px;
+}
+@keyframes lockGlitch{
+  0%,90%,100%{opacity:.5;transform:translateX(0)}
+  92%{opacity:.85;transform:translateX(-2px)}
+  94%{opacity:.4;transform:translateX(1px)}
+  96%{opacity:.7;transform:translateX(-1px)}
+}
+.agent-card.agent-card-locked .agent-name-strip{
+  font-family:'SF Mono','Consolas',monospace;
+  letter-spacing:1px;
+  color:rgba(255,255,255,.55);
+  text-shadow:0 0 8px rgba(167,139,250,.4);
+  z-index:4;
+}
+.agent-card.agent-card-locked .agent-role-mini{
+  color:rgba(167,139,250,.75);
+  font-weight:700;
+  letter-spacing:1.4px;
+}
+.agent-lock-badge{
+  position:absolute;top:8px;right:8px;z-index:5;
+  width:26px;height:26px;border-radius:50%;
+  background:rgba(0,0,0,.85);
+  border:1.5px solid rgba(167,139,250,.65);
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;
+  box-shadow:0 0 14px rgba(167,139,250,.4),inset 0 0 0 1px rgba(255,255,255,.04);
+  animation:lockBadgePulse 2.4s ease-in-out infinite;
+}
+@keyframes lockBadgePulse{
+  0%,100%{box-shadow:0 0 14px rgba(167,139,250,.4),inset 0 0 0 1px rgba(255,255,255,.04)}
+  50%{box-shadow:0 0 22px rgba(167,139,250,.7),inset 0 0 0 1px rgba(167,139,250,.3)}
+}
+
+/* ===== Hire PIN Modal ===== */
+.hire-pin-backdrop{
+  position:fixed;inset:0;z-index:9999;
+  background:radial-gradient(ellipse at center, rgba(8,5,20,.92), rgba(0,0,0,.97));
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  display:flex;align-items:center;justify-content:center;
+  animation:hpFadeIn .35s cubic-bezier(.16,1,.3,1);
+  padding:20px;
+  --ag:#A78BFA;
+  --ag-glow:rgba(167,139,250,.5);
+}
+@keyframes hpFadeIn{from{opacity:0}to{opacity:1}}
+.hire-pin-card{
+  position:relative;
+  width:min(420px,100%);
+  background:linear-gradient(180deg,rgba(0,15,5,.95),rgba(0,3,1,.98));
+  border:1px solid rgba(0,255,65,.3);
+  border-radius:16px;
+  padding:24px 24px 20px;
+  box-shadow:
+    0 30px 80px rgba(0,0,0,.7),
+    0 0 50px rgba(0,255,65,.15),
+    inset 0 0 0 1px rgba(255,255,255,.03);
+  font-family:'SF Mono','Consolas',monospace;
+  color:#E5E7EB;
+  animation:hpSlideIn .4s cubic-bezier(.16,1,.3,1);
+  overflow:hidden;
+}
+@keyframes hpSlideIn{from{transform:translateY(20px) scale(.96);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+.hire-pin-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent 5%,#00FF41 50%,transparent 95%);
+  opacity:.7;animation:hpTopGlow 2.4s ease-in-out infinite alternate;
+}
+@keyframes hpTopGlow{0%{opacity:.3}100%{opacity:.85}}
+.hire-pin-card::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,255,65,.025) 3px,rgba(0,255,65,.025) 4px);
+  border-radius:16px;
+}
+.hire-pin-eyebrow{
+  font-size:10px;letter-spacing:2.5px;color:#00FF41;
+  text-transform:uppercase;text-shadow:0 0 10px rgba(0,255,65,.5);
+  text-align:center;margin-bottom:14px;
+  position:relative;z-index:1;
+}
+.hire-pin-portrait{
+  position:relative;width:96px;height:96px;margin:0 auto 14px;
+  border-radius:14px;overflow:hidden;
+  background:rgba(0,0,0,.5);
+  border:1.5px solid var(--ag,#A78BFA);
+  box-shadow:0 0 24px var(--ag-glow,rgba(167,139,250,.4));
+}
+.hp-photo{
+  position:absolute;inset:0;
+  background-size:cover;background-position:center 22%;
+  filter:grayscale(.85) brightness(.7) contrast(1.1);
+}
+.hp-photo.hp-emoji{
+  display:flex;align-items:center;justify-content:center;
+  font-size:48px;background:linear-gradient(135deg,var(--ag) 0%,rgba(0,0,0,.5) 100%);
+  filter:grayscale(.5) brightness(.85);
+}
+.hp-glitch{
+  position:absolute;inset:0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0, transparent 6px, rgba(0,255,65,.18) 6px, rgba(0,255,65,.18) 7px),
+    radial-gradient(circle at 50% 30%, rgba(0,255,65,.2), transparent 60%);
+  animation:hpPortraitGlitch 3.2s steps(10) infinite;
+  pointer-events:none;
+}
+@keyframes hpPortraitGlitch{
+  0%,88%,100%{opacity:.55;transform:translateX(0)}
+  90%{opacity:.85;transform:translateX(-2px)}
+  92%{opacity:.4;transform:translateX(1.5px)}
+  94%{opacity:.7;transform:translateX(-1px)}
+}
+.hire-pin-meta{
+  background:rgba(0,0,0,.5);
+  border:1px solid rgba(0,255,65,.15);
+  border-radius:8px;
+  padding:10px 12px;
+  margin-bottom:18px;
+  font-size:11.5px;line-height:1.7;
+  position:relative;z-index:1;
+}
+.hp-row{display:flex;align-items:center;gap:10px}
+.hp-row + .hp-row{border-top:1px dashed rgba(0,255,65,.12);padding-top:6px;margin-top:6px}
+.hp-key{
+  color:rgba(0,255,65,.7);font-size:9.5px;letter-spacing:1.6px;
+  text-transform:uppercase;font-weight:700;min-width:88px;
+}
+.hp-val{color:#fff;font-weight:500;letter-spacing:.3px}
+.hp-status{color:#FBBF24;text-shadow:0 0 6px rgba(251,191,36,.5)}
+.hire-pin-prompt{
+  font-size:9.5px;letter-spacing:2px;color:rgba(0,255,65,.6);
+  text-align:center;margin-bottom:10px;
+  text-transform:uppercase;
+  position:relative;z-index:1;
+}
+.hire-pin-row{
+  display:flex;justify-content:center;gap:10px;
+  margin-bottom:14px;
+  position:relative;z-index:1;
+}
+.hp-digit{
+  width:50px;height:60px;
+  background:rgba(0,0,0,.7);
+  border:1.5px solid rgba(0,255,65,.3);
+  border-radius:8px;
+  font-family:'SF Mono','Consolas',monospace;
+  font-size:24px;font-weight:700;text-align:center;
+  color:#00FF41;
+  outline:none;
+  transition:all .2s;
+  caret-color:#00FF41;
+  box-shadow:inset 0 0 12px rgba(0,255,65,.05);
+}
+.hp-digit:focus{
+  border-color:#00FF41;
+  box-shadow:0 0 18px rgba(0,255,65,.4),inset 0 0 12px rgba(0,255,65,.1);
+  background:rgba(0,15,5,.85);
+}
+.hp-digit.filled{
+  border-color:#00FF41;
+  text-shadow:0 0 10px rgba(0,255,65,.7);
+}
+.hp-digit.error{
+  border-color:#EF4444;
+  color:#EF4444;
+  box-shadow:0 0 18px rgba(239,68,68,.4);
+  animation:hpDigitShake .35s ease-out;
+}
+@keyframes hpDigitShake{
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-4px)}
+  40%{transform:translateX(4px)}
+  60%{transform:translateX(-2px)}
+  80%{transform:translateX(2px)}
+}
+.hire-pin-status{
+  font-size:11px;letter-spacing:1.2px;
+  text-align:center;min-height:18px;
+  margin-bottom:14px;
+  color:rgba(255,255,255,.55);
+  text-transform:uppercase;
+  position:relative;z-index:1;
+}
+.hire-pin-status.ok{
+  color:#00FF41;
+  text-shadow:0 0 12px rgba(0,255,65,.6);
+  animation:hpStatusBlink 1s ease-in-out infinite;
+}
+@keyframes hpStatusBlink{0%,100%{opacity:1}50%{opacity:.7}}
+.hire-pin-status.err{
+  color:#EF4444;
+  text-shadow:0 0 10px rgba(239,68,68,.5);
+}
+.hire-pin-actions{
+  display:flex;gap:10px;
+  position:relative;z-index:1;
+}
+.hp-btn{
+  flex:1;
+  background:rgba(0,0,0,.6);
+  border:1px solid rgba(255,255,255,.1);
+  border-radius:8px;
+  padding:11px 14px;
+  font-family:'SF Mono','Consolas',monospace;
+  font-size:11px;letter-spacing:1.5px;font-weight:700;
+  color:rgba(255,255,255,.75);
+  cursor:pointer;
+  transition:all .2s;
+  text-transform:uppercase;
+}
+.hp-cancel:hover{
+  background:rgba(239,68,68,.1);
+  border-color:rgba(239,68,68,.4);
+  color:#EF4444;
+}
+.hp-confirm{
+  background:linear-gradient(180deg,rgba(0,255,65,.15),rgba(0,255,65,.05));
+  border-color:rgba(0,255,65,.45);
+  color:#00FF41;
+  text-shadow:0 0 8px rgba(0,255,65,.4);
+}
+.hp-confirm:hover{
+  background:linear-gradient(180deg,rgba(0,255,65,.25),rgba(0,255,65,.1));
+  border-color:#00FF41;
+  box-shadow:0 0 18px rgba(0,255,65,.4);
+}
+.hire-pin-card.hp-shake{animation:hpCardShake .5s ease-out}
+@keyframes hpCardShake{
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-8px)}
+  40%{transform:translateX(8px)}
+  60%{transform:translateX(-4px)}
+  80%{transform:translateX(4px)}
+}
+.hire-pin-card.hp-success{
+  border-color:#00FF41;
+  box-shadow:
+    0 30px 80px rgba(0,0,0,.7),
+    0 0 80px rgba(0,255,65,.4),
+    inset 0 0 0 1px rgba(0,255,65,.2);
+  animation:hpSuccessPulse .8s cubic-bezier(.16,1,.3,1);
+}
+@keyframes hpSuccessPulse{
+  0%{transform:scale(1)}
+  50%{transform:scale(1.02)}
+  100%{transform:scale(1)}
+}

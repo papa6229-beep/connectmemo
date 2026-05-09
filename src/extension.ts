@@ -7336,6 +7336,14 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('connect-ai-lab.openOffice', () => {
             OfficePanel.createOrShow(context, provider);
         }),
+        /* v2.89.96 — 사이드바 ⋯ 메뉴가 어떤 이유로 클릭 안 받을 때를 대비한
+           명령 팔레트 fallback. Cmd/Ctrl+Shift+P → "Connect AI: 설정 열기" */
+        vscode.commands.registerCommand('connect-ai-lab.openSettings', async () => {
+            try { await (provider as any)._handleSettingsMenu?.(); }
+            catch (e: any) {
+                vscode.window.showErrorMessage(`설정 메뉴 열기 실패: ${e?.message || e}`);
+            }
+        }),
         /* 회사 폴더 위치 변경 — 두뇌 안 nested vs 완전 분리 선택 */
         vscode.commands.registerCommand('connect-ai-lab.changeCompanyDir', async () => {
             await runChangeCompanyDir();
@@ -16192,9 +16200,43 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             post({ type: 'agentStart', agent: 'ceo', task: '작업 분해' });
             _updateActiveDispatchStep(prompt, 'CEO 계획 수립 중');
             let planRaw = '';
+            /* v2.89.96 — 단계별 system prompt 빌드 + 각 단계 가드. 어느 단계가
+               'Maximum call stack' 던지는지 정확히 표시 → 사용자/우리가 즉시 진단. */
+            let ceoSystemPrompt = '';
+            let ceoStage = 'init';
+            try {
+                ceoStage = '_personalizePrompt';
+                const base = _personalizePrompt(CEO_PLANNER_PROMPT);
+                ceoStage = 'readAgentSharedContext';
+                let shared = '';
+                try { shared = readAgentSharedContext('ceo'); }
+                catch (sc: any) {
+                    /* 두뇌 RAG 등이 폭주해도 CEO 호출은 계속 — 컨텍스트 일부 누락한 채 진행. */
+                    console.error('[Connect AI] readAgentSharedContext 실패, 빈 컨텍스트로 계속:', sc?.message || sc);
+                    shared = '';
+                }
+                ceoStage = 'readRecentConversations';
+                let recent = '';
+                try { recent = readRecentConversations(2000); }
+                catch (rc: any) {
+                    console.error('[Connect AI] readRecentConversations 실패:', rc?.message || rc);
+                    recent = '';
+                }
+                ceoSystemPrompt = `${base}\n${shared}${recent}`;
+                /* 시스템 프롬프트가 너무 크면 컨텍스트 폭주 위험 — 50KB 초과 시 잘라냄. */
+                if (ceoSystemPrompt.length > 50_000) {
+                    ceoSystemPrompt = ceoSystemPrompt.slice(0, 50_000) + '\n[…컨텍스트 50KB 캡 도달, 일부 절단됨…]';
+                }
+                ceoStage = '_callAgentLLM';
+            } catch (buildErr: any) {
+                post({ type: 'agentEnd', agent: 'ceo' });
+                const stk = buildErr?.stack ? String(buildErr.stack).split('\n').slice(0, 3).join(' | ').slice(0, 300) : '';
+                post({ type: 'error', value: `⚠️ CEO 시스템 프롬프트 빌드 실패 (${ceoStage}): ${buildErr?.message || buildErr}\n[stack] ${stk}` });
+                return;
+            }
             try {
                 planRaw = await this._callAgentLLM(
-                    `${_personalizePrompt(CEO_PLANNER_PROMPT)}\n${readAgentSharedContext('ceo')}${readRecentConversations(2000)}`,
+                    ceoSystemPrompt,
                     `[사용자 명령]\n${prompt}`,
                     modelName,
                     'ceo',

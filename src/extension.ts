@@ -111,6 +111,133 @@ function _resolveFlexiblePath(input: string, root: string): { abs: string; reaso
     return { abs };
 }
 
+/* v2.89.104 — Claude 익스텐션 호환 unified diff. edit_file 후 변경 hunk를
+   ±3줄 컨텍스트로 표시. 변경 없으면 빈 문자열 반환.
+   알고리즘: line-by-line LCS는 비용 큼 → 단순 chunk 비교(Patience 스타일 간소화).
+   대부분 edit_file은 작은 영역만 바꾸므로 충분히 정확. 너무 길면 첫 50줄만. */
+function _renderUnifiedDiff(before: string, after: string, ctx: number = 3): string {
+    if (before === after) return '';
+    const a = before.split('\n');
+    const b = after.split('\n');
+    /* 공통 prefix·suffix 짧게 식별 */
+    let prefixLen = 0;
+    while (prefixLen < a.length && prefixLen < b.length && a[prefixLen] === b[prefixLen]) prefixLen++;
+    let suffixLen = 0;
+    while (
+        suffixLen < a.length - prefixLen &&
+        suffixLen < b.length - prefixLen &&
+        a[a.length - 1 - suffixLen] === b[b.length - 1 - suffixLen]
+    ) suffixLen++;
+    const aChanged = a.slice(prefixLen, a.length - suffixLen);
+    const bChanged = b.slice(prefixLen, b.length - suffixLen);
+    const ctxStart = Math.max(0, prefixLen - ctx);
+    const ctxEndA = Math.min(a.length, a.length - suffixLen + ctx);
+    const ctxEndB = Math.min(b.length, b.length - suffixLen + ctx);
+    const out: string[] = [];
+    out.push(`@@ -${ctxStart + 1},${ctxEndA - ctxStart} +${ctxStart + 1},${ctxEndB - ctxStart} @@`);
+    /* 앞 컨텍스트 */
+    for (let i = ctxStart; i < prefixLen; i++) out.push(' ' + a[i]);
+    /* 변경 부분: 삭제 → 추가 */
+    for (const line of aChanged) out.push('-' + line);
+    for (const line of bChanged) out.push('+' + line);
+    /* 뒤 컨텍스트 */
+    for (let i = a.length - suffixLen; i < ctxEndA; i++) out.push(' ' + a[i]);
+    /* 50줄 cap */
+    if (out.length > 52) {
+        return out.slice(0, 52).join('\n') + '\n... (' + (out.length - 52) + '줄 더 있음)';
+    }
+    return out.join('\n');
+}
+
+/* v2.89.104 — glob 매칭 (간단 버전). `*`, `**`, `?` 지원. node-glob 의존성 안 추가.
+   `**`는 0개 이상의 디렉토리, `*`는 슬래시 제외 0+, `?`는 단일 문자.
+   재귀 디렉토리 워크 + 패턴 매칭. 결과는 최대 200개. */
+function _globMatch(pattern: string, root: string, maxResults: number = 200): string[] {
+    const re = _globToRegex(pattern);
+    const results: string[] = [];
+    const skipDirs = new Set(['node_modules', '.git', '.next', 'dist', 'out', 'build', '.cache', '__pycache__', '.venv', 'venv', '.idea', '.vscode']);
+    function walk(dir: string, depth: number) {
+        if (results.length >= maxResults || depth > 12) return;
+        let entries: fs.Dirent[];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+            if (results.length >= maxResults) return;
+            if (e.name.startsWith('.git')) continue;
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                if (skipDirs.has(e.name)) continue;
+                walk(full, depth + 1);
+            } else if (e.isFile()) {
+                const rel = path.relative(root, full).split(path.sep).join('/');
+                if (re.test(rel)) results.push(rel);
+            }
+        }
+    }
+    walk(root, 0);
+    return results;
+}
+function _globToRegex(pattern: string): RegExp {
+    /* `**`를 placeholder로 escape, 나머지 변환 후 복원 */
+    let re = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    re = re.replace(/\*\*\//g, '__GLOBSTAR_SLASH__');
+    re = re.replace(/\*\*/g, '__GLOBSTAR__');
+    re = re.replace(/\*/g, '[^/]*');
+    re = re.replace(/\?/g, '[^/]');
+    re = re.replace(/__GLOBSTAR_SLASH__/g, '(?:.*/)?');
+    re = re.replace(/__GLOBSTAR__/g, '.*');
+    return new RegExp('^' + re + '$', 'i');
+}
+
+/* v2.89.104 — grep: 파일 내용에서 패턴 검색. case-insensitive 기본.
+   결과는 파일별로 묶어서 line:N 매치라인 반환. 최대 50파일·파일당 10매치. */
+function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: string; matches: { line: number; text: string }[] }[] {
+    let regex: RegExp;
+    try { regex = new RegExp(pattern, 'i'); }
+    catch { return []; }
+    const fileRe = fileGlob ? _globToRegex(fileGlob) : null;
+    const results: { file: string; matches: { line: number; text: string }[] }[] = [];
+    const skipDirs = new Set(['node_modules', '.git', '.next', 'dist', 'out', 'build', '.cache', '__pycache__', '.venv', 'venv', '.idea', '.vscode']);
+    const MAX_FILES = 50;
+    const MAX_PER_FILE = 10;
+    const MAX_FILE_BYTES = 1024 * 1024;  /* 1MB 초과 파일 스킵 */
+    function walk(dir: string, depth: number) {
+        if (results.length >= MAX_FILES || depth > 12) return;
+        let entries: fs.Dirent[];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+            if (results.length >= MAX_FILES) return;
+            if (e.name.startsWith('.git')) continue;
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                if (skipDirs.has(e.name)) continue;
+                walk(full, depth + 1);
+            } else if (e.isFile()) {
+                const rel = path.relative(root, full).split(path.sep).join('/');
+                if (fileRe && !fileRe.test(rel)) continue;
+                try {
+                    const stat = fs.statSync(full);
+                    if (stat.size > MAX_FILE_BYTES) continue;
+                    const buf = fs.readFileSync(full);
+                    /* 바이너리 빠른 체크 */
+                    if (buf.slice(0, 512).includes(0)) continue;
+                    const content = buf.toString('utf-8');
+                    const lines = content.split('\n');
+                    const matches: { line: number; text: string }[] = [];
+                    for (let i = 0; i < lines.length; i++) {
+                        if (regex.test(lines[i])) {
+                            matches.push({ line: i + 1, text: lines[i].slice(0, 200) });
+                            if (matches.length >= MAX_PER_FILE) break;
+                        }
+                    }
+                    if (matches.length > 0) results.push({ file: rel, matches });
+                } catch { /* skip */ }
+            }
+        }
+    }
+    walk(root, 0);
+    return results;
+}
+
 /* v2.89.93 — OS 파일 익스플로러로 파일/폴더 열기 (Finder · Windows Explorer ·
    Linux GNOME Files). 결과 메시지를 반환해서 호출처가 사용자에게 보여줄 수 있게. */
 function _revealInOsExplorer(targetPath: string): { ok: boolean; message: string } {
@@ -6333,11 +6460,13 @@ ${a.specialty}${personaBlock}
 당신은 사용자 컴퓨터의 실제 파일 시스템과 터미널에 직접 연결되어 있습니다. 텍스트로 "만들었다·편집했다"고 하지 말고 아래 태그로 실제 실행하세요. 시스템이 자동으로 디스크에 적용합니다.
 
   • <create_file path="...">내용</create_file> — 파일 생성·덮어쓰기 (~/, 절대경로, $HOME 모두 가능)
-  • <edit_file path="..."><find>기존</find><replace>새</replace></edit_file> — 정확/공백관용 fuzzy 매칭
-  • <read_file path="..."/> — 32KB까지 읽기 (편집 전엔 반드시 먼저 read)
+  • <edit_file path="..."><find>기존</find><replace>새</replace></edit_file> — 정확/공백관용 fuzzy 매칭. 성공 시 unified diff 자동 표시
+  • <read_file path="..."/> — 32KB까지 읽기 (cat -n 줄번호 포함). 편집 전엔 반드시 먼저 read
   • <delete_file path="..."/> — 파일·디렉토리 삭제
   • <list_files path="..."/> — 디렉토리 목록
-  • <run_command>명령</run_command> — 셸 실행. 맥은 sh, 윈도우는 cmd.exe (\`npm install\`·\`python x.py\` 등 양쪽 동작)
+  • <glob pattern="**/*.ts"/> — 패턴으로 파일 찾기 (\`**\`=하위 모두, \`*\`=슬래시 외)
+  • <grep pattern="..." files="**/*.py"/> — 파일 내용 검색 (정규식, 줄번호 표시)
+  • <run_command>명령</run_command> — 셸 실행. 맥은 sh, 윈도우는 cmd.exe
   • <reveal_in_explorer path="..."/> — Finder/Explorer 열기 (사용자 시각 확인용)
   • <open_file path="..."/> — 기본 앱(이미지·PDF·웹페이지)으로 열기
 
@@ -17483,7 +17612,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             } catch { /* ignore */ }
         }
         if (!rootPath) {
-            const hasActions = /<(?:create_file|edit_file|run_command|delete_file|read_file|list_files|file|reveal_in_explorer|open_file)/i.test(aiMessage);
+            const hasActions = /<(?:create_file|edit_file|run_command|delete_file|read_file|list_files|file|reveal_in_explorer|open_file|glob|grep)/i.test(aiMessage);
             if (hasActions) {
                 report.push('❌ 작업할 폴더를 찾을 수 없습니다. File → Open Folder 로 폴더를 열거나 회사·두뇌 폴더를 먼저 설정해주세요.');
             }
@@ -17566,6 +17695,8 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
 
             try {
                 let fileContent = fs.readFileSync(absPath, 'utf-8');
+                /* v2.89.104 — 편집 전 원본 보관 → diff 표시용 */
+                const originalContent = fileContent;
                 const findReplaceRegex = /<find>([\s\S]*?)<\/find>\s*<replace>([\s\S]*?)<\/replace>/g;
                 let frMatch: RegExpExecArray | null;
                 let editCount = 0;
@@ -17619,7 +17750,20 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 if (editCount > 0) {
                     fs.writeFileSync(absPath, fileContent, 'utf-8');
                     if (absPath.startsWith(_getBrainDir())) brainModified = true;
-                    report.push(`✏️ 편집 완료: ${absPath.replace(os.homedir(), '~')} (${editCount}건 수정)`);
+                    /* v2.89.104 — Claude 익스텐션 호환 unified diff 표시. 변경된 hunk만,
+                       3줄 컨텍스트. AI도 사람도 무엇이 어떻게 바뀌었는지 한눈에 파악. */
+                    const diffBlock = _renderUnifiedDiff(originalContent, fileContent, 3);
+                    const sizeBefore = (Buffer.byteLength(originalContent, 'utf-8') / 1024).toFixed(1);
+                    const sizeAfter = (Buffer.byteLength(fileContent, 'utf-8') / 1024).toFixed(1);
+                    const linesBefore = originalContent.split('\n').length;
+                    const linesAfter = fileContent.split('\n').length;
+                    const linesDelta = linesAfter - linesBefore;
+                    const deltaStr = linesDelta === 0 ? '' : (linesDelta > 0 ? ` +${linesDelta}줄` : ` ${linesDelta}줄`);
+                    if (diffBlock) {
+                        report.push(`✏️ 편집 완료: ${absPath.replace(os.homedir(), '~')} (${editCount}건 수정${deltaStr}, ${sizeBefore}KB → ${sizeAfter}KB)\n\`\`\`diff\n${diffBlock}\n\`\`\``);
+                    } else {
+                        report.push(`✏️ 편집 완료: ${absPath.replace(os.homedir(), '~')} (${editCount}건${deltaStr})`);
+                    }
                     // Open edited file
                     if (!opts?.silent) {
                         await vscode.window.showTextDocument(vscode.Uri.file(absPath), { preview: false });
@@ -17708,10 +17852,19 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     const content = fs.readFileSync(absPath, 'utf-8');
                     const truncated = content.length > READ_CAP;
                     const shown = truncated ? content.slice(0, READ_CAP) : content;
-                    const preview = content.slice(0, 500).split('\n').slice(0, 10).join('\n');
-                    const truncNote = truncated ? `\n_⚠️ ${content.length}자 중 처음 ${READ_CAP}자만 표시 — 전체가 필요하면 더 작은 단위로 분할 읽기._` : '';
-                    report.push(`📖 읽기: ${absPath.replace(os.homedir(), '~')} (${content.length}자${truncated ? ', 잘림' : ''})\n\`\`\`\n${preview}...\n\`\`\``);
-                    const injection = `[시스템: read_file 결과]\n파일: ${absPath.replace(os.homedir(), '~')}\n\`\`\`\n${shown}\n\`\`\`${truncNote}`;
+                    /* v2.89.104 — Claude 익스텐션 호환 cat -n 스타일 줄번호. AI가 특정 줄을
+                       지정해서 edit_file 하기 쉬워짐. 줄번호 너비는 자동 (3~5자리). */
+                    const lines = shown.split('\n');
+                    const totalLines = content.split('\n').length;
+                    const padWidth = String(lines.length).length;
+                    const numbered = lines.map((line, i) => `${String(i + 1).padStart(padWidth, ' ')}\t${line}`).join('\n');
+                    const previewLines = lines.slice(0, 10);
+                    const previewPadWidth = String(Math.min(10, lines.length)).length;
+                    const preview = previewLines.map((line, i) => `${String(i + 1).padStart(previewPadWidth, ' ')}\t${line}`).join('\n');
+                    const sizeKb = (stat.size / 1024).toFixed(1);
+                    const truncNote = truncated ? `\n_⚠️ ${content.length}자 중 처음 ${READ_CAP}자만 표시 (${totalLines}줄 중 ${lines.length}줄) — 전체가 필요하면 더 작은 단위로 분할 읽기._` : '';
+                    report.push(`📖 읽기: ${absPath.replace(os.homedir(), '~')} (${totalLines}줄, ${sizeKb}KB${truncated ? ', 잘림' : ''})\n\`\`\`\n${preview}${lines.length > 10 ? '\n...' : ''}\n\`\`\``);
+                    const injection = `[시스템: read_file 결과]\n파일: ${absPath.replace(os.homedir(), '~')} (${totalLines}줄)\n\`\`\`\n${numbered}\n\`\`\`${truncNote}`;
                     if (opts?.appendToOutput) {
                         opts.appendToOutput('\n\n' + injection);
                     } else {
@@ -17755,6 +17908,63 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 }
             } catch (err: any) {
                 report.push(`❌ 목록 실패: ${relDir} — ${err.message}`);
+            }
+        }
+
+        // ACTION NEW v2.89.104: Glob — 패턴으로 파일 찾기 (Claude 익스텐션 호환)
+        // <glob pattern="**/*.ts"/> 또는 <glob pattern="src/**/*.tsx" path="."/>
+        const globRegex = /<glob\s+(?:[^>]*?\b)?pattern=['"]([^'"]+)['"](?:\s+(?:path|dir|root)=['"]?([^'">]+)['"]?)?[^>]*\/?>(?:<\/glob>)?/gi;
+        while ((match = globRegex.exec(aiMessage)) !== null) {
+            const pattern = match[1].trim();
+            const relRoot = (match[2] || '.').trim();
+            const resolved = _resolveFlexiblePath(relRoot, rootPath);
+            if (!resolved || resolved.reason) {
+                report.push(`❌ glob 차단: ${pattern} — ${resolved?.reason || '경로 해석 불가'}`);
+                continue;
+            }
+            try {
+                const hits = _globMatch(pattern, resolved.abs, 200);
+                const summary = hits.length === 0 ? '_(매칭 없음)_'
+                    : (hits.length >= 200 ? hits.slice(0, 200).join('\n') + '\n_(200개 cap 도달)_' : hits.join('\n'));
+                report.push(`🔎 glob \`${pattern}\` (${resolved.abs.replace(os.homedir(), '~')}): ${hits.length}개\n\`\`\`\n${summary.slice(0, 4000)}\n\`\`\``);
+                const injection = `[시스템: glob 결과]\n패턴: ${pattern}\n루트: ${resolved.abs.replace(os.homedir(), '~')}\n매치 ${hits.length}개:\n${summary}`;
+                if (opts?.appendToOutput) opts.appendToOutput('\n\n' + injection);
+                else this._chatHistory.push({ role: 'user', content: injection });
+            } catch (err: any) {
+                report.push(`❌ glob 실패: ${pattern} — ${err.message}`);
+            }
+        }
+
+        // ACTION NEW v2.89.104: Grep — 파일 내용 검색 (Claude 익스텐션 호환)
+        // <grep pattern="TODO" path="src" files="**/*.ts"/>
+        const grepRegex = /<grep\s+(?:[^>]*?\b)?pattern=['"]([^'"]+)['"](?:[^>]*?\bpath=['"]?([^'">]+)['"]?)?(?:[^>]*?\bfiles=['"]?([^'">]+)['"]?)?[^>]*\/?>(?:<\/grep>)?/gi;
+        while ((match = grepRegex.exec(aiMessage)) !== null) {
+            const pattern = match[1].trim();
+            const relRoot = (match[2] || '.').trim();
+            const fileGlob = match[3] ? match[3].trim() : undefined;
+            const resolved = _resolveFlexiblePath(relRoot, rootPath);
+            if (!resolved || resolved.reason) {
+                report.push(`❌ grep 차단: ${pattern} — ${resolved?.reason || '경로 해석 불가'}`);
+                continue;
+            }
+            try {
+                const hits = _grepFiles(pattern, resolved.abs, fileGlob);
+                let total = 0;
+                for (const h of hits) total += h.matches.length;
+                let body = '';
+                if (hits.length === 0) {
+                    body = '_(매칭 없음)_';
+                } else {
+                    for (const h of hits) {
+                        body += `\n📄 ${h.file}\n` + h.matches.map(m => `  ${String(m.line).padStart(4, ' ')}: ${m.text}`).join('\n');
+                    }
+                }
+                report.push(`🔍 grep \`${pattern}\`${fileGlob ? ` (${fileGlob})` : ''}: ${hits.length}파일 / ${total}매치\n\`\`\`\n${body.slice(0, 4000)}\n\`\`\``);
+                const injection = `[시스템: grep 결과]\n패턴: ${pattern}\n루트: ${resolved.abs.replace(os.homedir(), '~')}\n${fileGlob ? `파일 필터: ${fileGlob}\n` : ''}${hits.length}파일 ${total}매치:${body}`;
+                if (opts?.appendToOutput) opts.appendToOutput('\n\n' + injection);
+                else this._chatHistory.push({ role: 'user', content: injection });
+            } catch (err: any) {
+                report.push(`❌ grep 실패: ${pattern} — ${err.message}`);
             }
         }
 
@@ -17924,6 +18134,8 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             .replace(/<(?:list_files|list_dir|ls)\s+[^>]*\s*\/?>(?:<\/(?:list_files|list_dir|ls)>)?/gi, '')
             .replace(/<(?:reveal_in_explorer|reveal|finder|explorer)\s+[^>]*\s*\/?>(?:<\/(?:reveal_in_explorer|reveal|finder|explorer)>)?/gi, '')
             .replace(/<(?:open_file|open_in_app|launch)\s+[^>]*\s*\/?>(?:<\/(?:open_file|open_in_app|launch)>)?/gi, '')
+            .replace(/<glob\s+[^>]*\s*\/?>(?:<\/glob>)?/gi, '')
+            .replace(/<grep\s+[^>]*\s*\/?>(?:<\/grep>)?/gi, '')
             .replace(/<(?:run_command|command|bash|terminal)>[\s\S]*?<\/(?:run_command|command|bash|terminal)>/gi, '')
             .replace(/<(?:read_brain)>[\s\S]*?<\/(?:read_brain)>/gi, '')
             .replace(/<(?:read_url|url|fetch_url)>[\s\S]*?<\/(?:read_url|url|fetch_url)>/gi, '')

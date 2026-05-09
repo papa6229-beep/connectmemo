@@ -339,6 +339,44 @@ body.corp-dispatching .ab-svg{opacity:1}
 .ab-svg .ab-beam.dispatching{animation:beamFlow 1.2s linear}
 @keyframes beamFlow{0%{stroke-dashoffset:60;opacity:0}20%{opacity:1}100%{stroke-dashoffset:0;opacity:.65}}
 
+/* ===== v2.89.95 — 잠긴 에이전트 (입사 준비중) ===== */
+.ab-card.locked{opacity:.95;border-color:rgba(255,178,102,.4);background:linear-gradient(180deg,rgba(15,8,2,.85),rgba(8,4,0,.92));cursor:pointer;position:relative}
+.ab-card.locked::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent 0,transparent 5px,rgba(255,178,102,.04) 5px,rgba(255,178,102,.04) 7px);pointer-events:none;border-radius:10px}
+.ab-card.locked .ab-emoji,.ab-card.locked .ab-portrait{filter:grayscale(.85) brightness(.55) contrast(1.1)}
+.ab-card.locked .ab-name{color:rgba(255,178,102,.75)}
+.ab-card.locked .ab-status{color:#FFB266;font-weight:700;letter-spacing:.5px;text-shadow:0 0 8px rgba(255,178,102,.4);animation:lockedPulse 2.4s ease-in-out infinite}
+.ab-card.locked .ab-led{background:#FFB266;box-shadow:0 0 8px #FFB266;animation:ledBlink 1.4s ease-in-out infinite}
+.ab-card.locked:hover{transform:translateY(-1px);border-color:#FFB266;box-shadow:0 0 22px rgba(255,178,102,.35)}
+.ab-card.locked .ab-lock-icon{position:absolute;top:6px;right:6px;font-size:11px;opacity:.85;text-shadow:0 0 6px rgba(255,178,102,.6);z-index:2}
+@keyframes lockedPulse{0%,100%{opacity:.7}50%{opacity:1}}
+
+/* ===== v2.89.95 — PIN 입력 모달 (미래지향, 힌트 없음) ===== */
+.pin-overlay{position:fixed;inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,.85),rgba(0,0,0,.96));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);z-index:9999;display:flex;align-items:center;justify-content:center;animation:pinFade .35s ease-out}
+@keyframes pinFade{from{opacity:0}to{opacity:1}}
+.pin-overlay::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(0,255,65,.06) 0%,transparent 60%);pointer-events:none}
+.pin-overlay::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,255,65,.03) 3px,rgba(0,255,65,.03) 4px);pointer-events:none;mix-blend-mode:overlay}
+.pin-card{position:relative;background:linear-gradient(180deg,rgba(8,10,8,.97),rgba(2,4,2,.99));border:1px solid rgba(0,255,65,.35);border-radius:18px;padding:38px 42px 32px;max-width:380px;width:88vw;text-align:center;box-shadow:0 0 90px rgba(0,255,65,.2),0 30px 80px rgba(0,0,0,.7);animation:pinIn .55s cubic-bezier(.16,1,.3,1)}
+@keyframes pinIn{from{opacity:0;transform:translateY(20px) scale(.94)}to{opacity:1;transform:translateY(0) scale(1)}}
+.pin-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#00FF41,#00e5ff,#00FF41,transparent);border-radius:18px 18px 0 0;animation:pinLine 2.2s ease-in-out infinite}
+@keyframes pinLine{0%,100%{opacity:.5}50%{opacity:1}}
+.pin-brand{font-family:'SF Mono','JetBrains Mono',monospace;font-size:10px;letter-spacing:3.5px;color:rgba(0,255,65,.6);text-transform:uppercase;margin-bottom:8px}
+.pin-icon{font-size:48px;margin:6px 0 12px;filter:drop-shadow(0 0 18px rgba(0,255,65,.45));animation:pinIconFloat 3.5s ease-in-out infinite}
+@keyframes pinIconFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.pin-title{font-size:18px;font-weight:700;color:#fff;margin-bottom:4px;letter-spacing:-.2px}
+.pin-sub{font-size:12px;color:var(--text-dim);margin-bottom:24px;line-height:1.5}
+.pin-input-row{display:flex;gap:10px;justify-content:center;margin-bottom:18px}
+.pin-digit{width:48px;height:60px;background:linear-gradient(180deg,rgba(0,20,5,.7),rgba(0,8,2,.85));border:1.5px solid rgba(0,255,65,.25);border-radius:10px;font-family:'SF Mono','JetBrains Mono',monospace;font-size:28px;font-weight:700;color:#00FF41;text-align:center;outline:none;text-shadow:0 0 12px rgba(0,255,65,.55);caret-color:transparent;transition:all .2s;-moz-appearance:textfield}
+.pin-digit::-webkit-inner-spin-button,.pin-digit::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.pin-digit:focus{border-color:#00FF41;box-shadow:0 0 18px rgba(0,255,65,.4),inset 0 0 12px rgba(0,255,65,.08);transform:translateY(-1px)}
+.pin-digit.filled{background:linear-gradient(180deg,rgba(0,40,12,.85),rgba(0,18,5,.95));border-color:rgba(0,255,65,.55)}
+.pin-digit.error{border-color:#ff5252;color:#ff5252;text-shadow:0 0 12px rgba(255,82,82,.55);animation:pinShake .4s ease-in-out}
+@keyframes pinShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.pin-status{font-family:'SF Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);min-height:14px;margin-bottom:14px;transition:color .2s}
+.pin-status.ok{color:#00FF41}
+.pin-status.err{color:#ff5252}
+.pin-cancel{background:transparent;border:1px solid rgba(255,255,255,.12);color:var(--text-dim);font-family:inherit;font-size:11px;padding:8px 18px;border-radius:8px;cursor:pointer;letter-spacing:.5px;transition:all .2s}
+.pin-cancel:hover{border-color:rgba(255,255,255,.3);color:var(--text-bright)}
+
 /* ===== Agent-tagged messages ===== */
 .msg.msg-agent{position:relative}
 .msg-agent .av{background:rgba(20,22,28,.85);color:var(--ag-color,var(--accent));border:1px solid var(--ag-color,var(--accent));box-shadow:0 0 10px var(--ag-color-glow,var(--accent-glow))}
@@ -3267,6 +3305,16 @@ if(abCompanyName){
 
 /* Mini emoji dots — visible in collapsed mode, mirror full cards' state. */
 let agentMiniDotEls={};
+/* v2.89.95 — 잠긴(채용 전) 에이전트 관리. localStorage에 채용 상태 저장.
+   힌트는 절대 노출 안 함 — UI는 그저 "잠겨있다"고만 알림. */
+const LOCKED_AGENTS = { editor: true };  /* 사운드 디렉터(editor=루나) — 입사 준비중 */
+function isAgentHired(id){
+  if(!LOCKED_AGENTS[id]) return true;
+  try { return localStorage.getItem('connectai_hired_'+id) === '1'; } catch { return false; }
+}
+function markAgentHired(id){
+  try { localStorage.setItem('connectai_hired_'+id, '1'); } catch { /* private mode */ }
+}
 function renderAgentBoard(agents,companyDir){
   agentMap={};agentCardEls={};agentMiniDotEls={};
   abGrid.innerHTML='';
@@ -3276,22 +3324,23 @@ function renderAgentBoard(agents,companyDir){
   agents.forEach(a=>{
     agentMap[a.id]=a;
     const card=document.createElement('div');
-    card.className='ab-card idle';
+    const locked = !isAgentHired(a.id);
+    card.className='ab-card '+(locked?'locked':'idle');
     card.style.setProperty('--ag-color',a.color);
     card.style.setProperty('--ag-color-glow',a.color+'33');
     card.dataset.agent=a.id;
-    /* IDLE 라벨 제거 — 라이브 에이전트가 쉬는 중일 때 굳이 'IDLE'이라고
-       알릴 필요 없음(LED 점이 이미 상태 표시). 미합류 에이전트만 '곧 합류'
-       표시 유지 — 그건 정보 가치가 있음. */
-    const statusText = AGENT_LIVE[a.id] ? '' : '곧 합류';
-    /* 커스텀 프로필 이미지가 있으면 이모지 대신 작은 원형 사진 — 영숙(얼굴),
-       레오(얼굴) 등이 인격 있는 동료처럼 보이게. */
+    const statusText = locked ? '입사 준비 중' : (AGENT_LIVE[a.id] ? '' : '곧 합류');
     const portraitHtml = (a.portraitIsCustom && a.portrait)
       ? '<img class="ab-portrait" src="'+a.portrait+'" alt="" />'
       : '<div class="ab-emoji">'+a.emoji+'</div>';
-    card.innerHTML='<span class="ab-led"></span>'+portraitHtml+'<div class="ab-name">'+a.name+'</div><div class="ab-status"'+(statusText?'':' style="display:none"')+'>'+statusText+'</div>';
+    const lockBadge = locked ? '<span class="ab-lock-icon">🔒</span>' : '';
+    card.innerHTML=lockBadge+'<span class="ab-led"></span>'+portraitHtml+'<div class="ab-name">'+a.name+'</div><div class="ab-status"'+(statusText?'':' style="display:none"')+'>'+statusText+'</div>';
     card.addEventListener('click',()=>{
-      showAgentPanel(a);
+      if(!isAgentHired(a.id)){
+        openHirePin(a);
+      } else {
+        showAgentPanel(a);
+      }
     });
     abGrid.appendChild(card);
     agentCardEls[a.id]=card;
@@ -3315,8 +3364,113 @@ function renderAgentBoard(agents,companyDir){
   });
 }
 
+/* v2.89.95 — 채용 PIN 모달. 힌트 표시 절대 안 함 (사용자 요구).
+   디지털 4자리 입력, 자동 다음 칸, 마지막 자리 입력 시 자동 검증. */
+const HIRE_PIN = '0000';
+let _pinOverlayEl = null;
+function openHirePin(agent){
+  if(_pinOverlayEl) return;  /* dedupe */
+  const overlay = document.createElement('div');
+  overlay.className = 'pin-overlay';
+  overlay.innerHTML =
+    '<div class="pin-card">'+
+      '<div class="pin-brand">CONNECT · AI HR</div>'+
+      '<div class="pin-icon">'+(agent.emoji||'🎵')+'</div>'+
+      '<div class="pin-title">'+(agent.name||'에이전트')+' 채용</div>'+
+      '<div class="pin-sub">입사 승인 코드를 입력하세요.</div>'+
+      '<div class="pin-input-row">'+
+        '<input class="pin-digit" type="tel" inputmode="numeric" maxlength="1" autocomplete="off" />'+
+        '<input class="pin-digit" type="tel" inputmode="numeric" maxlength="1" autocomplete="off" />'+
+        '<input class="pin-digit" type="tel" inputmode="numeric" maxlength="1" autocomplete="off" />'+
+        '<input class="pin-digit" type="tel" inputmode="numeric" maxlength="1" autocomplete="off" />'+
+      '</div>'+
+      '<div class="pin-status" id="pinStatus">대기 중…</div>'+
+      '<button class="pin-cancel" id="pinCancel">취소</button>'+
+    '</div>';
+  document.body.appendChild(overlay);
+  _pinOverlayEl = overlay;
+  const digits = overlay.querySelectorAll('.pin-digit');
+  const status = overlay.querySelector('#pinStatus');
+  const close = ()=>{ try{ overlay.remove(); }catch{} _pinOverlayEl=null; };
+  /* 입력 흐름 — 한 칸 입력하면 다음 칸으로, 백스페이스면 이전 칸으로 */
+  digits.forEach((d, i)=>{
+    d.addEventListener('input', (e)=>{
+      const v = (e.target.value||'').replace(/\D/g,'').slice(-1);
+      e.target.value = v;
+      if(v){
+        e.target.classList.add('filled');
+        if(i < digits.length-1) digits[i+1].focus();
+        else verify();
+      } else {
+        e.target.classList.remove('filled');
+      }
+    });
+    d.addEventListener('keydown', (e)=>{
+      if(e.key==='Backspace' && !e.target.value && i>0){
+        digits[i-1].focus();
+        digits[i-1].value='';
+        digits[i-1].classList.remove('filled');
+      } else if(e.key==='Escape'){
+        close();
+      } else if(e.key==='Enter'){
+        verify();
+      }
+    });
+  });
+  function verify(){
+    const code = Array.from(digits).map(d=>d.value).join('');
+    if(code.length < 4){
+      status.textContent='4자리 입력하세요';
+      status.className='pin-status err';
+      return;
+    }
+    if(code === HIRE_PIN){
+      status.textContent='✓ 인증 완료 — 환영합니다';
+      status.className='pin-status ok';
+      digits.forEach(d=>d.disabled=true);
+      markAgentHired(agent.id);
+      /* 백엔드에 채용 사실 알림 — 회사 폴더에 hired.json 등으로 영구 저장 가능 */
+      try { vscode.postMessage({ type:'agentHired', agent: agent.id }); } catch {}
+      setTimeout(()=>{
+        close();
+        /* 카드를 다시 그리지 않고도 즉시 반영 — 잠금 해제 + 패널 자동 오픈 */
+        const card = agentCardEls[agent.id];
+        if(card){
+          card.classList.remove('locked');
+          card.classList.add('idle');
+          const lock = card.querySelector('.ab-lock-icon');
+          if(lock) lock.remove();
+          const st = card.querySelector('.ab-status');
+          if(st){ st.textContent=''; st.style.display='none'; }
+        }
+        /* 채용 직후 패널 열어서 즉시 사용 가능 안내 */
+        try { showAgentPanel(agent); } catch {}
+      }, 600);
+    } else {
+      status.textContent='❌ 잘못된 코드';
+      status.className='pin-status err';
+      digits.forEach(d=>{
+        d.classList.add('error');
+        d.value='';
+        d.classList.remove('filled');
+      });
+      setTimeout(()=>{
+        digits.forEach(d=>d.classList.remove('error'));
+        digits[0].focus();
+        status.textContent='다시 시도';
+        status.className='pin-status';
+      }, 600);
+    }
+  }
+  overlay.querySelector('#pinCancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  setTimeout(()=>digits[0].focus(), 80);
+}
+
 function setCardState(agent,state,task){
   const c=agentCardEls[agent];if(!c)return;
+  /* v2.89.95 — 잠긴 카드는 상태 변경 무시 (CEO가 dispatch 시도해도 시각 변화 없음) */
+  if(c.classList.contains('locked')) return;
   c.classList.remove('idle','thinking','working','done');
   c.classList.add(state);
   const s=c.querySelector('.ab-status');

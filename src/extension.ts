@@ -14369,6 +14369,23 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                 case 'newChat':
                     this.resetChat();
                     break;
+                /* v2.89.95 — 채용 PIN 통과 후 webview가 알림. 회사 폴더에 영구 저장
+                   해서 앱 재설치/사이드바 재시작 후에도 채용 상태 유지. */
+                case 'agentHired':
+                    try {
+                        const aid = String((msg as any).agent || '').trim();
+                        if (aid) {
+                            const dir = path.join(getCompanyDir(), '_shared');
+                            try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+                            const f = path.join(dir, 'hired.json');
+                            let cur: any = {};
+                            try { cur = JSON.parse(fs.readFileSync(f, 'utf-8') || '{}'); } catch { /* malformed */ }
+                            cur[aid] = { hiredAt: new Date().toISOString() };
+                            try { fs.writeFileSync(f, JSON.stringify(cur, null, 2)); } catch { /* readonly fs */ }
+                            try { vscode.window.showInformationMessage(`🎉 ${aid} 에이전트 채용 완료! 이제 활용 가능합니다.`); } catch { /* ignore */ }
+                        }
+                    } catch { /* ignore — UI 이미 잠금 해제됨 */ }
+                    break;
                 case 'ready':
                     // 웹뷰가 준비되면 저장된 대화 기록 복원 + 회사 상태 동기화.
                     // v2.89.86 — 이전엔 _sendCompanyState() 가 사용자 셋업 액션 후에만
@@ -16220,7 +16237,10 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     hint = '\n💡 LLM 서버에 연결 못함 — Ollama/LM Studio가 켜져 있는지 확인.'
                          + '\n  ⋯(더보기) → ⚙️ 설정 → "AI 엔진 변경"에서 사용 중인 엔진 선택.';
                 }
-                post({ type: 'error', value: `⚠️ CEO 호출 실패: ${e.message}${detail ? '\n원인: ' + detail : ''}${hint}` });
+                /* v2.89.95 — 디버그 보강. 'Maximum call stack' 같은 런타임 에러는
+                   원인 추적을 위해 스택 첫 줄도 함께 노출 (사용자 신고 시 정확한 위치 확인). */
+                const stackTop = e?.stack ? String(e.stack).split('\n').slice(0, 3).join(' | ').slice(0, 300) : '';
+                post({ type: 'error', value: `⚠️ CEO 호출 실패: ${e.message}${detail ? '\n원인: ' + detail : ''}${stackTop ? '\n[stack] ' + stackTop : ''}${hint}` });
                 return;
             }
             post({ type: 'agentEnd', agent: 'ceo' });
@@ -17236,10 +17256,12 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
         if (usedFallbackRoot) {
             report.push(`📁 워크스페이스 미오픈 — \`${rootPath.replace(os.homedir(), '~')}\` 를 root로 사용합니다.`);
         }
-        /* v2.89.93 — 마크다운 fence로 감싸진 액션 태그도 인식. 작은 모델이 자주
-           ```xml\n<create_file...>\n```  형태로 출력해서 regex가 못 잡았음.
-           fence 안에 액션 태그가 있으면 fence 자체를 제거하고 처리. */
-        aiMessage = aiMessage.replace(/```(?:xml|html|action|tool|tools)?\s*\n([\s\S]*?<\/?(?:create_file|edit_file|delete_file|read_file|list_files|run_command|reveal_in_explorer|open_file|read_url|read_brain|file)[\s\S]*?)\n```/gi, '$1');
+        /* v2.89.95 — fence-unwrap 단순화. 이전 v2.89.93 regex(중첩 lazy + 긴 alternation)는
+           특정 입력에서 V8 정규식 엔진의 백트래킹 한계에 부딪힐 가능성이 있어 안전한 라인
+           단위 처리로 교체. 액션 태그를 감싸는 ```xml ... ``` 블록만 정확히 unwrap. */
+        try {
+            aiMessage = aiMessage.replace(/```(?:xml|html|action|tool|tools)\s*\n/gi, '').replace(/(<\/(?:create_file|edit_file|delete_file|read_file|list_files|run_command|reveal_in_explorer|open_file|read_url|read_brain|file)>)\s*\n```/gi, '$1');
+        } catch { /* defensive — never let unwrap break the path */ }
 
         // ACTION 1: Create files — v2.89.93 자유경로(~, $HOME, 절대경로) 허용,
         //           attr 한국어 alias(경로=) 인식.

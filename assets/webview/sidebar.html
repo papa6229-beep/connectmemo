@@ -202,6 +202,34 @@ body.corp-on .welcome-logo::before{background:#FBBF24}
 .loading-dots span{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:dotBounce 1.4s ease-in-out infinite}
 .loading-dots span:nth-child(2){animation-delay:.2s;background:var(--accent2)}
 .loading-dots span:nth-child(3){animation-delay:.4s;background:var(--accent3)}
+
+/* ===== v2.89.99 — 매트릭스 브랜드 미래지향 로더 (멀티-단계 터미널 스타일) ===== */
+.ml-loader{margin-left:29px;margin-top:8px;background:linear-gradient(180deg,rgba(0,15,5,.85),rgba(0,5,2,.95));border:1px solid rgba(0,255,65,.25);border-radius:12px;padding:14px 16px 12px;position:relative;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.4),0 0 22px rgba(0,255,65,.08);max-width:520px}
+.ml-loader::before{content:'';position:absolute;top:0;left:-30%;width:30%;height:100%;background:linear-gradient(90deg,transparent,rgba(0,255,65,.07),transparent);animation:mlScan 2.6s linear infinite;pointer-events:none}
+@keyframes mlScan{0%{left:-30%}100%{left:130%}}
+.ml-loader::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,255,65,.025) 3px,rgba(0,255,65,.025) 4px);pointer-events:none;mix-blend-mode:overlay;border-radius:12px}
+.ml-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-family:'SF Mono','JetBrains Mono',monospace;font-size:9.5px;letter-spacing:2px;color:rgba(0,255,65,.65);text-transform:uppercase;text-shadow:0 0 8px rgba(0,255,65,.35)}
+.ml-head-dot{width:6px;height:6px;border-radius:50%;background:#00FF41;box-shadow:0 0 10px #00FF41;animation:mlHeadDot 1.2s ease-in-out infinite}
+@keyframes mlHeadDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)}}
+.ml-head-bar{flex:1;height:1px;background:linear-gradient(90deg,rgba(0,255,65,.35),transparent)}
+.ml-head-spinner{width:11px;height:11px;border:1.5px solid rgba(0,255,65,.18);border-top-color:#00FF41;border-radius:50%;animation:mlSpin .9s linear infinite}
+@keyframes mlSpin{to{transform:rotate(360deg)}}
+.ml-steps{display:flex;flex-direction:column;gap:5px;font-family:'SF Mono','JetBrains Mono',monospace;font-size:11.5px;line-height:1.4}
+.ml-step{display:flex;align-items:center;gap:9px;color:rgba(0,255,65,.4);transition:all .35s ease;letter-spacing:.2px}
+.ml-step .ml-mark{width:14px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;transition:all .35s}
+.ml-step .ml-label{flex:1}
+.ml-step.done{color:rgba(150,255,180,.8)}
+.ml-step.done .ml-mark{color:#00FF41;text-shadow:0 0 8px rgba(0,255,65,.55)}
+.ml-step.active{color:#fff;text-shadow:0 0 12px rgba(0,255,65,.4)}
+.ml-step.active .ml-mark{color:#00FF41;text-shadow:0 0 12px #00FF41,0 0 18px rgba(0,255,65,.5);animation:mlMarkPulse 1.1s ease-in-out infinite}
+@keyframes mlMarkPulse{0%,100%{opacity:1}50%{opacity:.55}}
+.ml-step.pending{color:rgba(140,160,150,.35)}
+.ml-step.pending .ml-mark{color:rgba(0,255,65,.25)}
+.ml-bar{margin-top:11px;height:2px;background:rgba(0,255,65,.07);border-radius:2px;overflow:hidden;position:relative}
+.ml-bar-fill{position:absolute;left:0;top:0;height:100%;width:0;background:linear-gradient(90deg,var(--accent),#00e5ff,var(--accent));background-size:200% 100%;border-radius:2px;box-shadow:0 0 10px rgba(0,255,65,.55);transition:width .55s cubic-bezier(.16,1,.3,1);animation:mlBarFlow 2.2s linear infinite}
+@keyframes mlBarFlow{0%{background-position:200% 0}100%{background-position:0 0}}
+.ml-meta{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-family:'SF Mono',monospace;font-size:9px;letter-spacing:1.2px;color:rgba(0,255,65,.45);text-transform:uppercase}
+.ml-meta-elapsed{color:rgba(0,255,65,.55);text-shadow:0 0 6px rgba(0,255,65,.3)}
 @keyframes dotBounce{0%,80%,100%{transform:scale(.6);opacity:.4}40%{transform:scale(1.2);opacity:1}}
 .loading-text{font-size:11px;color:var(--text-dim);animation:pulse 2s ease-in-out infinite;letter-spacing:.3px}
 
@@ -1485,27 +1513,80 @@ function showSkillCard(payload){
     '</div>';
   chat.appendChild(el);scrollChatToBottomIfNear();
 }
+/* v2.89.99 — 멀티 단계 매트릭스 로더. 단계별로 터미널 스타일 마커가
+   pending(◌) → active(▸) → done(✓) 로 전환. 활성 단계만 그린 펄스, 진행 막대 +
+   경과 시간 표시. 절대 산만하지 않게 — 명료한 단일 정보 채널. */
 const LOADING_PHASES=[
-  '📂 프로젝트 파일 살펴보는 중...',
-  '🧠 관련 정보 모으는 중...',
-  '🤔 답변 구성하는 중...',
-  '✍️ 답변 작성하는 중...'
+  '워크스페이스 스캔',
+  '컨텍스트 분석',
+  '추론 시작',
+  '응답 생성'
 ];
 let _loaderTimer=null;
+let _loaderElapsedTimer=null;
+let _loaderStart=0;
+function _formatElapsed(ms){
+  const s=Math.floor(ms/1000);
+  if(s<60) return s+'s';
+  return Math.floor(s/60)+'m '+(s%60)+'s';
+}
 function showLoader(){
   loader=document.createElement('div');loader.className='msg';
-  loader.innerHTML='<div class="msg-head"><div class="av av-ai">✦</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div><div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><span class="loading-text" id="loadingTextEl">'+LOADING_PHASES[0]+'</span></div>';
+  const stepsHtml=LOADING_PHASES.map((p,i)=>(
+    '<div class="ml-step '+(i===0?'active':'pending')+'" data-step="'+i+'">'+
+      '<span class="ml-mark">'+(i===0?'▸':'◌')+'</span>'+
+      '<span class="ml-label">'+p+'</span>'+
+    '</div>'
+  )).join('');
+  loader.innerHTML=
+    '<div class="msg-head"><div class="av av-ai">✦</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div>'+
+    '<div class="ml-loader">'+
+      '<div class="ml-head"><span class="ml-head-dot"></span><span>NEURAL CORE · ACTIVE</span><span class="ml-head-bar"></span><span class="ml-head-spinner"></span></div>'+
+      '<div class="ml-steps" id="mlSteps">'+stepsHtml+'</div>'+
+      '<div class="ml-bar"><div class="ml-bar-fill" id="mlBarFill"></div></div>'+
+      '<div class="ml-meta"><span>OFFLINE · LOCAL LLM</span><span class="ml-meta-elapsed" id="mlElapsed">0s</span></div>'+
+    '</div>';
   chat.appendChild(loader);scrollChatToBottomIfNear();thinkingBar.classList.add('active');
-  // 단계별 메시지 순차 전환 (사용자가 진행 상황을 인지할 수 있도록)
+  /* 단계 전환 + 막대 채움. 마지막 단계는 LLM 토큰이 실제로 들어오기 시작할 때까지
+     활성 유지 → 토큰 도착하면 hideLoader가 정리. */
   let phase=0;
+  _loaderStart=Date.now();
+  const stepsEl=loader.querySelector('#mlSteps');
+  const barEl=loader.querySelector('#mlBarFill');
+  const elapsedEl=loader.querySelector('#mlElapsed');
+  const setPhase=(p)=>{
+    if(!stepsEl) return;
+    const items=stepsEl.querySelectorAll('.ml-step');
+    items.forEach((el,i)=>{
+      el.classList.remove('done','active','pending');
+      const mark=el.querySelector('.ml-mark');
+      if(i<p){ el.classList.add('done'); if(mark) mark.textContent='✓'; }
+      else if(i===p){ el.classList.add('active'); if(mark) mark.textContent='▸'; }
+      else { el.classList.add('pending'); if(mark) mark.textContent='◌'; }
+    });
+    if(barEl){
+      const pct=Math.min(96,((p+1)/LOADING_PHASES.length)*100 - 4);
+      barEl.style.width=pct+'%';
+    }
+  };
+  setPhase(0);
   if(_loaderTimer) clearInterval(_loaderTimer);
   _loaderTimer=setInterval(()=>{
-    phase=(phase+1)%LOADING_PHASES.length;
-    const el=document.getElementById('loadingTextEl');
-    if(el) el.textContent=LOADING_PHASES[phase];
-  },2500);
+    phase=Math.min(phase+1,LOADING_PHASES.length-1);
+    setPhase(phase);
+  },2200);
+  if(_loaderElapsedTimer) clearInterval(_loaderElapsedTimer);
+  _loaderElapsedTimer=setInterval(()=>{
+    if(elapsedEl) elapsedEl.textContent=_formatElapsed(Date.now()-_loaderStart);
+  },500);
 }
-function hideLoader(){if(_loaderTimer){clearInterval(_loaderTimer);_loaderTimer=null;}if(loader&&loader.parentNode)loader.parentNode.removeChild(loader);loader=null;thinkingBar.classList.remove('active')}
+function hideLoader(){
+  if(_loaderTimer){clearInterval(_loaderTimer);_loaderTimer=null;}
+  if(_loaderElapsedTimer){clearInterval(_loaderElapsedTimer);_loaderElapsedTimer=null;}
+  if(loader&&loader.parentNode)loader.parentNode.removeChild(loader);
+  loader=null;
+  thinkingBar.classList.remove('active');
+}
 function setSending(v){sending=v;sendBtn.disabled=v;stopBtn.classList.toggle('visible',v);input.disabled=v;if(!v){input.focus();thinkingBar.classList.remove('active')}}
 function send(opts){
   const bypassCorporate=!!(opts&&opts.bypassCorporate);

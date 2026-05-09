@@ -13771,6 +13771,12 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
         // 중요: HTML을 그리기 전에 메시지 리스너를 먼저 붙여야 Race Condition이 발생하지 않습니다!
         webviewView.webview.onDidReceiveMessage(async (msg) => {
+            /* v2.89.97 — 전체 메시지 핸들러를 try/catch로 감싸 어떤 단일 핸들러
+               예외도 후속 메시지 처리를 죽이지 않게. 이전엔 unhandled async
+               rejection이 화살표 함수 밖으로 빠져나가 extension host가 사실상
+               비활성 상태가 되는 사고. 'Maximum call stack' 같은 RangeError도
+               여기서 잡혀서 사용자에게 재시작 안내까지 보냄. */
+            try {
             switch (msg.type) {
                 case 'getModels':
                     await this._sendModels();
@@ -14474,6 +14480,20 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     }
                     break;
             }
+            } catch (msgErr: any) {
+                /* v2.89.97 — 메시지 처리 중 어떤 예외든 잡힘. 사용자에게 정확한
+                   복구 절차 안내. 가장 흔한 원인: Ollama/LM Studio 미실행, 모델 미로드,
+                   메모리 부족, 또는 prior request의 stream pipe가 꼬여 axios 내부에서
+                   RangeError. */
+                const stack = msgErr?.stack ? String(msgErr.stack).split('\n').slice(0, 4).join('\n') : '';
+                console.error('[Connect AI] message handler 예외:', stack || msgErr);
+                try {
+                    webviewView.webview.postMessage({
+                        type: 'error',
+                        value: `⚠️ 메시지 처리 중 오류 (type=${(msg as any)?.type || '?'}): ${msgErr?.message || msgErr}\n\n복구 방법:\n  1) 안티그래비티 재시작\n  2) 그래도 안 되면 Cmd/Ctrl+Shift+P → "Developer: Reload Window"\n\n[stack]\n${stack}`
+                    });
+                } catch { /* webview gone */ }
+            }
         });
 
         // 리스너를 붙인 후 HTML을 렌더링합니다.
@@ -14505,10 +14525,14 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     // Settings Menu (Engine + AI Tuning)
     // --------------------------------------------------------
     private async _handleSettingsMenu() {
-        if (!this._view) return;
+        /* v2.89.97 — _view 미존재 시도 메뉴는 떠야 함. 명령 팔레트에서 호출되는
+           경우 webview가 아직 안 열렸을 수 있으니 가드 제거. */
+        let engineLabel = 'Ollama';
+        try { engineLabel = _isLMStudioEngine(getConfig().ollamaBase) ? 'LM Studio' : 'Ollama'; }
+        catch { /* getConfig 실패 시 기본값 유지 */ }
 
         const mainPick = await vscode.window.showQuickPick([
-            { label: '⚙️ AI 엔진 변경', description: '현재: ' + (_isLMStudioEngine(getConfig().ollamaBase)?'LM Studio':'Ollama'), action: 'engine' },
+            { label: '⚙️ AI 엔진 변경', description: '현재: ' + engineLabel, action: 'engine' },
             { label: '🎛️ AI 파라미터 튜닝', description: `Temp: ${this._temperature}, Top-P: ${this._topP}, Top-K: ${this._topK}`, action: 'params' },
             { label: '📝 시스템 프롬프트 설정', description: '에이전트의 기본 역할을 커스텀합니다.', action: 'prompt' }
         ], { placeHolder: '설정 메뉴' });

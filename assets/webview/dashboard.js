@@ -243,12 +243,15 @@ function render(s) {
   const teamBody = $('teamBody');
   const teamBadge = $('teamBadge');
   if (s.agentTeam && s.agentTeam.length > 0) {
-    /* v2.89.103 — 채용 진행 카운트 표시. (8/9 ONLINE) 같은 게임적 신호. */
+    /* v2.89.103+107 — 진행 카운트.
+       기준은 active (실제 사용 가능) 으로 변경. ONLINE = active=true. */
     const total = (typeof s.totalAgents === 'number') ? s.totalAgents : s.agentTeam.length;
-    const hired = (typeof s.hiredCount === 'number') ? s.hiredCount : s.agentTeam.length;
-    teamBadge.textContent = hired + ' / ' + total + ' ONLINE';
+    const activeN = (typeof s.activeCount === 'number') ? s.activeCount
+                  : (typeof s.hiredCount === 'number') ? s.hiredCount : s.agentTeam.length;
+    teamBadge.textContent = activeN + ' / ' + total + ' ONLINE';
     teamBody.innerHTML = s.agentTeam.map(a => {
       const isLocked = (a.lockable && !a.hired);
+      const isInactive = (!isLocked && a.togglable && !a.active);
       const photoHtml = a.profileImageUri
         ? '<div class="agent-photo" style="background-image:url(\'' + esc(a.profileImageUri) + '\')"></div>'
         : '<div class="agent-photo no-photo">' + esc(a.emoji) + '</div>';
@@ -276,6 +279,20 @@ function render(s) {
           +   '</div>'
           + '</div>';
       }
+      /* v2.89.107 — 비활성 에이전트: 페이드 + 토글 배지 (PIN 안 필요) */
+      if (isInactive) {
+        const inactiveTitle = '⏸ ' + esc(a.name) + ' — 비활성 (클릭: 활성화)';
+        return '<div class="agent-card agent-card-inactive" data-agent="' + esc(a.id) + '" style="--agent-color:' + esc(a.color || '#00ff8b') + '" title="' + inactiveTitle + '">'
+          +   photoHtml
+          +   '<div class="agent-overlay"></div>'
+          +   '<div class="agent-inactive-badge">⏸</div>'
+          +   '<div class="agent-hover-info">OFFLINE · 클릭해서 활성화</div>'
+          +   '<div class="agent-name-strip">'
+          +     '<div>' + esc(a.name) + '</div>'
+          +     '<div class="agent-role-mini">' + esc(a.role || '') + ' · OFFLINE</div>'
+          +   '</div>'
+          + '</div>';
+      }
       return '<div class="agent-card" data-agent="' + esc(a.id) + '" style="--agent-color:' + esc(a.color || '#00ff8b') + '" title="' + esc(a.name + ' — ' + (a.role||'') + ' (클릭: 상세)') + '">'
         +   photoHtml
         +   '<div class="agent-overlay"></div>'
@@ -288,9 +305,10 @@ function render(s) {
         +   '</div>'
         + '</div>';
     }).join('');
-    /* v2.87.7 — 카드 클릭 시 인앱 모달. 비기술자도 폴더 안 뒤지고 에이전트
-       안에 뭐가 있는지 한 눈에 볼 수 있게.
-       v2.89.103 — 잠긴 카드 클릭은 PIN 채용 모달로 분기. */
+    /* v2.89.103+107 — 카드 클릭 분기:
+       1. locked (Luna PIN 미통과) → openHirePinModal
+       2. inactive (OPTIONAL OFF) → openActivateModal
+       3. 그 외 (active) → showAgentDetailModal */
     teamBody.querySelectorAll('.agent-card').forEach(card => {
       card.addEventListener('click', () => {
         const id = card.getAttribute('data-agent');
@@ -298,6 +316,7 @@ function render(s) {
         const a = (s.agentTeam || []).find(x => x.id === id);
         if(!a) return;
         if (a.lockable && !a.hired) { openHirePinModal(a); return; }
+        if (a.togglable && !a.active && !a.lockable) { openActivateModal(a); return; }
         showAgentDetailModal(a);
       });
       card.style.cursor = 'pointer';
@@ -918,6 +937,54 @@ function openHirePinModal(a){
   setTimeout(() => digits[0].focus(), 80);
 }
 
+/* v2.89.107 — 활성화 confirm 모달. PIN 없는 가벼운 토글.
+   Luna PIN 모달과 같은 비주얼 언어, 코드 입력만 빠진 형태.
+   사용자: "활성화" 클릭 → backend setAgentActive 호출 → 카드 색깔 펄스. */
+let _activateBackdrop = null;
+function openActivateModal(a){
+  if (_activateBackdrop) return;
+  const bd = document.createElement('div');
+  bd.className = 'activate-backdrop';
+  bd.style.setProperty('--ag', a.color || '#00ff8b');
+  bd.style.setProperty('--ag-glow', (a.color||'#00ff8b')+'55');
+  bd.innerHTML =
+    '<div class="activate-card">'+
+      '<div class="activate-eyebrow">▣ ACTIVATE EMPLOYEE</div>'+
+      '<div class="activate-portrait">'+
+        (a.profileImageUri
+          ? '<div class="ap-photo" style="background-image:url(\''+esc(a.profileImageUri)+'\')"></div>'
+          : '<div class="ap-photo ap-emoji">'+esc(a.emoji||'🤖')+'</div>'
+        )+
+      '</div>'+
+      '<div class="activate-name">'+esc(a.emoji||'')+' '+esc(a.name||'')+'</div>'+
+      '<div class="activate-role">'+esc(a.role||'')+'</div>'+
+      '<div class="activate-tagline">'+esc((a.tagline||a.specialty||'').slice(0,140))+'</div>'+
+      '<div class="activate-meta">'+
+        '<div class="am-row"><span class="am-key">STATUS</span><span class="am-val am-status">OFFLINE</span></div>'+
+        '<div class="am-row"><span class="am-key">ROLE</span><span class="am-val">'+esc(a.role||'')+'</span></div>'+
+      '</div>'+
+      '<div class="activate-prompt">이 에이전트를 활성화하면 CEO가 작업 분배 시 호출할 수 있습니다.<br>언제든 직원 카드 다시 클릭해서 비활성화 가능.</div>'+
+      '<div class="activate-actions">'+
+        '<button class="ap-btn ap-cancel" id="apCancel">CANCEL</button>'+
+        '<button class="ap-btn ap-confirm" id="apConfirm">ACTIVATE →</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(bd);
+  _activateBackdrop = bd;
+  const close = () => { try { bd.remove(); } catch{} _activateBackdrop = null; };
+  bd.querySelector('#apCancel').addEventListener('click', close);
+  bd.querySelector('#apConfirm').addEventListener('click', () => {
+    /* 시각 펄스 후 backend 호출 */
+    bd.querySelector('.activate-card').classList.add('ap-success');
+    try { vscode.postMessage({ type:'setAgentActive', agent: a.id, active: true }); } catch {}
+    setTimeout(close, 700);
+  });
+  bd.addEventListener('click', (e) => { if (e.target === bd) close(); });
+  /* ESC 닫기 */
+  const onKey = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+}
+
 function showAgentDetailModal(a){
   if(document.querySelector('.adm-backdrop'))return;
   const bd = document.createElement('div');
@@ -973,6 +1040,7 @@ function showAgentDetailModal(a){
     +   activity
     +   '<div class="adm-footer">'
     +     '<button class="adm-btn-folder" data-act="folder">📁 폴더 열기</button>'
+    +     ((a.togglable && !a.alwaysOn && a.active) ? '<button class="adm-btn-deactivate" data-act="deactivate">⏸ 비활성화</button>' : '')
     +   '</div>'
     + '</div>';
   document.body.appendChild(bd);
@@ -987,6 +1055,15 @@ function showAgentDetailModal(a){
   bd.querySelector('[data-act="folder"]').addEventListener('click', () => {
     vscode.postMessage({ type: 'openAgentFolder', agentId: a.id });
   });
+  /* v2.89.107 — 비활성화 버튼 (OPTIONAL 에이전트만 노출) */
+  const deactBtn = bd.querySelector('[data-act="deactivate"]');
+  if (deactBtn) {
+    deactBtn.addEventListener('click', () => {
+      if (!confirm(`${a.name||a.id} 를 비활성화할까요?\n언제든 다시 활성화할 수 있습니다.`)) return;
+      try { vscode.postMessage({ type:'setAgentActive', agent: a.id, active: false }); } catch {}
+      close();
+    });
+  }
   /* v2.89.12 — 스킬 타일 클릭 시 그것만 보이는 상세 패널 + 즉시 실행 버튼 */
   bd.querySelectorAll('[data-skill-idx]').forEach(tile => {
     tile.addEventListener('click', (e) => {

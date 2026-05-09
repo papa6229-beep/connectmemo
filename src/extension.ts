@@ -970,8 +970,21 @@ function readCompanyName(): string {
    조성 + 출시 단계 분리(루나는 "입사 준비 중" 컨셉). */
 const LOCKED_AGENTS_DEFAULT: Record<string, boolean> = { editor: true };
 
+/* v2.89.107 — 활성/비활성 토글 시스템 (Option B).
+   Luna(editor) 외에 매일 안 쓰일 가능성 큰 specialist는 기본 비활성으로 시작.
+   사용자가 직원 패널에서 카드 클릭 → 활성화 confirm → 사용 가능.
+   ALWAYS_ON: 핵심 워크플로우용 — 항상 활성, 토글 불가.
+   OPTIONAL: 기본 비활성, 사용자 opt-in 시 활성화 (PIN 안 받음 — Luna만 PIN).
+   기존 사용자 migration: hired.json에 entry 있으면 모든 OPTIONAL 자동 활성화. */
+const ALWAYS_ON_AGENTS: Set<string> = new Set(['ceo', 'secretary', 'youtube', 'writer', 'designer']);
+const OPTIONAL_AGENTS_DEFAULT: Set<string> = new Set(['instagram', 'business', 'developer', 'researcher']);
+
 function _hiredJsonPath(): string {
   return path.join(getCompanyDir(), '_shared', 'hired.json');
+}
+
+function _activeJsonPath(): string {
+  return path.join(getCompanyDir(), '_shared', 'active.json');
 }
 
 function readHiredAgents(): Record<string, { hiredAt: string }> {
@@ -999,8 +1012,87 @@ function markAgentHired(id: string): boolean {
     try { cur = JSON.parse(fs.readFileSync(f, 'utf-8') || '{}'); } catch { /* malformed */ }
     cur[id] = { hiredAt: new Date().toISOString() };
     fs.writeFileSync(f, JSON.stringify(cur, null, 2));
+    /* PIN 통과한 에이전트는 자동으로 active 등록 */
+    setAgentActive(id, true);
     return true;
   } catch { return false; }
+}
+
+/* v2.89.107 — 활성 상태 영구 저장. active.json 의 형식:
+   {
+     "_migrated": true,       // 기존 사용자 migration 완료 표시
+     "instagram": {activatedAt: ISO},
+     "business": {activatedAt: ISO},
+     ...
+   } */
+function readActiveAgents(): Record<string, { activatedAt: string }> {
+  try {
+    const p = _activeJsonPath();
+    if (!fs.existsSync(p)) {
+      /* 첫 실행 + hired.json 에 entry 있으면 → 기존 사용자로 간주, 모든 OPTIONAL 자동 활성화 */
+      const hired = readHiredAgents();
+      const isExistingUser = Object.keys(hired).filter(k => !k.startsWith('_')).length > 0;
+      if (isExistingUser) {
+        const seed: Record<string, any> = { _migrated: true };
+        for (const id of OPTIONAL_AGENTS_DEFAULT) {
+          seed[id] = { activatedAt: new Date().toISOString() };
+        }
+        try {
+          const dir = path.join(getCompanyDir(), '_shared');
+          try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+          fs.writeFileSync(p, JSON.stringify(seed, null, 2));
+        } catch { /* readonly fs */ }
+        return seed;
+      }
+      /* 새 사용자: 빈 active.json 생성 (migrated 플래그만) */
+      try {
+        const dir = path.join(getCompanyDir(), '_shared');
+        try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+        fs.writeFileSync(p, JSON.stringify({ _migrated: true }, null, 2));
+      } catch { /* readonly fs */ }
+      return { _migrated: true } as any;
+    }
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8') || '{}');
+    return (data && typeof data === 'object') ? data : {};
+  } catch { return {}; }
+}
+
+/* 핵심 헬퍼: 에이전트가 현재 사용 가능한지.
+   - ALWAYS_ON: 무조건 true
+   - LOCKED (Luna): hired.json 에 entry 있으면 true (PIN 통과)
+   - OPTIONAL: active.json 에 entry 있으면 true
+   - 그 외 (정의 안 된 에이전트): true (기본값) */
+function isAgentActive(id: string): boolean {
+  if (ALWAYS_ON_AGENTS.has(id)) return true;
+  if (LOCKED_AGENTS_DEFAULT[id]) return isAgentHired(id);
+  if (OPTIONAL_AGENTS_DEFAULT.has(id)) {
+    const map = readActiveAgents();
+    return !!map[id];
+  }
+  return true;
+}
+
+function setAgentActive(id: string, active: boolean): boolean {
+  try {
+    const dir = path.join(getCompanyDir(), '_shared');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+    const f = _activeJsonPath();
+    let cur: Record<string, any> = {};
+    try { cur = JSON.parse(fs.readFileSync(f, 'utf-8') || '{}'); } catch { /* malformed */ }
+    if (active) {
+      cur[id] = { activatedAt: new Date().toISOString() };
+    } else {
+      delete cur[id];
+    }
+    cur._migrated = true;
+    fs.writeFileSync(f, JSON.stringify(cur, null, 2));
+    return true;
+  } catch { return false; }
+}
+
+/* 에이전트가 사용자 토글 가능한지 (UI에서 설명용) */
+function isAgentTogglable(id: string): boolean {
+  return OPTIONAL_AGENTS_DEFAULT.has(id) || !!LOCKED_AGENTS_DEFAULT[id];
 }
 
 /* v2.89.26 — 에이전트별 모델 라우팅. CEO·YouTube·디자이너 등 각자 다른
@@ -9244,6 +9336,33 @@ class CompanyDashboardPanel {
             try {
                 if (msg?.type === 'refresh') {
                     await this._sendState();
+                } else if (msg?.type === 'setAgentActive' && msg.agent) {
+                    /* v2.89.107 — 활성/비활성 토글. PIN 안 받음 (Luna는 별도 hireAgent). */
+                    const aid = String(msg.agent || '').trim();
+                    const want = !!msg.active;
+                    if (ALWAYS_ON_AGENTS.has(aid)) {
+                        this._postToast(`⚠️ ${aid}는 핵심 에이전트라 비활성화할 수 없어요.`, true);
+                    } else if (LOCKED_AGENTS_DEFAULT[aid] && want) {
+                        /* Luna 활성화는 PIN 통해서만 — 별도 핸들러 */
+                        this._postToast(`🔒 ${aid}는 PIN 인증이 필요해요. 카드를 클릭하세요.`, true);
+                    } else {
+                        const ok = setAgentActive(aid, want);
+                        if (ok) {
+                            const verb = want ? '활성화됨' : '비활성화됨';
+                            this._postToast(`✅ ${AGENTS[aid]?.emoji || ''} ${AGENTS[aid]?.name || aid} ${verb}`, false);
+                            await this._sendState();
+                            /* 사이드바도 동기화 */
+                            try {
+                                const sb = _activeChatProvider as any;
+                                if (sb && sb._view) {
+                                    sb._view.webview.postMessage({ type: 'activeAgents', value: readActiveAgents() });
+                                    sb._view.webview.postMessage({ type: 'hiredAgents', value: readHiredAgents() });
+                                }
+                            } catch { /* ignore */ }
+                        } else {
+                            this._postToast(`⚠️ 변경 실패: 회사 폴더 쓰기 권한 확인.`, true);
+                        }
+                    }
                 } else if (msg?.type === 'hireAgent' && msg.agent) {
                     /* v2.89.103 — PIN 통과 후 webview가 알림. PIN 자체는 sidebar와
                        동일하게 webview에서 검증(0000) — 백엔드는 영구 저장만 담당.
@@ -9708,10 +9827,17 @@ class CompanyDashboardPanel {
                    항상 hired=true. */
                 hired: isAgentHired(id),
                 lockable: !!LOCKED_AGENTS_DEFAULT[id],
+                /* v2.89.107 — 활성/비활성 토글 시스템. active=false 면 비활성 카드 (페이드).
+                   클릭 시 간단 confirm → active=true. CEO는 항상 활성. */
+                active: isAgentActive(id),
+                togglable: isAgentTogglable(id),
+                alwaysOn: ALWAYS_ON_AGENTS.has(id),
+                optional: OPTIONAL_AGENTS_DEFAULT.has(id),
             };
         }).filter(Boolean);
         const totalAgents = agentTeam.length;
         const hiredCount = (agentTeam as any[]).filter(a => a && a.hired).length;
+        const activeCount = (agentTeam as any[]).filter(a => a && a.active).length;
 
         try {
             this._panel.webview.postMessage({
@@ -9722,6 +9848,7 @@ class CompanyDashboardPanel {
                 agentTeam,
                 hiredCount,
                 totalAgents,
+                activeCount,
                 tasks: {
                     open: openTasks.length,
                     overdue: overdueTasks,
@@ -13560,14 +13687,20 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         this._writeSessions(sessions);
         return true;
     }
+    /* v2.89.107 — 현재 활성 세션의 ID. 복원 시 이 ID를 기억해두고 다음 archive
+       때 "이미 archive에 있는 같은 세션" 이면 update만 (중복 방지). */
+    private _activeSessionId: string | null = null;
     private _restoreSession(id: string): boolean {
         const sessions = this._readSessions();
         const sess = sessions.find(s => s.id === id);
         if (!sess) return false;
-        /* 현재 대화도 안 잃게 — 비어있지 않으면 archive */
-        try { this._archiveCurrentChat(); } catch { /* ignore */ }
+        /* 현재 대화도 안 잃게 — 비어있지 않으면 archive (단, 같은 세션 이어가는 거면 skip) */
+        if (this._activeSessionId !== id) {
+            try { this._archiveCurrentChat(); } catch { /* ignore */ }
+        }
         this._chatHistory = Array.isArray(sess.chat) ? sess.chat : [];
         this._displayMessages = Array.isArray(sess.display) ? sess.display : [];
+        this._activeSessionId = id;
         this._saveHistory();
         if (this._view) {
             this._view.webview.postMessage({ type: 'clearChat' });
@@ -13577,7 +13710,8 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     value: m.text
                 });
             }
-            this._view.webview.postMessage({ type: 'systemNote', value: `📂 이전 대화로 복원했어요 — "${sess.title}"` });
+            this._view.webview.postMessage({ type: 'systemNote', value: `📂 "${sess.title}" 이어서 대화하기 (이전 ${sess.messageCount}개 메시지 복원)` });
+            this._view.webview.postMessage({ type: 'activeSession', id, title: sess.title });
         }
         return true;
     }
@@ -13701,8 +13835,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
             companyDay: configured ? getCompanyDay() : 1,
             note: noteToUser || '',
             /* v2.89.106 — 채용 상태 single source of truth. 사이드바가 자체 localStorage
-               대신 이 값을 우선 사용해서 대쉬보드와 즉시 일관. */
-            hiredAgents: readHiredAgents()
+               대신 이 값을 우선 사용해서 대쉬보드와 즉시 일관.
+               v2.89.107 — 활성/비활성 상태도 함께. */
+            hiredAgents: readHiredAgents(),
+            activeAgents: readActiveAgents()
         });
     }
 
@@ -13836,19 +13972,48 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     }
 
     public resetChat() {
-        /* v2.89.106 — 새 대화 시작 전 현재 대화를 아카이브에 보관. 빈 대화면 skip. */
-        const archived = this._archiveCurrentChat();
+        /* v2.89.106 — 새 대화 시작 전 현재 대화를 아카이브에 보관. 빈 대화면 skip.
+           v2.89.107 — 같은 세션을 이어가다가 + 누르면 archive에 update만 (중복 방지). */
+        const archived = this._archiveOrUpdateCurrentChat();
+        this._activeSessionId = null;
         this._initHistory();
         this._saveHistory();
         if (this._view) {
             this._view.webview.postMessage({ type: 'clearChat' });
+            this._view.webview.postMessage({ type: 'activeSession', id: null, title: null });
             if (archived) {
                 this._view.webview.postMessage({
                     type: 'systemNote',
-                    value: '✅ 이전 대화는 보관되었어요 (📂 메뉴에서 다시 열기).'
+                    value: '✅ 이전 대화는 자동 보관됨 (📂 클릭해서 이어서 가능).'
                 });
             }
         }
+    }
+
+    /* v2.89.107 — archive 또는 update. 활성 세션 ID가 있으면 그 entry를 업데이트
+       (중복 방지). 없으면 새 entry 생성. */
+    private _archiveOrUpdateCurrentChat(): boolean {
+        if (this._displayMessages.length === 0) return false;
+        const sessions = this._readSessions();
+        const now = new Date().toISOString();
+        if (this._activeSessionId) {
+            const idx = sessions.findIndex(s => s.id === this._activeSessionId);
+            if (idx >= 0) {
+                sessions[idx] = {
+                    ...sessions[idx],
+                    updatedAt: now,
+                    messageCount: this._displayMessages.length,
+                    chat: this._chatHistory,
+                    display: this._displayMessages
+                };
+                /* 최신 위로 끌어올림 */
+                const updated = sessions.splice(idx, 1)[0];
+                sessions.unshift(updated);
+                this._writeSessions(sessions);
+                return true;
+            }
+        }
+        return this._archiveCurrentChat();
     }
 
     /** 대화를 Markdown 파일로 내보내기 */
@@ -14721,6 +14886,32 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                         updatedAt: s.updatedAt, messageCount: s.messageCount
                     }));
                     try { this._view?.webview.postMessage({ type: 'sessionsList', value: sessions }); } catch { /* ignore */ }
+                    break;
+                }
+                /* v2.89.107 — 활성/비활성 토글 (사이드바). PIN 안 받음. */
+                case 'setAgentActive': {
+                    const aid = String((msg as any).agent || '').trim();
+                    const want = !!(msg as any).active;
+                    if (!aid) break;
+                    if (ALWAYS_ON_AGENTS.has(aid)) {
+                        try { this._view?.webview.postMessage({ type: 'systemNote', value: `⚠️ ${AGENTS[aid]?.name || aid}는 핵심 에이전트라 비활성화할 수 없어요.` }); } catch { /* ignore */ }
+                        break;
+                    }
+                    if (LOCKED_AGENTS_DEFAULT[aid] && want) {
+                        try { this._view?.webview.postMessage({ type: 'systemNote', value: `🔒 ${AGENTS[aid]?.name || aid}는 PIN 인증이 필요해요. 카드를 클릭해 PIN을 입력하세요.` }); } catch { /* ignore */ }
+                        break;
+                    }
+                    const ok = setAgentActive(aid, want);
+                    if (ok) {
+                        const verb = want ? '활성화됨 ✅' : '비활성화됨 ⏸';
+                        try { this._view?.webview.postMessage({ type: 'systemNote', value: `${AGENTS[aid]?.emoji || ''} ${AGENTS[aid]?.name || aid} ${verb}` }); } catch { /* ignore */ }
+                        try { this._view?.webview.postMessage({ type: 'activeAgents', value: readActiveAgents() }); } catch { /* ignore */ }
+                        try {
+                            if (CompanyDashboardPanel.current) CompanyDashboardPanel.current.refresh();
+                        } catch { /* ignore */ }
+                    } else {
+                        try { this._view?.webview.postMessage({ type: 'systemNote', value: `⚠️ 변경 실패: 회사 폴더 쓰기 권한 확인.` }); } catch { /* ignore */ }
+                    }
                     break;
                 }
                 /* v2.89.95 — 채용 PIN 통과 후 webview가 알림. 회사 폴더에 영구 저장.
@@ -16652,22 +16843,30 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             try {
                 ceoStage = '_personalizePrompt';
                 let base = _personalizePrompt(CEO_PLANNER_PROMPT);
-                /* v2.89.103 — 채용 게이트. 잠긴(미채용) 에이전트는 CEO 팀 명단에서 제외해서
-                   CEO가 그쪽에 작업 분배 못 하게 함. 예: 루나 미채용 → editor 라인 삭제 +
-                   "현재 합류 안 한 에이전트" 안내 추가. CEO가 task 만든 후에도 백엔드에서
-                   필터하지만, 프롬프트 단계에서 거르는 게 가장 확실. */
+                /* v2.89.103+107 — 채용·활성 게이트. 다음 에이전트는 CEO 팀 명단에서 제외:
+                   - LOCKED 미채용 (Luna PIN 안 풀림)
+                   - OPTIONAL 비활성 (사용자가 토글 OFF)
+                   각각 다른 안내 문구로 CEO에게 알림. */
                 try {
-                    const unhiredIds = AGENT_ORDER.filter(id => LOCKED_AGENTS_DEFAULT[id] && !isAgentHired(id));
-                    if (unhiredIds.length > 0) {
-                        const unhiredLabels = unhiredIds.map(id => `${AGENTS[id]?.emoji || ''} ${AGENTS[id]?.name || id} (${id})`).join(', ');
-                        for (const uid of unhiredIds) {
+                    const unavailableIds: string[] = [];
+                    const reasons: Record<string, string> = {};
+                    for (const id of AGENT_ORDER) {
+                        if (id === 'ceo') continue;
+                        if (!isAgentActive(id)) {
+                            unavailableIds.push(id);
+                            reasons[id] = LOCKED_AGENTS_DEFAULT[id] ? '아직 채용 전 (PIN 미입력)' : '사용자가 비활성화함';
+                        }
+                    }
+                    if (unavailableIds.length > 0) {
+                        const labels = unavailableIds.map(id => `${AGENTS[id]?.emoji || ''} ${AGENTS[id]?.name || id} (${id}: ${reasons[id]})`).join(', ');
+                        for (const uid of unavailableIds) {
                             const re = new RegExp(`^- ${uid}\\b.*$`, 'gm');
                             base = base.replace(re, '');
                         }
-                        base += `\n\n[채용 게이트] 다음 에이전트는 아직 합류 전 — 절대 tasks 배열에 넣지 마세요: ${unhiredLabels}\n`;
+                        base += `\n\n[활성 게이트] 다음 에이전트는 현재 사용 불가 — 절대 tasks 배열에 넣지 마세요: ${labels}\n`;
                     }
                 } catch (gateErr: any) {
-                    console.error('[Connect AI] 채용 게이트 적용 실패:', gateErr?.message || gateErr);
+                    console.error('[Connect AI] 활성 게이트 적용 실패:', gateErr?.message || gateErr);
                 }
                 ceoStage = 'readAgentSharedContext';
                 let shared = '';
@@ -16869,25 +17068,27 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     return null;
                 })
                 .filter((t): t is { agent: string; task: string } => !!t);
-            /* v2.89.103 — 채용 게이트 백엔드 보호. CEO가 프롬프트 무시하고 잠긴
-               에이전트(현재 루나 = editor)에 task 배정해도 여기서 제거. 사용자에게
-               안내 메시지 표시. */
-            const droppedLockedTasks: { agent: string; task: string }[] = [];
+            /* v2.89.103+107 — 채용·활성 게이트 backend 보호. CEO가 프롬프트 무시하고
+               비활성 에이전트(Luna 미채용 또는 OPTIONAL 비활성)에 task 배정해도 여기서 제거. */
+            const droppedTasks: { agent: string; task: string; reason: string }[] = [];
             plan.tasks = plan.tasks.filter(t => {
-                if (LOCKED_AGENTS_DEFAULT[t.agent] && !isAgentHired(t.agent)) {
-                    droppedLockedTasks.push(t);
+                if (!isAgentActive(t.agent)) {
+                    const reason = LOCKED_AGENTS_DEFAULT[t.agent]
+                        ? '채용 전 (PIN 필요)'
+                        : '비활성 상태 (사용자가 OFF로 둠)';
+                    droppedTasks.push({ ...t, reason });
                     return false;
                 }
                 return true;
             });
-            if (droppedLockedTasks.length > 0) {
-                const lockedNames = droppedLockedTasks.map(t => `${AGENTS[t.agent]?.emoji || ''} ${AGENTS[t.agent]?.name || t.agent}`).join(', ');
-                post({ type: 'systemNote', value: `🔒 ${lockedNames} 는 아직 채용 전이라 이번 작업에서 제외됐어요. 직원 패널에서 채용 인증 후 다시 시도하세요.` });
+            if (droppedTasks.length > 0) {
+                const droppedSummary = droppedTasks.map(t => `${AGENTS[t.agent]?.emoji || ''} ${AGENTS[t.agent]?.name || t.agent} (${t.reason})`).join(', ');
+                post({ type: 'systemNote', value: `🔒 다음 에이전트는 사용 불가라 제외됐어요: ${droppedSummary}\n👥 직원 패널에서 활성화 후 다시 시도하세요.` });
             }
             if (plan.tasks.length === 0) {
                 const wantedIds = originalTasks.map(t => `"${t.agent}"`).join(', ');
-                if (droppedLockedTasks.length > 0) {
-                    post({ type: 'error', value: `⚠️ CEO가 잠긴 에이전트만 호출했어요. 직원 패널에서 채용 인증 후 다시 시도해주세요.` });
+                if (droppedTasks.length > 0) {
+                    post({ type: 'error', value: `⚠️ CEO가 비활성 에이전트만 호출했어요. 직원 패널에서 활성화 후 다시 시도해주세요.` });
                 } else {
                     post({
                         type: 'error',

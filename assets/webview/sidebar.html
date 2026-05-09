@@ -367,28 +367,58 @@ body.corp-dispatching .ab-svg{opacity:1}
 .ab-svg .ab-beam.dispatching{animation:beamFlow 1.2s linear}
 @keyframes beamFlow{0%{stroke-dashoffset:60;opacity:0}20%{opacity:1}100%{stroke-dashoffset:0;opacity:.65}}
 
-/* ===== v2.89.106 — 대화 세션 아카이브 패널 ===== */
-.sessions-backdrop{position:fixed;inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,.85),rgba(0,0,0,.96));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);z-index:9998;display:flex;align-items:center;justify-content:center;animation:sessFade .25s ease-out;padding:20px}
+/* ===== v2.89.106-107 — 대화 세션 아카이브 패널 (매트릭스 브랜드) ===== */
+.sessions-backdrop{position:fixed;inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,.86),rgba(0,0,0,.97));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:9998;display:flex;align-items:center;justify-content:center;animation:sessFade .3s cubic-bezier(.16,1,.3,1);padding:20px}
 @keyframes sessFade{from{opacity:0}to{opacity:1}}
-.sessions-card{position:relative;width:min(520px,100%);max-height:80vh;background:linear-gradient(180deg,rgba(8,12,8,.97),rgba(2,4,2,.99));border:1px solid rgba(0,255,65,.28);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.7),0 0 60px rgba(0,255,65,.12);animation:sessIn .35s cubic-bezier(.16,1,.3,1)}
-@keyframes sessIn{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
-.sessions-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 5%,#00FF41 50%,transparent 95%);opacity:.55}
-.sessions-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 12px;border-bottom:1px solid rgba(0,255,65,.15);flex-shrink:0}
-.sessions-title{font-family:'SF Mono','Consolas',monospace;font-size:11px;letter-spacing:2px;color:#00FF41;text-shadow:0 0 8px rgba(0,255,65,.45);text-transform:uppercase}
-.sessions-close{background:transparent;border:none;color:var(--text-dim);font-size:14px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:all .15s}
-.sessions-close:hover{background:rgba(255,255,255,.06);color:#fff}
-.sessions-body{overflow-y:auto;flex:1;padding:6px 0;min-height:0}
+.sessions-card{position:relative;width:min(540px,100%);max-height:84vh;background:linear-gradient(180deg,rgba(8,12,8,.97),rgba(2,4,2,.99));border:1px solid rgba(0,255,65,.32);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 40px 100px rgba(0,0,0,.75),0 0 80px rgba(0,255,65,.15),inset 0 0 0 1px rgba(255,255,255,.02);animation:sessIn .42s cubic-bezier(.16,1,.3,1)}
+@keyframes sessIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+.sessions-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 5%,#00FF41 50%,transparent 95%);opacity:.7;animation:sessTopGlow 3s ease-in-out infinite alternate}
+@keyframes sessTopGlow{0%{opacity:.35}100%{opacity:.85}}
+.sessions-card::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,255,65,.018) 3px,rgba(0,255,65,.018) 4px);pointer-events:none;border-radius:14px}
+.sessions-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 0;flex-shrink:0;position:relative;z-index:1}
+.sessions-eyebrow{font-family:'SF Mono','Consolas',monospace;font-size:10px;letter-spacing:2.6px;color:#00FF41;text-shadow:0 0 8px rgba(0,255,65,.5);text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.sessions-eyebrow::before{content:'';width:6px;height:6px;border-radius:50%;background:#00FF41;box-shadow:0 0 10px #00FF41;animation:sessDot 1.4s ease-in-out infinite}
+@keyframes sessDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)}}
+.sessions-close{background:transparent;border:none;color:var(--text-dim);font-size:14px;cursor:pointer;padding:6px 10px;border-radius:6px;transition:all .15s;font-family:'SF Mono',monospace}
+.sessions-close:hover{background:rgba(239,68,68,.12);color:#EF4444}
+.sessions-subhead{padding:6px 20px 14px;font-family:'SF Mono','Consolas',monospace;font-size:10.5px;color:rgba(0,255,65,.6);letter-spacing:.8px;border-bottom:1px solid rgba(0,255,65,.12);position:relative;z-index:1}
+.sessions-count{color:#fff;font-weight:700;font-size:12px;text-shadow:0 0 6px rgba(0,255,65,.4);padding:0 3px}
+.sessions-current{color:#FBBF24;font-weight:600;text-shadow:0 0 6px rgba(251,191,36,.4)}
+.sessions-body{overflow-y:auto;flex:1;padding:8px 0;min-height:0;position:relative;z-index:1}
 .sessions-body::-webkit-scrollbar{width:6px}
-.sessions-body::-webkit-scrollbar-thumb{background:rgba(0,255,65,.25);border-radius:3px}
-.session-row{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;border-left:2px solid transparent;transition:all .15s}
+.sessions-body::-webkit-scrollbar-thumb{background:rgba(0,255,65,.3);border-radius:3px}
+.sessions-body::-webkit-scrollbar-thumb:hover{background:rgba(0,255,65,.5)}
+.session-row{padding:0;cursor:pointer;border-left:2px solid transparent;transition:all .18s cubic-bezier(.16,1,.3,1);position:relative}
+.session-line{display:flex;align-items:flex-start;gap:10px;padding:11px 18px}
 .session-row:hover{background:rgba(0,255,65,.04);border-left-color:#00FF41}
+.session-row:hover .session-marker{color:#00FF41;text-shadow:0 0 8px rgba(0,255,65,.6)}
+.session-row.active{background:linear-gradient(90deg,rgba(251,191,36,.08),rgba(251,191,36,.02) 60%);border-left-color:#FBBF24}
+.session-row.active .session-marker{color:#FBBF24;text-shadow:0 0 8px rgba(251,191,36,.5)}
+.session-marker{font-family:'SF Mono','Consolas',monospace;font-size:14px;color:rgba(0,255,65,.45);font-weight:700;line-height:1.4;flex-shrink:0;transition:all .18s}
 .session-meta{flex:1;min-width:0}
-.session-title{font-size:13px;color:var(--text-bright);font-weight:500;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.session-sub{font-size:10.5px;color:var(--text-dim);margin-top:2px;font-family:'SF Mono','Consolas',monospace;letter-spacing:.3px}
-.session-del{background:transparent;border:none;color:var(--text-dim);cursor:pointer;font-size:13px;padding:6px 8px;border-radius:6px;flex-shrink:0;transition:all .15s;opacity:.6}
-.session-row:hover .session-del{opacity:1}
-.session-del:hover{background:rgba(239,68,68,.15);color:#EF4444}
-.sessions-empty{padding:32px 24px;text-align:center;color:var(--text-dim);font-size:12.5px;line-height:1.6}
+.session-title-row{display:flex;align-items:center;gap:8px;min-width:0}
+.session-title{font-size:13px;color:var(--text-bright);font-weight:500;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.session-active-badge{font-family:'SF Mono','Consolas',monospace;font-size:8.5px;letter-spacing:1.2px;color:#FBBF24;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.35);padding:1px 6px;border-radius:3px;text-transform:uppercase;flex-shrink:0;text-shadow:0 0 4px rgba(251,191,36,.5)}
+.session-sub{font-size:10.5px;color:var(--text-dim);margin-top:3px;font-family:'SF Mono','Consolas',monospace;letter-spacing:.4px}
+.session-del{background:transparent;border:none;color:var(--text-dim);cursor:pointer;font-size:13px;padding:6px 8px;border-radius:6px;flex-shrink:0;transition:all .15s;opacity:.4;align-self:flex-start;margin-top:-2px}
+.session-row:hover .session-del{opacity:.85}
+.session-del:hover{background:rgba(239,68,68,.18);color:#EF4444}
+.sessions-empty{padding:48px 28px;text-align:center;color:var(--text-dim)}
+.sessions-empty-glyph{font-size:42px;color:rgba(0,255,65,.35);margin-bottom:14px;font-family:'SF Mono',monospace;animation:sessEmptyPulse 2.4s ease-in-out infinite}
+@keyframes sessEmptyPulse{0%,100%{opacity:.45;transform:scale(1)}50%{opacity:.75;transform:scale(1.05)}}
+.sessions-empty-title{font-size:14px;color:var(--text-bright);font-weight:600;margin-bottom:8px;letter-spacing:-.1px}
+.sessions-empty-hint{font-size:11.5px;color:var(--text-dim);line-height:1.7;font-family:'SF Mono','Consolas',monospace;letter-spacing:.3px}
+.sessions-foot{padding:10px 20px;border-top:1px solid rgba(0,255,65,.12);font-family:'SF Mono','Consolas',monospace;font-size:9.5px;color:rgba(255,255,255,.35);letter-spacing:.7px;text-align:center;flex-shrink:0;position:relative;z-index:1}
+
+/* ===== v2.89.107 — 비활성(OPT-IN) 에이전트 카드. 회색 톤. =====
+   잠긴(Luna) 카드와는 다른 색 — locked=보라(채용 인증 필요), inactive=회색(간단 토글). */
+.ab-card.inactive{opacity:.78;border-color:rgba(255,255,255,.18);background:linear-gradient(180deg,rgba(20,22,26,.82),rgba(10,12,15,.92));cursor:pointer;position:relative}
+.ab-card.inactive::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent 0,transparent 5px,rgba(255,255,255,.025) 5px,rgba(255,255,255,.025) 7px);pointer-events:none;border-radius:10px}
+.ab-card.inactive .ab-emoji,.ab-card.inactive .ab-portrait{filter:grayscale(.6) brightness(.7) contrast(1.05)}
+.ab-card.inactive .ab-name{color:rgba(255,255,255,.6)}
+.ab-card.inactive .ab-status{color:rgba(255,255,255,.55);font-weight:600;letter-spacing:.4px;font-size:9px}
+.ab-card.inactive .ab-led{background:rgba(255,255,255,.4);box-shadow:0 0 6px rgba(255,255,255,.2)}
+.ab-card.inactive:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.5);box-shadow:0 0 18px rgba(255,255,255,.15);opacity:.95}
 
 /* ===== v2.89.106 — 잠긴 에이전트 (입사 준비중) — 사이드바·대쉬보드 동일 보라 통일 ===== */
 .ab-card.locked{opacity:.95;border-color:rgba(167,139,250,.4);background:linear-gradient(180deg,rgba(12,8,18,.85),rgba(6,4,10,.92));cursor:pointer;position:relative}
@@ -1720,9 +1750,13 @@ document.addEventListener('click',e=>{if(e.target.classList.contains('qa-btn')){
 sendBtn.addEventListener('click',send);
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 newChatBtn.addEventListener('click',()=>vscode.postMessage({type:'newChat'}));
-/* v2.89.106 — 대화 세션 아카이브 패널. 매 newChat 시 이전 대화 자동 보관. */
+/* v2.89.106-107 — 대화 세션 아카이브 패널. 매 newChat 시 이전 대화 자동 보관.
+   복원 후 이어 대화하면 같은 세션 ID로 update (중복 방지). 현재 활성 세션은
+   리스트에서 강조 표시. */
 const historyBtn = document.getElementById('historyBtn');
 let _sessionsBackdrop = null;
+let _activeSessionId = null;
+let _activeSessionTitle = null;
 function openSessionsPanel(){
   if (_sessionsBackdrop) return;
   vscode.postMessage({ type: 'listSessions' });
@@ -1731,37 +1765,80 @@ function openSessionsPanel(){
   bd.innerHTML =
     '<div class="sessions-card">'+
       '<div class="sessions-head">'+
-        '<div class="sessions-title">📂 이전 대화</div>'+
-        '<button class="sessions-close" id="sessionsClose">✕</button>'+
+        '<div class="sessions-eyebrow">▣ CONVERSATION ARCHIVE</div>'+
+        '<button class="sessions-close" id="sessionsClose" title="닫기 (Esc)">✕</button>'+
       '</div>'+
+      '<div class="sessions-subhead" id="sessionsSubhead">불러오는 중…</div>'+
       '<div class="sessions-body" id="sessionsBody"><div class="sessions-empty">불러오는 중…</div></div>'+
+      '<div class="sessions-foot">↑↓ 키 또는 클릭으로 선택 · 자동 보관 50개</div>'+
     '</div>';
   document.body.appendChild(bd);
   _sessionsBackdrop = bd;
   bd.querySelector('#sessionsClose').addEventListener('click', closeSessionsPanel);
   bd.addEventListener('click', (e)=>{ if(e.target===bd) closeSessionsPanel(); });
+  /* ESC로 닫기 */
+  const onKey = (e)=>{ if(e.key==='Escape'){ closeSessionsPanel(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+  bd._onKey = onKey;
 }
 function closeSessionsPanel(){
-  if (_sessionsBackdrop) { try { _sessionsBackdrop.remove(); } catch{} _sessionsBackdrop = null; }
+  if (_sessionsBackdrop) {
+    try { if(_sessionsBackdrop._onKey) document.removeEventListener('keydown', _sessionsBackdrop._onKey); } catch{}
+    try { _sessionsBackdrop.remove(); } catch{}
+    _sessionsBackdrop = null;
+  }
+}
+function _formatRelativeTime(iso){
+  try {
+    const t = new Date(iso).getTime();
+    const diff = Date.now() - t;
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return '방금';
+    if (m < 60) return m + '분 전';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + '시간 전';
+    const d = Math.floor(h / 24);
+    if (d < 7) return d + '일 전';
+    return new Date(iso).toLocaleDateString('ko-KR', { month:'numeric', day:'numeric' });
+  } catch { return ''; }
 }
 function renderSessionsList(sessions){
   if (!_sessionsBackdrop) return;
   const body = _sessionsBackdrop.querySelector('#sessionsBody');
+  const subhead = _sessionsBackdrop.querySelector('#sessionsSubhead');
   if (!body) return;
   if (!sessions || sessions.length === 0) {
-    body.innerHTML = '<div class="sessions-empty">아직 보관된 대화가 없어요.<br><br>새 대화 (+) 누를 때 자동 저장됩니다.</div>';
+    if (subhead) subhead.innerHTML = '<span class="sessions-count">0</span> 보관됨';
+    body.innerHTML =
+      '<div class="sessions-empty">'+
+        '<div class="sessions-empty-glyph">◌</div>'+
+        '<div class="sessions-empty-title">아직 보관된 대화가 없어요</div>'+
+        '<div class="sessions-empty-hint">새 대화 (+) 누를 때 자동으로 저장됩니다.<br>대화 50개까지 보관, 그 후엔 오래된 것부터 자동 삭제.</div>'+
+      '</div>';
     return;
   }
+  if (subhead) {
+    const activeNote = _activeSessionId ? ' · <span class="sessions-current">▸ 진행 중</span>' : '';
+    subhead.innerHTML = '<span class="sessions-count">'+sessions.length+'</span> 보관됨'+activeNote;
+  }
   body.innerHTML = sessions.map(s => {
-    const d = new Date(s.updatedAt || s.createdAt);
-    const when = d.toLocaleString('ko-KR', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    const rel = _formatRelativeTime(s.updatedAt || s.createdAt);
     const safeTitle = String(s.title||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    return '<div class="session-row" data-id="'+s.id+'">'+
-      '<div class="session-meta">'+
-        '<div class="session-title">'+safeTitle+'</div>'+
-        '<div class="session-sub">'+when+' · '+(s.messageCount||0)+'개 메시지</div>'+
+    const isActive = (_activeSessionId === s.id);
+    const activeBadge = isActive ? '<span class="session-active-badge">진행 중</span>' : '';
+    const cls = 'session-row' + (isActive ? ' active' : '');
+    return '<div class="'+cls+'" data-id="'+s.id+'">'+
+      '<div class="session-line">'+
+        '<span class="session-marker">›</span>'+
+        '<div class="session-meta">'+
+          '<div class="session-title-row">'+
+            '<span class="session-title">'+safeTitle+'</span>'+
+            activeBadge+
+          '</div>'+
+          '<div class="session-sub">'+rel+' · '+(s.messageCount||0)+'개 메시지</div>'+
+        '</div>'+
+        '<button class="session-del" data-del="'+s.id+'" title="이 대화 영구 삭제">🗑</button>'+
       '</div>'+
-      '<button class="session-del" data-del="'+s.id+'" title="삭제">🗑</button>'+
     '</div>';
   }).join('');
   body.querySelectorAll('.session-row').forEach(row => {
@@ -3491,14 +3568,20 @@ if(abCompanyName){
 /* Mini emoji dots — visible in collapsed mode, mirror full cards' state. */
 let agentMiniDotEls={};
 /* v2.89.106 — 채용 상태 단일 진실 소스 = backend `_company/_shared/hired.json`.
-   v2.89.95에서 잠시 localStorage 1차 사용했는데, 사이드바·대쉬보드 동기화 깨짐.
-   이제 backend에서 보내주는 hiredAgents를 우선. localStorage는 fallback (offline 즉시
-   반영용)으로만 사용. 두 화면 어디서 채용해도 즉시 일관. */
-const LOCKED_AGENTS = { editor: true };  /* 사운드 디렉터(editor=루나) — 입사 준비중 */
+   v2.89.107 — 활성/비활성 토글 시스템 추가 (Option B). 상태 두 가지:
+     - locked (Luna): PIN 0000 통과해야 활성. 미통과면 카드 보라색 + 자물쇠
+     - inactive (instagram, business, developer, researcher): 사용자 OPT-IN 필요.
+       기본 비활성, 카드 회색. 클릭 시 confirm → 활성화.
+     - always-on (CEO, secretary, youtube, writer, designer): 항상 활성.
+   두 화면 (사이드바·대쉬보드) 어디서든 같은 정보를 봄. */
+const LOCKED_AGENTS = { editor: true };  /* 사운드 디렉터(editor=루나) — PIN 게이트 */
+const ALWAYS_ON_AGENTS = new Set(['ceo','secretary','youtube','writer','designer']);
+const OPTIONAL_AGENTS = new Set(['instagram','business','developer','researcher']);
 let _backendHiredAgents = null;  /* backend 동기화. null = 미수신 */
+let _backendActiveAgents = null;  /* v2.89.107 active.json 동기화 */
+
 function isAgentHired(id){
   if(!LOCKED_AGENTS[id]) return true;
-  /* backend 우선 */
   if (_backendHiredAgents && typeof _backendHiredAgents === 'object') {
     return !!_backendHiredAgents[id];
   }
@@ -3510,6 +3593,24 @@ function markAgentHired(id){
   if (!_backendHiredAgents) _backendHiredAgents = {};
   _backendHiredAgents[id] = { hiredAt: new Date().toISOString() };
 }
+
+/* v2.89.107 — 핵심 helper: 에이전트가 사용 가능한가 */
+function isAgentActive(id){
+  if (ALWAYS_ON_AGENTS.has(id)) return true;
+  if (LOCKED_AGENTS[id]) return isAgentHired(id);
+  if (OPTIONAL_AGENTS.has(id)) {
+    if (_backendActiveAgents && typeof _backendActiveAgents === 'object') {
+      return !!_backendActiveAgents[id];
+    }
+    /* backend 도달 전 임시 default — 초보 사용자엔 OFF, 기존 사용자엔 ON
+       (backend 도달하면 정확한 상태로 즉시 갱신) */
+    return false;
+  }
+  return true;
+}
+function isAgentTogglable(id){
+  return OPTIONAL_AGENTS.has(id) || !!LOCKED_AGENTS[id];
+}
 function renderAgentBoard(agents,companyDir){
   agentMap={};agentCardEls={};agentMiniDotEls={};
   abGrid.innerHTML='';
@@ -3519,20 +3620,31 @@ function renderAgentBoard(agents,companyDir){
   agents.forEach(a=>{
     agentMap[a.id]=a;
     const card=document.createElement('div');
-    const locked = !isAgentHired(a.id);
-    card.className='ab-card '+(locked?'locked':'idle');
+    /* v2.89.107 — 3-way state: locked (PIN) > inactive (toggle) > idle (active) */
+    const locked = LOCKED_AGENTS[a.id] && !isAgentHired(a.id);
+    const inactive = !locked && OPTIONAL_AGENTS.has(a.id) && !isAgentActive(a.id);
+    const stateClass = locked ? 'locked' : (inactive ? 'inactive' : 'idle');
+    card.className='ab-card '+stateClass;
     card.style.setProperty('--ag-color',a.color);
     card.style.setProperty('--ag-color-glow',a.color+'33');
     card.dataset.agent=a.id;
-    const statusText = locked ? '입사 준비 중' : (AGENT_LIVE[a.id] ? '' : '곧 합류');
+    const statusText = locked
+      ? '입사 준비 중'
+      : (inactive ? '비활성 (클릭해서 ON)' : (AGENT_LIVE[a.id] ? '' : '곧 합류'));
     const portraitHtml = (a.portraitIsCustom && a.portrait)
       ? '<img class="ab-portrait" src="'+a.portrait+'" alt="" />'
       : '<div class="ab-emoji">'+a.emoji+'</div>';
-    const lockBadge = locked ? '<span class="ab-lock-icon">🔒</span>' : '';
+    const lockBadge = locked
+      ? '<span class="ab-lock-icon">🔒</span>'
+      : (inactive ? '<span class="ab-lock-icon ab-inactive-icon" style="color:rgba(255,255,255,.65);text-shadow:0 0 6px rgba(255,255,255,.3)">⏸</span>' : '');
     card.innerHTML=lockBadge+'<span class="ab-led"></span>'+portraitHtml+'<div class="ab-name">'+a.name+'</div><div class="ab-status"'+(statusText?'':' style="display:none"')+'>'+statusText+'</div>';
     card.addEventListener('click',()=>{
-      if(!isAgentHired(a.id)){
+      if (LOCKED_AGENTS[a.id] && !isAgentHired(a.id)) {
         openHirePin(a);
+      } else if (OPTIONAL_AGENTS.has(a.id) && !isAgentActive(a.id)) {
+        if (confirm(`${a.emoji} ${a.name}\n\n이 에이전트를 활성화할까요?\nCEO가 작업 분배 시 호출할 수 있습니다.\n언제든 다시 비활성화 가능.`)) {
+          vscode.postMessage({ type:'setAgentActive', agent: a.id, active: true });
+        }
       } else {
         showAgentPanel(a);
       }
@@ -4013,33 +4125,36 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     break;
   case 'corporateState':
     applyCompanyState(msg);
-    /* v2.89.106 — backend hired.json 동기화 (사이드바·대쉬보드 단일 진실 소스) */
-    if(msg.hiredAgents !== undefined){
-      _backendHiredAgents = msg.hiredAgents || {};
-      /* 카드가 이미 그려져 있으면 즉시 잠금/해제 반영 */
-      try {
-        Object.keys(agentCardEls||{}).forEach(id=>{
-          if(!LOCKED_AGENTS[id]) return;
-          const card = agentCardEls[id]; if(!card) return;
-          const hired = isAgentHired(id);
-          card.classList.toggle('locked', !hired);
-          card.classList.toggle('idle', hired);
-          const lock = card.querySelector('.ab-lock-icon');
-          if(hired && lock) lock.remove();
-          else if(!hired && !lock){
-            const span = document.createElement('span');
-            span.className='ab-lock-icon';
-            span.textContent='🔒';
-            card.prepend(span);
-          }
-          const st = card.querySelector('.ab-status');
-          if(st){
-            st.textContent = hired ? '' : '입사 준비 중';
-            st.style.display = hired ? 'none' : '';
-          }
-        });
-      } catch {}
-    }
+    /* v2.89.106-107 — backend hired.json + active.json 동기화 */
+    if (msg.activeAgents !== undefined) _backendActiveAgents = msg.activeAgents || {};
+    if (msg.hiredAgents !== undefined) _backendHiredAgents = msg.hiredAgents || {};
+    /* v2.89.107 — 모든 카드의 lock/inactive/idle 상태를 한 번에 갱신 */
+    try {
+      Object.keys(agentCardEls||{}).forEach(id=>{
+        const card = agentCardEls[id]; if(!card) return;
+        const locked = LOCKED_AGENTS[id] && !isAgentHired(id);
+        const inactive = !locked && OPTIONAL_AGENTS.has(id) && !isAgentActive(id);
+        card.classList.toggle('locked', locked);
+        card.classList.toggle('inactive', inactive);
+        card.classList.toggle('idle', !locked && !inactive);
+        const oldIcon = card.querySelector('.ab-lock-icon');
+        if (oldIcon) oldIcon.remove();
+        if (locked || inactive) {
+          const span = document.createElement('span');
+          span.className = 'ab-lock-icon' + (inactive ? ' ab-inactive-icon' : '');
+          if (inactive) { span.style.color = 'rgba(255,255,255,.65)'; span.style.textShadow = '0 0 6px rgba(255,255,255,.3)'; }
+          span.textContent = locked ? '🔒' : '⏸';
+          card.prepend(span);
+        }
+        const st = card.querySelector('.ab-status');
+        if (st) {
+          if (locked) { st.textContent = '입사 준비 중'; st.style.display = ''; }
+          else if (inactive) { st.textContent = '비활성 (클릭해서 ON)'; st.style.display = ''; }
+          else if (AGENT_LIVE[id]) { st.textContent = ''; st.style.display = 'none'; }
+          else { st.textContent = '곧 합류'; st.style.display = ''; }
+        }
+      });
+    } catch {}
     if(msg.note){addCorpBanner(msg.note);}
     /* 폴더는 막 만들어졌고 정체성이 비어있으면 바로 인터뷰.
        이미 위저드가 열려있으면 다시 띄우지 않음 — 입력 중인 값이 리셋되는
@@ -4056,7 +4171,8 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
          보여줘 사용자가 "이제 뭐 할 수 있지?" 즉시 파악. 이전엔 "설정 완료. 명령
          내려보세요" 만으로 무엇이 가능한지 모호했음. */
       const co = companyState.name || '회사';
-      addCorpBanner('✅ '+co+' 출범! 9명 팀 대기 중 — 🧭 CEO · 📺 YouTube · 📷 Instagram · 🎨 디자이너 · ✍️ 작가 · 💼 비즈니스 · 🛠 개발자 · 🔍 리서처 · 🎵 루나(사운드) · 📅 비서');
+      /* v2.89.107 — 활성 5명 + 옵트인 4명 + 채용 게이트 1명 안내 */
+      addCorpBanner('✅ '+co+' 출범! 9명 팀 — 🟢 활성 5명: 🧭 CEO · 📺 YouTube · 🎨 디자이너 · ✍️ 작가 · 📅 비서 / ⏸ 옵션 4명 (📷 인스타·💼 비즈·🛠 개발·🔍 리서치): 카드 클릭해서 ON / 🔒 1명 (🎵 루나): 채용 PIN 필요');
       addCorpBanner('💡 "다음 영상 컨셉 5개 뽑아줘" 처럼 자연어로 던지시면 CEO가 분배합니다.');
     }
     break;
@@ -4064,24 +4180,54 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     /* v2.89.106 — 보관된 대화 세션 목록 수신 */
     renderSessionsList(msg.value || []);
     break;
+  case 'activeSession':
+    /* v2.89.107 — 현재 활성 세션 ID 추적. 패널 열렸을 때 "현재" 라벨 붙이기 위함. */
+    _activeSessionId = msg.id || null;
+    _activeSessionTitle = msg.title || null;
+    /* 패널이 열려있으면 즉시 강조 갱신 */
+    if (_sessionsBackdrop) {
+      const cur = _sessionsBackdrop.querySelector('.session-row.active');
+      if (cur) cur.classList.remove('active');
+      if (_activeSessionId) {
+        const newCur = _sessionsBackdrop.querySelector('.session-row[data-id="'+_activeSessionId+'"]');
+        if (newCur) newCur.classList.add('active');
+      }
+    }
+    break;
   case 'userEcho':
     /* v2.89.106 — 세션 복원 시 사용자 메시지 다시 그리기 */
     addMsg(msg.value || '', 'user');
     break;
   case 'hiredAgents':
-    /* v2.89.106 — 채용/해고 즉시 반영 (corporateState 전체 reload 없이) */
-    _backendHiredAgents = msg.value || {};
+  case 'activeAgents':
+    /* v2.89.106-107 — 채용/활성 상태 즉시 반영. 두 키 받음. */
+    if (msg.type === 'hiredAgents') _backendHiredAgents = msg.value || {};
+    if (msg.type === 'activeAgents') _backendActiveAgents = msg.value || {};
     try {
       Object.keys(agentCardEls||{}).forEach(id=>{
-        if(!LOCKED_AGENTS[id]) return;
         const card = agentCardEls[id]; if(!card) return;
-        const hired = isAgentHired(id);
-        card.classList.toggle('locked', !hired);
-        card.classList.toggle('idle', hired);
-        const lock = card.querySelector('.ab-lock-icon');
-        if(hired && lock) lock.remove();
+        const locked = LOCKED_AGENTS[id] && !isAgentHired(id);
+        const inactive = !locked && OPTIONAL_AGENTS.has(id) && !isAgentActive(id);
+        card.classList.toggle('locked', locked);
+        card.classList.toggle('inactive', inactive);
+        card.classList.toggle('idle', !locked && !inactive);
+        /* 락/inactive 아이콘 갱신 */
+        const oldIcon = card.querySelector('.ab-lock-icon');
+        if (oldIcon) oldIcon.remove();
+        if (locked || inactive) {
+          const span = document.createElement('span');
+          span.className = 'ab-lock-icon' + (inactive ? ' ab-inactive-icon' : '');
+          if (inactive) { span.style.color = 'rgba(255,255,255,.65)'; span.style.textShadow = '0 0 6px rgba(255,255,255,.3)'; }
+          span.textContent = locked ? '🔒' : '⏸';
+          card.prepend(span);
+        }
         const st = card.querySelector('.ab-status');
-        if(st){ st.textContent = hired ? '' : '입사 준비 중'; st.style.display = hired ? 'none' : ''; }
+        if (st) {
+          if (locked) { st.textContent = '입사 준비 중'; st.style.display = ''; }
+          else if (inactive) { st.textContent = '비활성 (클릭해서 ON)'; st.style.display = ''; }
+          else if (AGENT_LIVE[id]) { st.textContent = ''; st.style.display = 'none'; }
+          else { st.textContent = '곧 합류'; st.style.display = ''; }
+        }
       });
     } catch {}
     break;

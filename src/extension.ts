@@ -54,6 +54,89 @@ function safeResolveInside(root: string, relPath: string): string | null {
     return abs;
 }
 
+/* v2.89.93 — 자유로운 경로 해석. 사용자가 "~/Documents/foo.md", "$HOME/x",
+   절대경로 모두 자연스럽게 사용할 수 있어야 함. 예전 safeResolveInside는
+   워크스페이스 안에 갇혀서 "내 두뇌 폴더 편집해" 같은 자연스러운 요구를
+   다 차단했음. 이제 expand → absolute → 시스템 보호경로만 차단.
+   - "~" / "~/foo" → home 확장
+   - "$HOME/x", "${HOME}/x" → env 확장 (안전 변수만)
+   - 절대경로 그대로
+   - 상대경로 → root 기준 resolve
+   시스템 경로(/etc, /System, /usr/bin, /bin, /sbin, %WINDIR%) 만 차단. */
+const _SYSTEM_PATH_BLOCKLIST = [
+    '/etc', '/System', '/usr/bin', '/usr/sbin', '/bin', '/sbin', '/var/db',
+    '/private/etc', '/private/var/db',
+];
+function _resolveFlexiblePath(input: string, root: string): { abs: string; reason?: string } | null {
+    if (typeof input !== 'string') return null;
+    let s = input.trim();
+    if (!s) return null;
+    /* env var expansion — 안전 화이트리스트만 */
+    s = s.replace(/\$\{?(HOME|USER|TMPDIR|TEMP|TMP|APPDATA|LOCALAPPDATA|USERPROFILE|HOMEDRIVE|HOMEPATH)\}?/g, (_m, k) => {
+        const v = process.env[k]; return v || _m;
+    });
+    /* tilde expansion */
+    if (s === '~') s = os.homedir();
+    else if (s.startsWith('~/') || s.startsWith('~\\')) s = path.join(os.homedir(), s.slice(2));
+    /* absolute or relative */
+    const abs = path.isAbsolute(s) ? path.resolve(s) : path.resolve(root, s);
+    /* 시스템 경로 차단 — 가벼운 보호. 사용자 홈·문서·외부 디스크는 자유. */
+    for (const blocked of _SYSTEM_PATH_BLOCKLIST) {
+        if (abs === blocked || abs.startsWith(blocked + path.sep)) {
+            return { abs, reason: `시스템 보호 경로(${blocked})에는 쓰지 않습니다. 사용자 홈/워크스페이스 안의 경로를 지정해주세요.` };
+        }
+    }
+    /* Windows: C:\Windows / C:\Program Files 보호 */
+    if (process.platform === 'win32') {
+        const upper = abs.toUpperCase();
+        const win = (process.env.WINDIR || 'C:\\WINDOWS').toUpperCase();
+        if (upper === win || upper.startsWith(win + path.sep)) {
+            return { abs, reason: `시스템 보호 경로(${win})에는 쓰지 않습니다.` };
+        }
+    }
+    return { abs };
+}
+
+/* v2.89.93 — OS 파일 익스플로러로 파일/폴더 열기 (Finder · Windows Explorer ·
+   Linux GNOME Files). 결과 메시지를 반환해서 호출처가 사용자에게 보여줄 수 있게. */
+function _revealInOsExplorer(targetPath: string): { ok: boolean; message: string } {
+    try {
+        if (!fs.existsSync(targetPath)) {
+            return { ok: false, message: `존재하지 않는 경로: ${targetPath}` };
+        }
+        if (process.platform === 'darwin') {
+            spawn('open', ['-R', targetPath], { detached: true, stdio: 'ignore' }).unref();
+        } else if (process.platform === 'win32') {
+            spawn('explorer.exe', ['/select,', targetPath], { detached: true, stdio: 'ignore' }).unref();
+        } else {
+            const dir = fs.statSync(targetPath).isDirectory() ? targetPath : path.dirname(targetPath);
+            spawn('xdg-open', [dir], { detached: true, stdio: 'ignore' }).unref();
+        }
+        return { ok: true, message: `🗂 익스플로러 열림: ${targetPath}` };
+    } catch (e: any) {
+        return { ok: false, message: `익스플로러 열기 실패: ${e?.message || e}` };
+    }
+}
+
+/* v2.89.93 — 기본 앱으로 파일 열기 (이미지·PDF·웹페이지·.docx 등). */
+function _openInDefaultApp(targetPath: string): { ok: boolean; message: string } {
+    try {
+        if (!fs.existsSync(targetPath)) {
+            return { ok: false, message: `존재하지 않는 경로: ${targetPath}` };
+        }
+        if (process.platform === 'darwin') {
+            spawn('open', [targetPath], { detached: true, stdio: 'ignore' }).unref();
+        } else if (process.platform === 'win32') {
+            spawn('cmd.exe', ['/c', 'start', '', targetPath], { detached: true, stdio: 'ignore' }).unref();
+        } else {
+            spawn('xdg-open', [targetPath], { detached: true, stdio: 'ignore' }).unref();
+        }
+        return { ok: true, message: `🚀 기본 앱으로 열림: ${targetPath}` };
+    } catch (e: any) {
+        return { ok: false, message: `파일 열기 실패: ${e?.message || e}` };
+    }
+}
+
 /**
  * Sanitize a filename: remove path separators / traversal segments / control chars.
  * Returns a safe basename (never a path) or null if nothing usable remains.
@@ -16471,6 +16554,34 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                            일단은 결과만 append, 다음 에이전트(peerCtx)와 final report에서 활용. */
                     }
                 } catch { /* never let tool exec break the dispatch */ }
+
+                /* v2.89.93 — 파일 액션 처리. specialist도 <create_file>·<edit_file>·
+                   <delete_file>·<read_file>·<list_files>·<reveal_in_explorer>·<open_file>
+                   다 쓸 수 있게. 이전엔 run_command만 실행돼서 디자이너·작가·개발자가
+                   "파일 만들었다" 텍스트만 출력하고 디스크엔 아무것도 안 남던 사고.
+                   skipRunCommand=true — 위 dispatch run_command가 이미 처리. */
+                try {
+                    const fileReport: string[] = [];
+                    const fileInjections: string[] = [];
+                    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                    const fileActionRoot = wsRoot || getCompanyDir();
+                    const fr = await this._executeActions(out, {
+                        rootOverride: fileActionRoot,
+                        appendToOutput: (s) => fileInjections.push(s),
+                        silent: true,
+                        skipRunCommand: true,
+                    });
+                    fileReport.push(...fr);
+                    if (fileReport.length > 0) {
+                        const summary = fileReport.slice(0, 5).join('\n');
+                        post({ type: 'response', value: `📁 ${a.emoji} ${a.name} 파일 액션:\n${summary}` });
+                        out = `${out}\n\n---\n## 📁 파일 액션 결과\n\n${fileReport.join('\n')}${fileInjections.join('')}`;
+                    }
+                } catch (e: any) {
+                    /* 파일 액션 실패해도 dispatch 진행. 로그만 남김. */
+                    try { post({ type: 'response', value: `⚠️ ${a.emoji} ${a.name} 파일 액션 처리 중 오류: ${e?.message || e}` }); } catch { /* ignore */ }
+                }
+
                 outputs[t.agent] = out;
                 /* v2.89.51 — 작업 라운드 메타데이터 수집. CEO 보고에 도구·데이터·핵심 인용. */
                 {
@@ -17064,27 +17175,60 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
 
     // --------------------------------------------------------
     // Execute ALL agent actions from AI response
+    // v2.89.93 — opts.rootOverride: 회사 모드에서 회사 폴더를 root로 사용.
+    //            opts.appendToOutput: 회사 모드 inline injection 콜백 (read_file/list_files 결과를
+    //              specialist 응답 끝에 append → 다음 에이전트와 final report에 컨텍스트 전달).
+    //            opts.silent: vscode.window 알림 억제 (회사 모드는 카드 뷰에서 보고됨).
     // --------------------------------------------------------
-    private async _executeActions(aiMessage: string): Promise<string[]> {
+    private async _executeActions(
+        aiMessage: string,
+        opts?: { rootOverride?: string; appendToOutput?: (s: string) => void; silent?: boolean; skipRunCommand?: boolean }
+    ): Promise<string[]> {
         const report: string[] = [];
         let brainModified = false;
-        let rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-        // Fallback to active editor directory if no workspace folder is open
-        if (!rootPath && vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.scheme === 'file') {
-            rootPath = path.dirname(vscode.window.activeTextEditor.document.uri.fsPath);
-        }
-
+        /* v2.89.93 — root 결정 우선순위:
+             1. 호출자가 명시한 rootOverride (회사 모드)
+             2. 워크스페이스 폴더
+             3. 활성 에디터 디렉토리
+             4. 회사 폴더 (회사 모드 활성 시)
+             5. 두뇌 폴더 (마지막 fallback)
+           이전엔 1·2만 있어서 워크스페이스 미오픈 사용자가 영영 차단됐음. */
+        let rootPath = opts?.rootOverride
+            || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+            || (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.scheme === 'file'
+                ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
+                : undefined);
+        let usedFallbackRoot = false;
         if (!rootPath) {
-            const hasActions = /<(?:create_file|edit_file|run_command|delete_file|read_file|list_files|file)/i.test(aiMessage);
+            try {
+                const compDir = getCompanyDir();
+                if (compDir && fs.existsSync(compDir)) { rootPath = compDir; usedFallbackRoot = true; }
+            } catch { /* ignore */ }
+        }
+        if (!rootPath) {
+            try {
+                const brainDir = _getBrainDir();
+                if (brainDir && fs.existsSync(brainDir)) { rootPath = brainDir; usedFallbackRoot = true; }
+            } catch { /* ignore */ }
+        }
+        if (!rootPath) {
+            const hasActions = /<(?:create_file|edit_file|run_command|delete_file|read_file|list_files|file|reveal_in_explorer|open_file)/i.test(aiMessage);
             if (hasActions) {
-                report.push('❌ 폴더가 열려있지 않습니다. File → Open Folder로 폴더를 열거나 파일을 열어주세요.');
+                report.push('❌ 작업할 폴더를 찾을 수 없습니다. File → Open Folder 로 폴더를 열거나 회사·두뇌 폴더를 먼저 설정해주세요.');
             }
             return report;
         }
+        if (usedFallbackRoot) {
+            report.push(`📁 워크스페이스 미오픈 — \`${rootPath.replace(os.homedir(), '~')}\` 를 root로 사용합니다.`);
+        }
+        /* v2.89.93 — 마크다운 fence로 감싸진 액션 태그도 인식. 작은 모델이 자주
+           ```xml\n<create_file...>\n```  형태로 출력해서 regex가 못 잡았음.
+           fence 안에 액션 태그가 있으면 fence 자체를 제거하고 처리. */
+        aiMessage = aiMessage.replace(/```(?:xml|html|action|tool|tools)?\s*\n([\s\S]*?<\/?(?:create_file|edit_file|delete_file|read_file|list_files|run_command|reveal_in_explorer|open_file|read_url|read_brain|file)[\s\S]*?)\n```/gi, '$1');
 
-        // ACTION 1: Create files
-        const createRegex = /<(?:create_file|file)\s+(?:path|file|name)=['"]?([^'">]+)['"]?[^>]*>([\s\S]*?)<\/(?:create_file|file)>/gi;
+        // ACTION 1: Create files — v2.89.93 자유경로(~, $HOME, 절대경로) 허용,
+        //           attr 한국어 alias(경로=) 인식.
+        const createRegex = /<(?:create_file|write_file|file)\s+(?:path|file|name|경로|파일)=['"]?([^'">]+)['"]?[^>]*>([\s\S]*?)<\/(?:create_file|write_file|file)>/gi;
         let match: RegExpExecArray | null;
         let firstCreatedFile = '';
 
@@ -17100,19 +17244,25 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 content = lines.join('\n').trim();
             }
 
-            const absPath = safeResolveInside(rootPath, relPath);
-            if (!absPath) {
-                report.push(`❌ 생성 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
+            const resolved = _resolveFlexiblePath(relPath, rootPath);
+            if (!resolved) {
+                report.push(`❌ 생성 차단: ${relPath} — 경로를 해석할 수 없습니다.`);
                 continue;
             }
+            if (resolved.reason) {
+                report.push(`❌ 생성 차단: ${relPath} — ${resolved.reason}`);
+                continue;
+            }
+            const absPath = resolved.abs;
             try {
                 const dir = path.dirname(absPath);
                 if (!fs.existsSync(dir)) {
                     fs.mkdirSync(dir, { recursive: true });
                 }
+                const existed = fs.existsSync(absPath);
                 fs.writeFileSync(absPath, content, 'utf-8');
                 if (absPath.startsWith(_getBrainDir())) brainModified = true;
-                report.push(`✅ 생성: ${relPath}`);
+                report.push(`${existed ? '✏️ 덮어씀' : '✅ 생성'}: ${absPath.replace(os.homedir(), '~')}`);
                 if (!firstCreatedFile) { firstCreatedFile = absPath; }
             } catch (err: any) {
                 report.push(`❌ 생성 실패: ${relPath} — ${err.message}`);
@@ -17124,22 +17274,29 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             await vscode.window.showTextDocument(vscode.Uri.file(firstCreatedFile), { preview: false });
         }
 
-        // ACTION 2: Edit files
-        const editRegex = /<(?:edit_file|edit)\s+(?:path|file|name)=['"]?([^'">]+)['"]?[^>]*>([\s\S]*?)<\/(?:edit_file|edit)>/gi;
+        // ACTION 2: Edit files — v2.89.93 fuzzy fallback. 정확 매칭 실패 시
+        //           (a) trim된 줄별 비교 (b) 다중 공백 정규화 매칭 시도.
+        const editRegex = /<(?:edit_file|edit)\s+(?:path|file|name|경로|파일)=['"]?([^'">]+)['"]?[^>]*>([\s\S]*?)<\/(?:edit_file|edit)>/gi;
         while ((match = editRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
             const body = match[2];
-            const absPath = safeResolveInside(rootPath, relPath);
-            if (!absPath) {
-                report.push(`❌ 편집 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
+            const resolved = _resolveFlexiblePath(relPath, rootPath);
+            if (!resolved) {
+                report.push(`❌ 편집 차단: ${relPath} — 경로를 해석할 수 없습니다.`);
                 continue;
             }
+            if (resolved.reason) {
+                report.push(`❌ 편집 차단: ${relPath} — ${resolved.reason}`);
+                continue;
+            }
+            const absPath = resolved.abs;
 
             try {
                 let fileContent = fs.readFileSync(absPath, 'utf-8');
                 const findReplaceRegex = /<find>([\s\S]*?)<\/find>\s*<replace>([\s\S]*?)<\/replace>/g;
                 let frMatch: RegExpExecArray | null;
                 let editCount = 0;
+                const fuzzyMisses: string[] = [];
 
                 while ((frMatch = findReplaceRegex.exec(body)) !== null) {
                     const findText = frMatch[1];
@@ -17147,17 +17304,53 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     if (fileContent.includes(findText)) {
                         fileContent = fileContent.split(findText).join(replaceText);
                         editCount++;
-                    } else {
-                        report.push(`⚠️ ${relPath}: 일치하는 텍스트를 찾지 못했습니다.`);
+                        continue;
                     }
+                    /* fuzzy 1: 연속 공백·탭을 단일 공백으로 정규화 후 매칭 */
+                    const norm = (s: string) => s.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
+                    const normFile = norm(fileContent);
+                    const normFind = norm(findText);
+                    const normIdx = normFile.indexOf(normFind);
+                    if (normIdx >= 0) {
+                        /* 원본 file에서 같은 위치 부분을 찾아 교체 — 인덱스 매핑은
+                           근사치라서 normalized 길이로 슬라이스 후 복원. */
+                        const before = normFile.slice(0, normIdx);
+                        const beforeOrig = fileContent.slice(0, before.length + (fileContent.slice(0, before.length + 50).match(/[ \t]/g)?.length || 0) * 0);
+                        /* 안전장치: 단순 split 으로 normalize 매칭 — 정확하지 않을 수 있어
+                           confirmation 메시지에 fuzzy 표기 */
+                        const lines = fileContent.split('\n');
+                        const findLines = findText.split('\n').map(l => l.trim());
+                        let foundAt = -1;
+                        for (let i = 0; i <= lines.length - findLines.length; i++) {
+                            let ok = true;
+                            for (let j = 0; j < findLines.length; j++) {
+                                if (lines[i + j].trim() !== findLines[j]) { ok = false; break; }
+                            }
+                            if (ok) { foundAt = i; break; }
+                        }
+                        if (foundAt >= 0) {
+                            const replaceLines = replaceText.split('\n');
+                            lines.splice(foundAt, findLines.length, ...replaceLines);
+                            fileContent = lines.join('\n');
+                            editCount++;
+                            report.push(`🔍 fuzzy 매칭으로 교체됨 (공백 차이 무시): ${relPath}`);
+                            continue;
+                        }
+                    }
+                    fuzzyMisses.push(findText.slice(0, 80).replace(/\n/g, ' ⏎ '));
+                }
+                for (const miss of fuzzyMisses) {
+                    report.push(`⚠️ ${relPath}: 매칭 실패 — \`${miss}…\` (정확/fuzzy 둘 다 실패)`);
                 }
 
                 if (editCount > 0) {
                     fs.writeFileSync(absPath, fileContent, 'utf-8');
                     if (absPath.startsWith(_getBrainDir())) brainModified = true;
-                    report.push(`✏️ 편집 완료: ${relPath} (${editCount}건 수정)`);
+                    report.push(`✏️ 편집 완료: ${absPath.replace(os.homedir(), '~')} (${editCount}건 수정)`);
                     // Open edited file
-                    await vscode.window.showTextDocument(vscode.Uri.file(absPath), { preview: false });
+                    if (!opts?.silent) {
+                        await vscode.window.showTextDocument(vscode.Uri.file(absPath), { preview: false });
+                    }
                 }
             } catch (err: any) {
                 if (err.code === 'ENOENT') {
@@ -17168,13 +17361,23 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             }
         }
 
-        // ACTION 3: Delete files
-        const deleteRegex = /<(?:delete_file|delete)\s+(?:path|file|name)=['"]?([^'"\/\>]+)['"]?\s*\/?>(?:<\/(?:delete_file|delete)>)?/gi;
+        // ACTION 3: Delete files — v2.89.93 자유경로 + 디렉토리 안전 가드 강화
+        const deleteRegex = /<(?:delete_file|delete)\s+(?:path|file|name|경로|파일)=['"]?([^'">]+?)['"]?\s*\/?>(?:<\/(?:delete_file|delete)>)?/gi;
         while ((match = deleteRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
-            const absPath = safeResolveInside(rootPath, relPath);
-            if (!absPath) {
-                report.push(`❌ 삭제 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
+            const resolved = _resolveFlexiblePath(relPath, rootPath);
+            if (!resolved) {
+                report.push(`❌ 삭제 차단: ${relPath} — 경로를 해석할 수 없습니다.`);
+                continue;
+            }
+            if (resolved.reason) {
+                report.push(`❌ 삭제 차단: ${relPath} — ${resolved.reason}`);
+                continue;
+            }
+            const absPath = resolved.abs;
+            /* 안전장치: 사용자 홈 자체나 루트 직접 삭제 차단 */
+            if (absPath === os.homedir() || absPath === '/' || /^[A-Z]:\\?$/i.test(absPath)) {
+                report.push(`❌ 삭제 차단: ${absPath} — 홈/루트 디렉토리 직접 삭제 금지.`);
                 continue;
             }
             try {
@@ -17186,7 +17389,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                         fs.unlinkSync(absPath);
                     }
                     if (absPath.startsWith(_getBrainDir())) brainModified = true;
-                    report.push(`🗑️ 삭제: ${relPath}`);
+                    report.push(`🗑️ 삭제: ${absPath.replace(os.homedir(), '~')}`);
                 } else {
                     report.push(`⚠️ 삭제 스킵: ${relPath} — 파일이 존재하지 않습니다.`);
                 }
@@ -17195,21 +17398,52 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             }
         }
 
-        // ACTION 4: Read files — inject content back into chat history + show preview
-        const readRegex = /<(?:read_file|read)\s+(?:path|file|name)=['"]?([^'">]+)['"]?\s*\/?>(?:<\/(?:read_file|read)>)?/gi;
+        // ACTION 4: Read files — v2.89.93 자유경로, 32KB cap (was 10KB), truncation 명시,
+        //           회사 모드는 inline append (chat history 대신).
+        const readRegex = /<(?:read_file|read)\s+(?:path|file|name|경로|파일)=['"]?([^'">]+?)['"]?\s*\/?>(?:<\/(?:read_file|read)>)?/gi;
+        const READ_CAP = 32000;
         while ((match = readRegex.exec(aiMessage)) !== null) {
             const relPath = match[1].trim();
-            const absPath = safeResolveInside(rootPath, relPath);
-            if (!absPath) {
-                report.push(`❌ 읽기 차단: ${relPath} — 워크스페이스 밖으로 나가는 경로입니다.`);
+            const resolved = _resolveFlexiblePath(relPath, rootPath);
+            if (!resolved) {
+                report.push(`❌ 읽기 차단: ${relPath} — 경로를 해석할 수 없습니다.`);
                 continue;
             }
+            if (resolved.reason) {
+                report.push(`❌ 읽기 차단: ${relPath} — ${resolved.reason}`);
+                continue;
+            }
+            const absPath = resolved.abs;
             try {
                 if (fs.existsSync(absPath)) {
+                    const stat = fs.statSync(absPath);
+                    if (stat.isDirectory()) {
+                        report.push(`⚠️ 읽기 실패: ${relPath} — 디렉토리입니다. <list_files>를 쓰세요.`);
+                        continue;
+                    }
+                    /* 바이너리 파일 보호 — 처음 512바이트에 NUL 있으면 binary로 취급 */
+                    const headBuf = Buffer.alloc(512);
+                    const fd = fs.openSync(absPath, 'r');
+                    const headLen = fs.readSync(fd, headBuf, 0, 512, 0);
+                    fs.closeSync(fd);
+                    const isBinary = headBuf.slice(0, headLen).includes(0);
+                    if (isBinary) {
+                        const sizeKb = (stat.size / 1024).toFixed(1);
+                        report.push(`⚠️ 읽기 스킵: ${relPath} — 바이너리 파일(${sizeKb}KB). 텍스트 파일만 read_file 가능.`);
+                        continue;
+                    }
                     const content = fs.readFileSync(absPath, 'utf-8');
+                    const truncated = content.length > READ_CAP;
+                    const shown = truncated ? content.slice(0, READ_CAP) : content;
                     const preview = content.slice(0, 500).split('\n').slice(0, 10).join('\n');
-                    report.push(`📖 읽기: ${relPath} (${content.length}자)\n\`\`\`\n${preview}...\n\`\`\``);
-                    this._chatHistory.push({ role: 'user', content: `[시스템: read_file 결과]\n파일: ${relPath}\n\`\`\`\n${content.slice(0, 10000)}\n\`\`\`` });
+                    const truncNote = truncated ? `\n_⚠️ ${content.length}자 중 처음 ${READ_CAP}자만 표시 — 전체가 필요하면 더 작은 단위로 분할 읽기._` : '';
+                    report.push(`📖 읽기: ${absPath.replace(os.homedir(), '~')} (${content.length}자${truncated ? ', 잘림' : ''})\n\`\`\`\n${preview}...\n\`\`\``);
+                    const injection = `[시스템: read_file 결과]\n파일: ${absPath.replace(os.homedir(), '~')}\n\`\`\`\n${shown}\n\`\`\`${truncNote}`;
+                    if (opts?.appendToOutput) {
+                        opts.appendToOutput('\n\n' + injection);
+                    } else {
+                        this._chatHistory.push({ role: 'user', content: injection });
+                    }
                 } else {
                     report.push(`⚠️ 읽기 실패: ${relPath} — 파일이 존재하지 않습니다.`);
                 }
@@ -17218,24 +17452,31 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             }
         }
 
-        // ACTION 5: List directory
-        const listRegex = /<(?:list_files|list_dir|ls)\s+(?:path|dir|name)=['"]?([^'"\/\>]*)['"]?\s*\/?>(?:<\/(?:list_files|list_dir|ls)>)?/gi;
+        // ACTION 5: List directory — v2.89.93 자유경로 + 회사 모드 inline append
+        const listRegex = /<(?:list_files|list_dir|ls)\s+(?:path|dir|name|경로|파일)=['"]?([^'">]*?)['"]?\s*\/?>(?:<\/(?:list_files|list_dir|ls)>)?/gi;
         while ((match = listRegex.exec(aiMessage)) !== null) {
             const relDir = match[1].trim() || '.';
-            const absDir = safeResolveInside(rootPath, relDir);
-            if (!absDir) {
-                report.push(`❌ 목록 차단: ${relDir} — 워크스페이스 밖으로 나가는 경로입니다.`);
+            const resolved = _resolveFlexiblePath(relDir, rootPath);
+            if (!resolved) {
+                report.push(`❌ 목록 차단: ${relDir} — 경로를 해석할 수 없습니다.`);
                 continue;
             }
+            if (resolved.reason) {
+                report.push(`❌ 목록 차단: ${relDir} — ${resolved.reason}`);
+                continue;
+            }
+            const absDir = resolved.abs;
             try {
                 if (fs.existsSync(absDir) && fs.statSync(absDir).isDirectory()) {
                     const entries = fs.readdirSync(absDir, { withFileTypes: true });
                     const listing = entries
                         .filter(e => !e.name.startsWith('.') && !EXCLUDED_DIRS.has(e.name))
                         .map(e => e.isDirectory() ? `📁 ${e.name}/` : `📄 ${e.name}`)
-                        .join('\n');
-                    report.push(`📂 목록: ${relDir}/\n\`\`\`\n${listing}\n\`\`\``);
-                    this._chatHistory.push({ role: 'user', content: `[시스템: list_files 결과]\n디렉토리: ${relDir}/\n${listing}` });
+                        .join('\n') || '_(빈 디렉토리)_';
+                    report.push(`📂 목록: ${absDir.replace(os.homedir(), '~')}/\n\`\`\`\n${listing}\n\`\`\``);
+                    const injection = `[시스템: list_files 결과]\n디렉토리: ${absDir.replace(os.homedir(), '~')}/\n${listing}`;
+                    if (opts?.appendToOutput) opts.appendToOutput('\n\n' + injection);
+                    else this._chatHistory.push({ role: 'user', content: injection });
                 } else {
                     report.push(`⚠️ 목록 실패: ${relDir} — 디렉토리가 존재하지 않습니다.`);
                 }
@@ -17244,9 +17485,35 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             }
         }
 
-        // ACTION 6: Run commands — capture output so AI can see results
+        // ACTION NEW: Reveal in OS file explorer (Finder · Windows Explorer · GNOME Files)
+        // v2.89.93 — 사용자가 "Finder에서 열어줘" 같은 자연스러운 요청 가능.
+        const revealRegex = /<(?:reveal_in_explorer|reveal|finder|explorer)\s+(?:path|file|name|경로|파일)=['"]?([^'">]+?)['"]?\s*\/?>(?:<\/(?:reveal_in_explorer|reveal|finder|explorer)>)?/gi;
+        while ((match = revealRegex.exec(aiMessage)) !== null) {
+            const relPath = match[1].trim();
+            const resolved = _resolveFlexiblePath(relPath, rootPath);
+            if (!resolved) { report.push(`❌ 익스플로러 열기 실패: ${relPath} — 경로 해석 불가.`); continue; }
+            const r = _revealInOsExplorer(resolved.abs);
+            report.push((r.ok ? '🗂 ' : '❌ ') + r.message.replace(os.homedir(), '~'));
+        }
+
+        // ACTION NEW: Open in default OS app (이미지·PDF·웹페이지·.docx 등)
+        const openAppRegex = /<(?:open_file|open_in_app|launch)\s+(?:path|file|name|경로|파일)=['"]?([^'">]+?)['"]?\s*\/?>(?:<\/(?:open_file|open_in_app|launch)>)?/gi;
+        while ((match = openAppRegex.exec(aiMessage)) !== null) {
+            const relPath = match[1].trim();
+            const resolved = _resolveFlexiblePath(relPath, rootPath);
+            if (!resolved) { report.push(`❌ 파일 열기 실패: ${relPath} — 경로 해석 불가.`); continue; }
+            const r = _openInDefaultApp(resolved.abs);
+            report.push((r.ok ? '🚀 ' : '❌ ') + r.message.replace(os.homedir(), '~'));
+        }
+
+        // ACTION 6: Run commands — capture output so AI can see results.
+        // v2.89.93 — skipRunCommand: 회사 모드 dispatch는 tools dir cwd·telegram mirror·noise
+        //   필터까지 specialized 처리(line 16476)가 이미 있어서 여기선 스킵.
         const cmdRegex = /<(?:run_command|command|bash|terminal)>([\s\S]*?)<\/(?:run_command|command|bash|terminal)>/gi;
-        while ((match = cmdRegex.exec(aiMessage)) !== null) {
+        if (opts?.skipRunCommand) {
+            cmdRegex.lastIndex = aiMessage.length;
+        }
+        while (!opts?.skipRunCommand && (match = cmdRegex.exec(aiMessage)) !== null) {
             let cmd = match[1].trim();
             // Clean up if AI outputs markdown inside
             if (cmd.startsWith('```')) {
@@ -17258,17 +17525,24 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             if (!cmd) continue;
 
             // Live-stream the output to the chat so the user sees progress in real time
+            // (corporate 모드는 카드 뷰에서 별도 처리 — opts.appendToOutput 만 채움)
             const headerMsg = `\n\n\`\`\`bash\n$ ${cmd}\n`;
-            this._view?.webview.postMessage({ type: 'streamChunk', value: headerMsg });
+            if (!opts?.appendToOutput) {
+                this._view?.webview.postMessage({ type: 'streamChunk', value: headerMsg });
+            }
 
             try {
                 /* v2.89.77 — 60초 → 25분. 음악 생성·모델 설치·영상 합치기처럼 시간이
                    오래 걸리는 도구가 chat 경로로도 실행됨. dispatch 경로(line 16386)와
                    맞추는 게 자연스러움. 짧은 명령은 어차피 빨리 끝나니까 손해 없음. */
                 const result = await runCommandCaptured(cmd, rootPath, (chunk) => {
-                    this._view?.webview.postMessage({ type: 'streamChunk', value: chunk });
+                    if (!opts?.appendToOutput) {
+                        this._view?.webview.postMessage({ type: 'streamChunk', value: chunk });
+                    }
                 }, 25 * 60 * 1000);
-                this._view?.webview.postMessage({ type: 'streamChunk', value: '\n```\n' });
+                if (!opts?.appendToOutput) {
+                    this._view?.webview.postMessage({ type: 'streamChunk', value: '\n```\n' });
+                }
 
                 const status = result.timedOut
                     ? '⏱️ 25분 시간 초과로 중단됨'
@@ -17277,15 +17551,15 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                         : `❌ 종료 코드 ${result.exitCode}`;
                 report.push(`🖥️ 실행: \`${cmd}\` — ${status}`);
 
-                // Inject the output back into chat history so the AI can continue with context
-                // (e.g., "I see npm install failed, let me try yarn instead")
-                this._chatHistory.push({
-                    role: 'user',
-                    content: `[시스템: run_command 결과]\n명령: ${cmd}\n종료 코드: ${result.exitCode}${result.timedOut ? ' (시간 초과)' : ''}\n출력:\n\`\`\`\n${result.output}\n\`\`\``
-                });
+                // Inject the output back so the AI can continue with context
+                const injection = `[시스템: run_command 결과]\n명령: ${cmd}\n종료 코드: ${result.exitCode}${result.timedOut ? ' (시간 초과)' : ''}\n출력:\n\`\`\`\n${result.output}\n\`\`\``;
+                if (opts?.appendToOutput) opts.appendToOutput('\n\n' + injection);
+                else this._chatHistory.push({ role: 'user', content: injection });
             } catch (err: any) {
                 report.push(`❌ 명령 실패: \`${cmd}\` — ${err.message}`);
-                this._view?.webview.postMessage({ type: 'streamChunk', value: `\n[실행 오류] ${err.message}\n\`\`\`\n` });
+                if (!opts?.appendToOutput) {
+                    this._view?.webview.postMessage({ type: 'streamChunk', value: `\n[실행 오류] ${err.message}\n\`\`\`\n` });
+                }
             }
         }
 
@@ -17353,9 +17627,9 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             }
         }
 
-        // Show notification
-        const successCount = report.filter(r => r.startsWith('✅') || r.startsWith('✏️') || r.startsWith('🖥️') || r.startsWith('🗑️') || r.startsWith('📖') || r.startsWith('📂')).length;
-        if (successCount > 0) {
+        // Show notification — silent suppresses for corporate dispatch (카드 뷰에서 별도 보고됨)
+        const successCount = report.filter(r => r.startsWith('✅') || r.startsWith('✏️') || r.startsWith('🖥️') || r.startsWith('🗑️') || r.startsWith('📖') || r.startsWith('📂') || r.startsWith('🗂') || r.startsWith('🚀')).length;
+        if (successCount > 0 && !opts?.silent) {
             vscode.window.showInformationMessage(`Connect AI: ${successCount}개 에이전트 작업 완료!`);
         }
 
@@ -17370,11 +17644,13 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
     // Strip raw XML action tags from display message
     private _stripActionTags(text: string): string {
         return text
-            .replace(/<(?:create_file|file)\s+[^>]*>[\s\S]*?<\/(?:create_file|file)>/gi, '')
+            .replace(/<(?:create_file|write_file|file)\s+[^>]*>[\s\S]*?<\/(?:create_file|write_file|file)>/gi, '')
             .replace(/<(?:edit_file|edit)\s+[^>]*>[\s\S]*?<\/(?:edit_file|edit)>/gi, '')
             .replace(/<(?:delete_file|delete)\s+[^>]*\s*\/?>(?:<\/(?:delete_file|delete)>)?/gi, '')
             .replace(/<(?:read_file|read)\s+[^>]*\s*\/?>(?:<\/(?:read_file|read)>)?/gi, '')
             .replace(/<(?:list_files|list_dir|ls)\s+[^>]*\s*\/?>(?:<\/(?:list_files|list_dir|ls)>)?/gi, '')
+            .replace(/<(?:reveal_in_explorer|reveal|finder|explorer)\s+[^>]*\s*\/?>(?:<\/(?:reveal_in_explorer|reveal|finder|explorer)>)?/gi, '')
+            .replace(/<(?:open_file|open_in_app|launch)\s+[^>]*\s*\/?>(?:<\/(?:open_file|open_in_app|launch)>)?/gi, '')
             .replace(/<(?:run_command|command|bash|terminal)>[\s\S]*?<\/(?:run_command|command|bash|terminal)>/gi, '')
             .replace(/<(?:read_brain)>[\s\S]*?<\/(?:read_brain)>/gi, '')
             .replace(/<(?:read_url|url|fetch_url)>[\s\S]*?<\/(?:read_url|url|fetch_url)>/gi, '')

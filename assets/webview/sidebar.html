@@ -1141,7 +1141,7 @@ body.corp-dispatching .corp-overlay{opacity:1;animation:overlayPulse 1.5s ease-o
 
 
 </style></head><body class="init">
-<div class="header"><div class="header-left"><div class="logo">✦</div><span class="brand">Connect AI</span><span class="brand-suffix" id="brandSuffix"></span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="corporateBtn" title="AI 1인 기업 모드 (Solo Mode) — 나만의 에이전트 팀이 자동으로 일합니다 (현재: OFF)" style="opacity:0.5">👔</button><button class="btn-icon" id="brainBtn" title="내 지식 관리">🧠</button><button class="btn-icon" id="historyBtn" title="이전 대화 보기 — 새 대화를 시작해도 이전 대화는 자동 보관됩니다">📂</button><button class="btn-icon" id="newChatBtn" title="새 대화 시작 (이전 대화는 자동 보관)">+</button><div class="more-wrap"><button class="btn-icon" id="moreBtn" title="더보기">…</button><div class="more-menu" id="moreMenu" hidden><button class="more-item" id="internetBtn">🌐 인터넷 검색</button><button class="more-item" id="thinkingBtn">🎬 Thinking 시각화</button><button class="more-item" id="skillLibBtn">🛠 내 스킬 라이브러리</button><button class="more-item" id="settingsBtn">⚙️ 설정</button></div></div></div></div>
+<div class="header"><div class="header-left"><div class="logo">✦</div><span class="brand">Connect AI</span><span class="brand-suffix" id="brandSuffix"></span></div><div class="header-right"><select id="modelSel"></select><button class="btn-icon" id="corporateBtn" title="AI 1인 기업 모드 (Solo Mode) — 나만의 에이전트 팀이 자동으로 일합니다 (현재: OFF)" style="opacity:0.5">👔</button><button class="btn-icon" id="brainBtn" title="내 지식 관리">🧠</button><button class="btn-icon" id="historyBtn" title="이전 대화 보기 — 새 대화를 시작해도 이전 대화는 자동 보관됩니다">📂</button><button class="btn-icon" id="newChatBtn" title="새 대화 시작 (이전 대화는 자동 보관)">+</button><div class="more-wrap"><button class="btn-icon" id="moreBtn" title="더보기">…</button><div class="more-menu" id="moreMenu" hidden><button class="more-item" id="internetBtn" title="DuckDuckGo로 웹 검색 — AI가 결과를 읽어와 답변에 반영">🌐 인터넷 검색</button><button class="more-item" id="thinkingBtn" title="AI의 사고 흐름을 별도 패널에 그래프로 시각화 (지식 노드 연결 표시)">🎬 Thinking 시각화</button><button class="more-item" id="skillLibBtn" title="에이전트 스킬·도구 카탈로그 — 내가 만든 것 + 기본 제공 모두 한 곳에서">🛠 내 스킬 라이브러리</button><button class="more-item" id="settingsBtn" title="모델·서버 주소·시스템 프롬프트·키 등 모든 설정">⚙️ 설정</button></div></div></div></div>
 <div class="thinking-bar" id="thinkingBar"></div>
 <div class="status-bar" id="statusBar">
   <span class="status-item" id="statFolder" title="지식 폴더 — 클릭하면 폴더 열림"><span class="status-icon">📁</span><span id="statFolderText">지식 폴더 미설정</span></span>
@@ -1234,8 +1234,8 @@ function renderOnboarding(){
     +   (detected ? '<div class="onboard-result">✅ 감지됨: '+escapeHtml(detected)+(s.engine.model?' · '+escapeHtml(s.engine.model):'')+'</div>' : '')
     + '</div>'
     + '<div class="onboard-actions">'
-    +   '<button class="onboard-btn" id="ob-detect">🔍 자동 감지</button>'
-    +   '<button class="onboard-btn secondary" id="ob-skip-engine">건너뛰기</button>'
+    +   '<button class="onboard-btn" id="ob-detect" title="실행 중인 Ollama·LM Studio를 자동 감지">🔍 자동 감지</button>'
+    +   '<button class="onboard-btn secondary" id="ob-skip-engine" title="이 단계 건너뛰고 직접 설정">건너뛰기</button>'
     + '</div>';
   } else if (cur === 2) {
     stepHtml =
@@ -1250,8 +1250,8 @@ function renderOnboarding(){
     +   (s.brain.path ? '<div class="onboard-result">📁 현재: <code>'+escapeHtml(s.brain.path)+'</code></div>' : '')
     + '</div>'
     + '<div class="onboard-actions">'
-    +   '<button class="onboard-btn" id="ob-pick-brain">📁 폴더 선택</button>'
-    +   '<button class="onboard-btn secondary" id="ob-skip-brain">기본값 사용</button>'
+    +   '<button class="onboard-btn" id="ob-pick-brain" title="제2의 두뇌 폴더 위치 직접 선택">📁 폴더 선택</button>'
+    +   '<button class="onboard-btn secondary" id="ob-skip-brain" title="홈 디렉토리의 ~/.connect-ai-brain 사용">기본값 사용</button>'
     + '</div>';
   } else if (cur === 3) {
     stepHtml =
@@ -1266,8 +1266,8 @@ function renderOnboarding(){
     + '<input class="onboard-input" id="ob-repo-url" placeholder="https://github.com/사용자/my-brain.git" value="'+(s.github.url||'')+'" />'
     + '<div id="ob-repo-result"></div>'
     + '<div class="onboard-actions" style="margin-top:8px">'
-    +   '<button class="onboard-btn" id="ob-save-repo">💾 저장</button>'
-    +   '<button class="onboard-btn secondary" id="ob-skip-github">건너뛰기</button>'
+    +   '<button class="onboard-btn" id="ob-save-repo" title="GitHub 저장소 URL 저장 — 두뇌 자동 백업">💾 저장</button>'
+    +   '<button class="onboard-btn secondary" id="ob-skip-github" title="GitHub 연결 안 함 (로컬에만 저장)">건너뛰기</button>'
     + '</div>';
   } else { /* cur === 4: success */
     stepHtml =
@@ -1280,7 +1280,7 @@ function renderOnboarding(){
     +   '• <code>오늘 일과 텔레그램으로 보고 (👔 기업 모드)</code>'
     + '</div>'
     + '<div class="onboard-actions">'
-    +   '<button class="onboard-btn" id="ob-finish">시작하기 ✦</button>'
+    +   '<button class="onboard-btn" id="ob-finish" title="설정 완료, Connect AI 사용 시작">시작하기 ✦</button>'
     + '</div>';
   }
   root.innerHTML =
@@ -1809,8 +1809,8 @@ function openSessionsPanel(){
       '<div class="sessions-toolbar">'+
         '<input class="sessions-search" id="sessionsSearch" type="text" placeholder="대화 검색…" autocomplete="off" />'+
         '<div class="sessions-tabs">'+
-          '<button class="sessions-tab active" data-mode="project" id="tabProject">프로젝트별</button>'+
-          '<button class="sessions-tab" data-mode="time" id="tabTime">시간순</button>'+
+          '<button class="sessions-tab active" data-mode="project" id="tabProject" title="워크스페이스(프로젝트) 별로 그룹화 — 현재 폴더가 가장 위">프로젝트별</button>'+
+          '<button class="sessions-tab" data-mode="time" id="tabTime" title="프로젝트 무시, 시간 순으로만 (오늘·어제·지난 7일·30일·이전)">시간순</button>'+
         '</div>'+
       '</div>'+
       '<div class="sessions-subhead" id="sessionsSubhead">불러오는 중…</div>'+
@@ -3779,8 +3779,9 @@ let agentMiniDotEls={};
      - always-on (CEO, secretary, youtube, writer, designer): 항상 활성.
    두 화면 (사이드바·대쉬보드) 어디서든 같은 정보를 봄. */
 const LOCKED_AGENTS = { editor: true };  /* 사운드 디렉터(editor=루나) — PIN 게이트 */
-const ALWAYS_ON_AGENTS = new Set(['ceo','secretary','youtube','writer','designer']);
-const OPTIONAL_AGENTS = new Set(['instagram','business','developer','researcher']);
+/* v2.89.109 — 사용자 자율: CEO만 필수. 나머지 8명 모두 클릭 토글 */
+const ALWAYS_ON_AGENTS = new Set(['ceo']);
+const OPTIONAL_AGENTS = new Set(['secretary','youtube','writer','designer','instagram','business','developer','researcher']);
 let _backendHiredAgents = null;  /* backend 동기화. null = 미수신 */
 let _backendActiveAgents = null;  /* v2.89.107 active.json 동기화 */
 

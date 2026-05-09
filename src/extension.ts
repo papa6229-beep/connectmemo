@@ -976,8 +976,10 @@ const LOCKED_AGENTS_DEFAULT: Record<string, boolean> = { editor: true };
    ALWAYS_ON: 핵심 워크플로우용 — 항상 활성, 토글 불가.
    OPTIONAL: 기본 비활성, 사용자 opt-in 시 활성화 (PIN 안 받음 — Luna만 PIN).
    기존 사용자 migration: hired.json에 entry 있으면 모든 OPTIONAL 자동 활성화. */
-const ALWAYS_ON_AGENTS: Set<string> = new Set(['ceo', 'secretary', 'youtube', 'writer', 'designer']);
-const OPTIONAL_AGENTS_DEFAULT: Set<string> = new Set(['instagram', 'business', 'developer', 'researcher']);
+/* v2.89.109 — 사용자 자율성 우선. CEO는 시스템 오케스트레이터라 필수 (없으면 1인 기업
+   모드 자체가 동작 X). 나머지 8명 모두 사용자가 직접 활성/비활성 선택. */
+const ALWAYS_ON_AGENTS: Set<string> = new Set(['ceo']);
+const OPTIONAL_AGENTS_DEFAULT: Set<string> = new Set(['secretary', 'youtube', 'writer', 'designer', 'instagram', 'business', 'developer', 'researcher']);
 
 function _hiredJsonPath(): string {
   return path.join(getCompanyDir(), '_shared', 'hired.json');
@@ -1053,7 +1055,26 @@ function readActiveAgents(): Record<string, { activatedAt: string }> {
       return { _migrated: true } as any;
     }
     const data = JSON.parse(fs.readFileSync(p, 'utf-8') || '{}');
-    return (data && typeof data === 'object') ? data : {};
+    if (!data || typeof data !== 'object') return {};
+    /* v2.89.109 — ALWAYS_ON 축소(CEO만)에 따른 2차 마이그레이션. v2.89.107 사용자는
+       active.json에 _migrated:true 만 있고 OPTIONAL 4명만 활성화돼있을 수 있음. 그 경우
+       이전엔 ALWAYS_ON 이었던 secretary·youtube·writer·designer 도 자동 활성화 (사용자
+       경험 유지). 한 번만 실행: _migrated_v2 플래그로 표시. */
+    if (data._migrated && !data._migrated_v2) {
+      const carryOver = ['secretary', 'youtube', 'writer', 'designer'];
+      let touched = false;
+      for (const id of carryOver) {
+        if (!data[id]) {
+          data[id] = { activatedAt: new Date().toISOString() };
+          touched = true;
+        }
+      }
+      data._migrated_v2 = true;
+      if (touched) {
+        try { fs.writeFileSync(p, JSON.stringify(data, null, 2)); } catch { /* ignore */ }
+      }
+    }
+    return data;
   } catch { return {}; }
 }
 
@@ -9260,7 +9281,7 @@ class YouTubeDashboardProvider implements vscode.WebviewViewProvider {
   <button class="sb-btn primary" id="openDash">🏢 우리 회사 →</button>
 </div>
 <div class="sb-body">
-  <button class="sb-btn" id="queueBtn" style="width:100%;justify-content:center;">📥 댓글 큐 갱신</button>
+  <button class="sb-btn" id="queueBtn" style="width:100%;justify-content:center;" title="유튜브 최근 영상의 미답 댓글을 응답 큐에 추가 — 승인 후 일괄 답변 가능">📥 댓글 큐 갱신</button>
   <button class="sb-btn" id="oauthBtn" style="width:100%;justify-content:center;display:none;">🔐 OAuth 연결</button>
 </div>
 <div class="sb-toast" id="toast"></div>
@@ -10029,7 +10050,7 @@ class CompanyDashboardPanel {
   <section class="card span-7 yt-cond" id="ytCard" style="display:none">
     <div class="card-head">
       <div class="card-title"><span class="title-icon">📺</span> YouTube — 내 채널</div>
-      <button class="btn small" id="queueBtn">📥 댓글 큐 갱신</button>
+      <button class="btn small" id="queueBtn" title="유튜브 최근 영상의 미답 댓글을 가져와 응답 큐에 추가">📥 댓글 큐 갱신</button>
     </div>
     <div id="ytBody"></div>
   </section>

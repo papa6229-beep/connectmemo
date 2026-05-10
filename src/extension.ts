@@ -1127,6 +1127,48 @@ function isAgentTogglable(id: string): boolean {
   return OPTIONAL_AGENTS_DEFAULT.has(id) || !!LOCKED_AGENTS_DEFAULT[id];
 }
 
+/* v2.89.112 — 코다리(developer) 활성화 시 시니어 코더 모델 추천. 한 번만 표시 (active.json
+   에 _coder_recommended 플래그 기록). 사용자 시스템 메모리 추측해서 적합한 모델 추천:
+   < 8GB → qwen2.5-coder:1.5b 또는 7b
+   8~16GB → qwen2.5-coder:14b
+   > 16GB → deepseek-coder-v2:16b 또는 qwen2.5-coder:32b */
+function _maybeRecommendCoderModel(webview: vscode.Webview) {
+  try {
+    const active = readActiveAgents();
+    if (active._coder_recommended) return;
+    let recommendation: { name: string; size: string; reason: string };
+    try {
+      const totalGB = Math.round(os.totalmem() / (1024 ** 3));
+      if (totalGB >= 32) {
+        recommendation = { name: 'deepseek-coder-v2:16b', size: '10GB', reason: `시스템 RAM ${totalGB}GB — 최고급 코더 모델 가능` };
+      } else if (totalGB >= 16) {
+        recommendation = { name: 'qwen2.5-coder:14b', size: '9GB', reason: `시스템 RAM ${totalGB}GB — 권장 코더 모델` };
+      } else if (totalGB >= 8) {
+        recommendation = { name: 'qwen2.5-coder:7b', size: '4.4GB', reason: `시스템 RAM ${totalGB}GB — 균형 잡힌 코더 모델` };
+      } else {
+        recommendation = { name: 'qwen2.5-coder:1.5b', size: '1GB', reason: `시스템 RAM ${totalGB}GB — 작은 코더 모델 (메모리 절약)` };
+      }
+    } catch {
+      recommendation = { name: 'qwen2.5-coder:14b', size: '9GB', reason: '권장 코더 모델' };
+    }
+    const note =
+      `\n💻 **코다리 코딩 능력 강화 팁**\n` +
+      `현재 일반 모델로 동작합니다. 코딩 전용 모델로 바꾸면 결과 품질이 크게 올라가요.\n\n` +
+      `**추천: \`${recommendation.name}\`** (${recommendation.size}) — ${recommendation.reason}\n\n` +
+      `설치:\n` +
+      `\`\`\`\nollama pull ${recommendation.name}\n\`\`\`\n` +
+      `설치 후 사이드바 위 모델 선택 메뉴에서 고르세요. (이 안내는 한 번만 표시됩니다)`;
+    try { webview.postMessage({ type: 'systemNote', value: note }); } catch { /* ignore */ }
+    /* 플래그 기록 — active.json 은 사실 mixed type (메타 키 _migrated 등) 보관 가능 */
+    (active as any)._coder_recommended = true;
+    try {
+      const dir = path.join(getCompanyDir(), '_shared');
+      try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+      fs.writeFileSync(_activeJsonPath(), JSON.stringify(active, null, 2));
+    } catch { /* readonly fs */ }
+  } catch { /* never block */ }
+}
+
 /* v2.89.26 — 에이전트별 모델 라우팅. CEO·YouTube·디자이너 등 각자 다른
    로컬 LLM 사용 (작은 모델은 라우팅·결정에, 큰 모델은 분석·창작에).
    설정 파일: _shared/agent_models.json. 비어있으면 default 모델 사용. */
@@ -5484,7 +5526,7 @@ ${_GOAL_PREAMBLE}
 ## 작업 원칙
 - 텍스트 설명만 X — 색상 코드·폰트명·레이아웃 좌표까지 구체적으로
 `,
-  developer: `# 💻 Developer 에이전트 — 시니어 풀스택 엔지니어
+  developer: `# 💻 코다리 — 시니어 풀스택 엔지니어
 
 ${_GOAL_PREAMBLE}
 ## 정체성
@@ -5864,11 +5906,12 @@ const AGENT_TOOLS_CATALOG: Record<string, { tool: string; desc: string; planned?
         { tool: 'asset_library', desc: '_company/assets/ 자동 정리·태깅', planned: true }
     ],
     developer: [
-        { tool: 'project_scaffolder', desc: '_company/projects/<name>/ 폴더 자동 생성 (vite/next/astro)', planned: true },
-        { tool: 'dev_server', desc: '자체 dev server + 포트 매니저 + 라이브 미리보기 푸시', planned: true },
-        { tool: 'git_committer', desc: '작업 단위 자동 커밋', planned: true },
+        { tool: 'web_init', desc: '5개 템플릿 자동 시작 — vite·next·astro·expo·vanilla' },
+        { tool: 'web_preview', desc: 'dev server 백그라운드 실행 + URL 자동 추출' },
+        { tool: 'pwa_setup', desc: '웹사이트 → PWA 변환 (manifest·sw·아이콘 자동 생성)' },
+        { tool: 'git_committer', desc: '작업 단위 자동 커밋 (의미 단위 + git add -A 금지)', planned: true },
+        { tool: 'lint_test', desc: '테스트·린트·타입체크 자동 실행 + 결과 코다리 컨텍스트로 inject', planned: true },
         { tool: 'deploy_cli', desc: 'Vercel/Netlify/Cloudflare 배포 (deploy --prod는 항상 승인)', planned: true },
-        { tool: 'lint_test', desc: '테스트·린트·타입체크 자동 실행', planned: true }
     ],
     business: [
         { tool: 'revenue_pull', desc: 'Stripe/Toss/PayPal 매출 데이터', planned: true },
@@ -6007,8 +6050,101 @@ function _seedAgentToolsIfMissing(agentId: string) {
       _seedEditorMusicStudioSetup(toolsDir);
       _seedEditorMusicGenerate(toolsDir);
       _seedEditorMusicToVideo(toolsDir);
+    } else if (agentId === 'developer') {
+      /* v2.89.112 — 코다리 도구. 웹·모바일 셋업 + PWA + dev server. */
+      const toolsDir = path.join(getCompanyDir(), '_agents', agentId, 'tools');
+      fs.mkdirSync(toolsDir, { recursive: true });
+      _seedDeveloperWebInit(toolsDir);
+      _seedDeveloperWebPreview(toolsDir);
+      _seedDeveloperPwaSetup(toolsDir);
     }
   } catch { /* ignore */ }
+}
+
+/* v2.89.112 — 코다리 도구 시드 함수들 */
+function _seedDeveloperWebInit(toolsDir: string) {
+  const py = _loadToolSeed('developer/web_init.py');
+  const md = _loadToolSeed('developer/web_init.md');
+  const json = JSON.stringify({
+    TEMPLATE: 'vite-react',
+    PROJECT_NAME: 'my-app',
+    OUTPUT_DIR: '',
+    _schema: {
+      TEMPLATE: {
+        type: 'select',
+        label: '🎨 템플릿',
+        hint: '프로젝트 종류. vite-react는 SPA, nextjs는 풀스택, astro는 콘텐츠, expo는 모바일 앱, vanilla는 단순 HTML.',
+        options: [
+          { value: 'vite-react', label: '⚡ Vite + React + TS + Tailwind (SPA · 추천)' },
+          { value: 'nextjs',     label: '▲ Next.js 14 + TS + Tailwind (풀스택)' },
+          { value: 'astro',      label: '🚀 Astro + Tailwind (블로그 · 콘텐츠)' },
+          { value: 'expo',       label: '📱 Expo (iOS/Android 모바일 앱)' },
+          { value: 'vanilla',    label: '📄 Vanilla HTML+CSS+JS (단순)' },
+        ],
+      },
+      PROJECT_NAME: {
+        type: 'text',
+        label: '📁 프로젝트 이름',
+        hint: '소문자·숫자·하이픈만. 공백·한글 X. 예: my-blog, dashboard, portfolio',
+      },
+      OUTPUT_DIR: {
+        type: 'text',
+        label: '🗂️ 부모 폴더',
+        hint: '비우면 ~/connect-ai-projects/. 다른 위치 원하면 절대경로.',
+      },
+    },
+  }, null, 2);
+  _seedFileForceUpgrade(path.join(toolsDir, 'web_init.py'), py, 'web_init_v1');
+  _mergeSchemaIntoJson(path.join(toolsDir, 'web_init.json'), json);
+  _seedFileForceUpgrade(path.join(toolsDir, 'web_init.md'), md, 'web_init_v1');
+}
+
+function _seedDeveloperWebPreview(toolsDir: string) {
+  const py = _loadToolSeed('developer/web_preview.py');
+  const md = _loadToolSeed('developer/web_preview.md');
+  const json = JSON.stringify({
+    PROJECT_PATH: '',
+    DEV_CMD: '',
+    AUTO_OPEN: 'true',
+    _schema: {
+      PROJECT_PATH: { type: 'text', label: '📁 프로젝트 경로', hint: '비우면 web_init이 마지막에 만든 프로젝트 자동 사용' },
+      DEV_CMD: { type: 'text', label: '▶️ dev 명령', hint: '비우면 package.json scripts.dev 자동 감지 (npm run dev)' },
+      AUTO_OPEN: {
+        type: 'select', label: '🌐 브라우저 자동 열기',
+        options: [
+          { value: 'true', label: 'O — URL 감지하면 브라우저 자동 오픈' },
+          { value: 'false', label: 'X — 출력만, 브라우저 수동' },
+        ],
+      },
+    },
+  }, null, 2);
+  _seedFileForceUpgrade(path.join(toolsDir, 'web_preview.py'), py, 'web_preview_v1');
+  _mergeSchemaIntoJson(path.join(toolsDir, 'web_preview.json'), json);
+  _seedFileForceUpgrade(path.join(toolsDir, 'web_preview.md'), md, 'web_preview_v1');
+}
+
+function _seedDeveloperPwaSetup(toolsDir: string) {
+  const py = _loadToolSeed('developer/pwa_setup.py');
+  const md = _loadToolSeed('developer/pwa_setup.md');
+  const json = JSON.stringify({
+    PROJECT_PATH: '',
+    APP_NAME: '',
+    APP_SHORT_NAME: '',
+    THEME_COLOR: '#667eea',
+    BACKGROUND_COLOR: '#ffffff',
+    ICON_EMOJI: '✦',
+    _schema: {
+      PROJECT_PATH: { type: 'text', label: '📁 프로젝트 경로', hint: '비우면 web_init 결과 자동 사용' },
+      APP_NAME: { type: 'text', label: '📱 앱 이름', hint: '홈 화면에 표시될 풀 이름. 비우면 폴더명.' },
+      APP_SHORT_NAME: { type: 'text', label: '🏷️ 짧은 이름', hint: '12자 이하. 비우면 앱 이름 잘라서.' },
+      THEME_COLOR: { type: 'text', label: '🎨 테마 색', hint: '상단 바 색. #RRGGBB' },
+      BACKGROUND_COLOR: { type: 'text', label: '🖼️ 스플래시 배경', hint: '앱 시작 화면 배경. #RRGGBB' },
+      ICON_EMOJI: { type: 'text', label: '✨ 아이콘 이모지', hint: '아이콘에 쓸 이모지 (예: 📚 ✦ 🎯)' },
+    },
+  }, null, 2);
+  _seedFileForceUpgrade(path.join(toolsDir, 'pwa_setup.py'), py, 'pwa_setup_v1');
+  _mergeSchemaIntoJson(path.join(toolsDir, 'pwa_setup.json'), json);
+  _seedFileForceUpgrade(path.join(toolsDir, 'pwa_setup.md'), md, 'pwa_setup_v1');
 }
 
 /* v2.89.68 — Editor (사운드) 에이전트 시드 함수들. assets/tool-seeds/editor/ 의 .py·.md 파일을
@@ -9416,6 +9552,10 @@ class CompanyDashboardPanel {
                         if (ok) {
                             const verb = want ? '활성화됨' : '비활성화됨';
                             this._postToast(`✅ ${AGENTS[aid]?.emoji || ''} ${AGENTS[aid]?.name || aid} ${verb}`, false);
+                            /* v2.89.112 — 코다리(developer) 첫 활성화 시 시니어 코더 모델 추천. */
+                            if (want && aid === 'developer') {
+                                _maybeRecommendCoderModel(this._panel.webview);
+                            }
                             await this._sendState();
                             /* 사이드바도 동기화 */
                             try {
@@ -15038,6 +15178,10 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                         const verb = want ? '활성화됨 ✅' : '비활성화됨 ⏸';
                         try { this._view?.webview.postMessage({ type: 'systemNote', value: `${AGENTS[aid]?.emoji || ''} ${AGENTS[aid]?.name || aid} ${verb}` }); } catch { /* ignore */ }
                         try { this._view?.webview.postMessage({ type: 'activeAgents', value: readActiveAgents() }); } catch { /* ignore */ }
+                        /* v2.89.112 — 코다리 첫 활성화 시 시니어 코더 모델 추천 카드 */
+                        if (want && aid === 'developer') {
+                            try { if (this._view) _maybeRecommendCoderModel(this._view.webview); } catch { /* ignore */ }
+                        }
                         try {
                             if (CompanyDashboardPanel.current) CompanyDashboardPanel.current.refresh();
                         } catch { /* ignore */ }

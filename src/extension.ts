@@ -7717,6 +7717,85 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage(`tracker.json 열기 실패: ${e?.message || e}`);
             }
         }),
+        /* v2.89.114 — LLM 연결 진단 도구. 사용자가 "왜 안 되는지" 한 번에 파악.
+           Ollama 11434, LM Studio 1234, 설정된 baseUrl 모두 체크해서 단계별 결과 표시. */
+        vscode.commands.registerCommand('connectAiLab.diagnoseConnection', async () => {
+            const out: string[] = [];
+            const ok = (s: string) => out.push(`✅ ${s}`);
+            const warn = (s: string) => out.push(`⚠️ ${s}`);
+            const err = (s: string) => out.push(`❌ ${s}`);
+            const info = (s: string) => out.push(`ℹ️ ${s}`);
+
+            const cfg = getConfig();
+            const baseUrl = cfg.ollamaBase || '';
+            info(`설정된 LLM 서버: ${baseUrl || '(비어있음)'}`);
+            info(`설정된 기본 모델: ${cfg.defaultModel || '(비어있음)'}`);
+
+            /* 1. Ollama 11434 체크 */
+            let ollamaUp = false;
+            let ollamaModels: string[] = [];
+            try {
+                const r = await axios.get('http://127.0.0.1:11434/api/tags', { timeout: 2500 });
+                ollamaUp = true;
+                ollamaModels = (r.data?.models || []).map((m: any) => m?.name).filter(Boolean);
+                if (ollamaModels.length > 0) ok(`Ollama 실행 중 (포트 11434) · 모델 ${ollamaModels.length}개: ${ollamaModels.slice(0, 3).join(', ')}${ollamaModels.length > 3 ? '...' : ''}`);
+                else warn(`Ollama 실행 중이지만 설치된 모델 0개. 'ollama pull qwen2.5:7b' 같은 명령으로 모델 받으세요.`);
+            } catch {
+                err(`Ollama 미실행 (11434 응답 없음). Ollama 안 쓰면 무시 가능.`);
+            }
+
+            /* 2. LM Studio 1234 체크 */
+            let lmstudioUp = false;
+            let lmstudioModels: string[] = [];
+            try {
+                const r = await axios.get('http://127.0.0.1:1234/v1/models', { timeout: 2500 });
+                lmstudioUp = true;
+                lmstudioModels = (r.data?.data || []).map((m: any) => m?.id).filter(Boolean);
+                if (lmstudioModels.length > 0) ok(`LM Studio 실행 중 (포트 1234) · 모델 ${lmstudioModels.length}개: ${lmstudioModels.slice(0, 3).join(', ')}${lmstudioModels.length > 3 ? '...' : ''}`);
+                else warn(`LM Studio 실행 중이지만 모델 안 로드됨. LM Studio 'Chat' 또는 'Local Server' 탭에서 모델을 로드하세요.`);
+            } catch {
+                err(`LM Studio 미실행 또는 서버 안 켜짐 (1234 응답 없음).`);
+                err(`  → LM Studio 앱 열고 좌측 하단 'Developer' 탭 (또는 'Local Server') 클릭`);
+                err(`  → 'Start Server' 버튼 클릭 (시작 안 하면 외부에서 못 씀)`);
+                err(`  → 그 위 'Select a model to load' 에서 모델 골라 'Load' 클릭`);
+            }
+
+            /* 3. 설정된 baseUrl 도달성 */
+            if (baseUrl) {
+                const isLM = _isLMStudioEngine(baseUrl);
+                const probe = isLM ? `${baseUrl.replace(/\/+$/, '')}/v1/models` : `${baseUrl.replace(/\/+$/, '')}/api/tags`;
+                try {
+                    await axios.get(probe, { timeout: 2500 });
+                    ok(`설정된 서버(${baseUrl}) 도달 OK`);
+                } catch (e: any) {
+                    err(`설정된 서버(${baseUrl}) 도달 실패. 설정에서 ollamaBase 확인.`);
+                    if (lmstudioUp && !isLM) warn(`  → LM Studio가 1234에서 동작 중. ollamaBase를 'http://127.0.0.1:1234/v1' 로 바꾸세요.`);
+                    if (ollamaUp && isLM) warn(`  → Ollama가 11434에서 동작 중. ollamaBase를 'http://127.0.0.1:11434' 로 바꾸세요.`);
+                }
+            }
+
+            /* 4. 권장 조치 */
+            out.push('');
+            if (!ollamaUp && !lmstudioUp) {
+                err('어떤 LLM 엔진도 실행 중이 아님.');
+                info('해결: Ollama (https://ollama.com) 또는 LM Studio (https://lmstudio.ai) 설치 + 실행 + 모델 로드.');
+            } else if (lmstudioUp && lmstudioModels.length === 0) {
+                warn('LM Studio가 실행 중이지만 모델이 안 로드됨 — 가장 흔한 사고.');
+                info('해결: LM Studio 좌측 채팅 탭 또는 Developer 탭에서 모델 로드 + Start Server.');
+            } else if (ollamaUp && ollamaModels.length === 0) {
+                warn('Ollama 실행 중이지만 설치된 모델 0개.');
+                info('해결: 터미널에서 \`ollama pull qwen2.5:7b\` 또는 \`ollama pull gemma2:2b\` 실행.');
+            } else {
+                ok('LLM 연결 가능. 채팅 시도해보세요.');
+            }
+
+            /* 결과 패널 표시 */
+            const doc = await vscode.workspace.openTextDocument({
+                language: 'markdown',
+                content: `# 🔍 Connect AI — LLM 연결 진단\n\n_${new Date().toLocaleString('ko-KR')}_\n\n${out.join('\n')}\n\n---\n\n## 자주 막히는 곳\n\n### LM Studio가 처음이면\n1. LM Studio 앱 열기\n2. 좌측 사이드바 'Discover' (🔍) 에서 모델 검색·다운로드 (예: 'Qwen2.5 7B Instruct')\n3. 좌측 사이드바 'Chat' (💬) 가서 모델이 로드되는지 확인 (한 번 채팅해봐야 메모리에 올라옴)\n4. 좌측 사이드바 'Developer' (또는 'Local Server') 가기\n5. **'Start Server' 버튼 클릭** ← 이게 핵심. 시작 안 하면 Connect AI에서 못 봐요.\n6. 화면에 \`http://localhost:1234\` 같은 URL이 보이면 OK\n7. Connect AI 사이드바 위 모델 메뉴에서 모델 선택 → 채팅 시도\n\n### Ollama가 처음이면\n1. \`ollama pull qwen2.5:7b\` (터미널, 한 번만)\n2. \`ollama serve\` 또는 Ollama 앱 실행\n3. Connect AI 모델 메뉴에서 선택 → 채팅\n\n### 그래도 안 되면\n- VS Code/Anti-Gravity 재시작\n- 명령 팔레트 (Cmd+Shift+P) → \`Connect AI: 연결 진단\` 다시 실행\n- 위 결과 스크린샷 + LM Studio 'Developer' 탭 스크린샷을 함께 제보\n`,
+            });
+            await vscode.window.showTextDocument(doc, { preview: false });
+        }),
         vscode.commands.registerCommand('connectAiLab.dailyBriefing.fireNow', async () => {
             try {
                 await _runDailyBriefingOnce(true);
@@ -16335,7 +16414,7 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
             let errMsg = '';
             if (error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET') {
-                errMsg = `⚠️ ${targetName}에 연결할 수 없어요.\n\n**확인할 점:**\n• ${targetName} 앱이 켜져 있나요? (Start Server 클릭)\n• 포트가 ${isLM ? '1234' : '11434'} 맞나요? (설정 > Ollama URL)`;
+                errMsg = `⚠️ ${targetName}에 연결할 수 없어요.\n\n**확인할 점:**\n• ${targetName} 앱이 켜져 있나요? (Start Server 클릭)\n• 포트가 ${isLM ? '1234' : '11434'} 맞나요? (설정 > Ollama URL)\n\n💡 **명령 팔레트 (Cmd+Shift+P) → "Connect AI: 연결 진단"** 실행하면 어디가 문제인지 자동 체크해드려요.`;
             } else if (error.response?.status === 400) {
                 errMsg = `⚠️ AI가 요청을 이해하지 못했어요.\n\n**해결 방법:**\n• 헤더의 모델 선택 드롭다운에서 다른 모델을 골라보세요\n${isLM ? '• LM Studio에서 모델을 먼저 로드(Load)했는지 확인하세요' : '• 터미널에서 `ollama list`로 설치된 모델을 확인하세요'}`;
             } else if (error.response?.status === 404) {

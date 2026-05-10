@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: web_init_v1
+# version: web_init_v2
 """웹·모바일 프로젝트 자동 초기화 — 5개 템플릿 중 선택.
 
 config:
@@ -60,23 +60,65 @@ def _run(cmd, cwd=None, capture=True):
         return subprocess.run(cmd, shell=True, cwd=cwd, timeout=600).returncode == 0, ""
 
 
+def _scaffold_vite_react(name, parent):
+    """Vite + React + TS + Tailwind v4 (Vite 플러그인 방식).
+    v2: tailwindcss init 명령이 v4에서 제거됨 → @tailwindcss/vite 플러그인 사용 + 설정 파일 직접 쓰기.
+    각 단계마다 (cmd, cwd, critical) — critical=False면 실패해도 프로젝트 살림."""
+    target = os.path.join(parent, name)
+    return [
+        ("create", f"npm create vite@latest {name} -- --template react-ts", parent, True),
+        ("install", "npm install", target, True),
+        ("tailwind-pkg", "npm install tailwindcss@^4 @tailwindcss/vite@^4", target, False),
+        ("tailwind-config", _write_vite_tailwind_config, target, False),
+    ]
+
+
+def _write_vite_tailwind_config(target):
+    """Tailwind v4 설정 파일 직접 작성 (init 명령 의존 없음)."""
+    # vite.config.ts: 기본 파일에 tailwindcss 플러그인 추가
+    vite_cfg = os.path.join(target, "vite.config.ts")
+    if os.path.exists(vite_cfg):
+        try:
+            with open(vite_cfg, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "tailwindcss" not in content:
+                # import 추가
+                content = "import tailwindcss from '@tailwindcss/vite'\n" + content
+                # plugins: [react()] → plugins: [react(), tailwindcss()]
+                content = content.replace("plugins: [react()]", "plugins: [react(), tailwindcss()]")
+                with open(vite_cfg, "w", encoding="utf-8") as f:
+                    f.write(content)
+        except Exception:
+            pass
+
+    # src/index.css: Tailwind v4 import 한 줄
+    css_path = os.path.join(target, "src", "index.css")
+    if os.path.exists(css_path):
+        try:
+            with open(css_path, "r", encoding="utf-8") as f:
+                cur = f.read()
+            if '@import "tailwindcss"' not in cur:
+                with open(css_path, "w", encoding="utf-8") as f:
+                    f.write('@import "tailwindcss";\n\n' + cur)
+        except Exception:
+            pass
+
+    return True
+
+
 TEMPLATES = {
     "vite-react": {
-        "label": "⚡ Vite + React + TypeScript + Tailwind",
+        "label": "⚡ Vite + React + TypeScript + Tailwind v4",
         "needs": ["node", "npm"],
-        "scaffold": lambda name, parent: [
-            (f"npm create vite@latest {name} -- --template react-ts", parent),
-            (f"npm install", os.path.join(parent, name)),
-            (f"npm install -D tailwindcss postcss autoprefixer && npx tailwindcss init -p", os.path.join(parent, name)),
-        ],
-        "post": "Tailwind 설정·index.css 자동 추가",
+        "scaffold": _scaffold_vite_react,
+        "post": "Tailwind v4 (Vite 플러그인) + index.css 자동 설정",
         "dev_cmd": "npm run dev",
     },
     "nextjs": {
         "label": "▲ Next.js 14 (App Router) + TypeScript + Tailwind",
         "needs": ["node", "npm"],
         "scaffold": lambda name, parent: [
-            (f"npx create-next-app@latest {name} --typescript --tailwind --app --src-dir --import-alias '@/*' --no-eslint --use-npm --yes", parent),
+            ("scaffold", f"npx create-next-app@latest {name} --typescript --tailwind --app --src-dir --import-alias '@/*' --no-eslint --use-npm --yes", parent, True),
         ],
         "post": "App Router·Tailwind·src 디렉토리 셋업 완료",
         "dev_cmd": "npm run dev",
@@ -85,8 +127,8 @@ TEMPLATES = {
         "label": "🚀 Astro + Tailwind (정적·콘텐츠 사이트)",
         "needs": ["node", "npm"],
         "scaffold": lambda name, parent: [
-            (f"npm create astro@latest {name} -- --template minimal --typescript strict --install --git --yes", parent),
-            (f"npx astro add tailwind --yes", os.path.join(parent, name)),
+            ("scaffold", f"npm create astro@latest {name} -- --template minimal --typescript strict --install --git --yes", parent, True),
+            ("tailwind", f"npx astro add tailwind --yes", os.path.join(parent, name), False),
         ],
         "post": "Astro + Tailwind",
         "dev_cmd": "npm run dev",
@@ -95,7 +137,7 @@ TEMPLATES = {
         "label": "📱 Expo (React Native · iOS/Android/Web 동시)",
         "needs": ["node", "npm"],
         "scaffold": lambda name, parent: [
-            (f"npx create-expo-app@latest {name} --template blank-typescript", parent),
+            ("scaffold", f"npx create-expo-app@latest {name} --template blank-typescript", parent, True),
         ],
         "post": "Expo Go 앱(iOS/Android) 깔고 'npm start' 후 QR 스캔",
         "dev_cmd": "npm start",
@@ -215,11 +257,33 @@ def main():
             sys.exit(1)
     else:
         steps = spec["scaffold"](name, out_dir)
-        for cmd, cwd in steps:
-            ok, _ = _run(cmd, cwd=cwd)
-            if not ok:
-                _log(f"단계 실패: {cmd}", "err")
+        warnings = []
+        for step in steps:
+            # 4-tuple 형식: (label, cmd_or_func, cwd, critical)
+            if len(step) != 4:
+                _log(f"잘못된 step 형식 (4-tuple 필요): {step}", "err")
                 sys.exit(1)
+            label, action, cwd, critical = step
+            if callable(action):
+                # Python 함수 직접 호출 (설정 파일 쓰기 등)
+                _log(f"[{label}] 설정 파일 작성 중...", "step")
+                try:
+                    ok = bool(action(cwd))
+                except Exception as e:
+                    _log(f"[{label}] 예외: {e}", "warn")
+                    ok = False
+            else:
+                ok, _ = _run(action, cwd=cwd)
+            if not ok:
+                if critical:
+                    _log(f"❌ 핵심 단계 실패: [{label}] — 중단합니다", "err")
+                    sys.exit(1)
+                else:
+                    _log(f"⚠️  부가 단계 실패: [{label}] — 계속 진행합니다", "warn")
+                    warnings.append(label)
+        if warnings:
+            _log(f"부가 단계 {len(warnings)}개 실패 ({', '.join(warnings)}). 프로젝트 자체는 작동합니다.", "warn")
+            _log("Tailwind 등은 사용자가 수동 추가 가능. README 참고.", "info")
 
     _log(f"셋업 완료: {target}", "ok")
     _log(f"다음 단계:", "info")

@@ -6094,7 +6094,7 @@ function _seedDeveloperWebInit(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'web_init.py'), py, 'web_init_v1');
+  _seedFileForceUpgrade(path.join(toolsDir, 'web_init.py'), py, 'web_init_v2');
   _mergeSchemaIntoJson(path.join(toolsDir, 'web_init.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'web_init.md'), md, 'web_init_v1');
 }

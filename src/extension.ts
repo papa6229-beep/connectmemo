@@ -976,9 +976,15 @@ const LOCKED_AGENTS_DEFAULT: Record<string, boolean> = { editor: true };
    ALWAYS_ON: 핵심 워크플로우용 — 항상 활성, 토글 불가.
    OPTIONAL: 기본 비활성, 사용자 opt-in 시 활성화 (PIN 안 받음 — Luna만 PIN).
    기존 사용자 migration: hired.json에 entry 있으면 모든 OPTIONAL 자동 활성화. */
-/* v2.89.109 — 사용자 자율성 우선. CEO는 시스템 오케스트레이터라 필수 (없으면 1인 기업
-   모드 자체가 동작 X). 나머지 8명 모두 사용자가 직접 활성/비활성 선택. */
+/* v2.89.110 — 자율성 + 합리적 기본값 균형. 4-tier:
+   1. ALWAYS_ON: 시스템 요구 (off 불가)
+   2. DEFAULT_ON: 첫 진입 시 자동 활성화. 사용자가 언제든 OFF 가능.
+   3. OPTIONAL (DEFAULT_OFF): 기본 비활성, 사용자 opt-in.
+   4. LOCKED (Luna): PIN 필요.
+   v2.89.109가 너무 보수적이어서 (CEO만 ON) 새 사용자가 회사 모드 켜고 "유튜브 분석해줘"
+   하면 빈 plan 나오는 사고. 핵심 4명을 기본 ON으로 되돌려 첫 경험 회복. */
 const ALWAYS_ON_AGENTS: Set<string> = new Set(['ceo']);
+const DEFAULT_ON_AGENTS: Set<string> = new Set(['secretary', 'youtube', 'writer', 'designer']);
 const OPTIONAL_AGENTS_DEFAULT: Set<string> = new Set(['secretary', 'youtube', 'writer', 'designer', 'instagram', 'business', 'developer', 'researcher']);
 
 function _hiredJsonPath(): string {
@@ -1046,13 +1052,18 @@ function readActiveAgents(): Record<string, { activatedAt: string }> {
         } catch { /* readonly fs */ }
         return seed;
       }
-      /* 새 사용자: 빈 active.json 생성 (migrated 플래그만) */
+      /* v2.89.110 — 새 사용자: DEFAULT_ON 4명을 시드로 활성화. 첫 진입에 회사 모드
+         쓸 수 있는 기본 팀을 갖춤 (사용자가 원하면 언제든 비활성화 가능). */
+      const seed: Record<string, any> = { _migrated: true, _migrated_v2: true };
+      for (const id of DEFAULT_ON_AGENTS) {
+        seed[id] = { activatedAt: new Date().toISOString(), seeded: true };
+      }
       try {
         const dir = path.join(getCompanyDir(), '_shared');
         try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
-        fs.writeFileSync(p, JSON.stringify({ _migrated: true }, null, 2));
+        fs.writeFileSync(p, JSON.stringify(seed, null, 2));
       } catch { /* readonly fs */ }
-      return { _migrated: true } as any;
+      return seed;
     }
     const data = JSON.parse(fs.readFileSync(p, 'utf-8') || '{}');
     if (!data || typeof data !== 'object') return {};

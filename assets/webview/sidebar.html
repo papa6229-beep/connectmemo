@@ -3779,8 +3779,14 @@ let agentMiniDotEls={};
      - always-on (CEO, secretary, youtube, writer, designer): 항상 활성.
    두 화면 (사이드바·대쉬보드) 어디서든 같은 정보를 봄. */
 const LOCKED_AGENTS = { editor: true };  /* 사운드 디렉터(editor=루나) — PIN 게이트 */
-/* v2.89.109 — 사용자 자율: CEO만 필수. 나머지 8명 모두 클릭 토글 */
+/* v2.89.110 — 자율성 + 합리적 기본값:
+   - ALWAYS_ON (1명): CEO 시스템 필수
+   - DEFAULT_ON (4명): 새 사용자 첫 진입 시 자동 활성화 (사용자 OFF 가능)
+   - OPTIONAL (4명): 기본 비활성, opt-in
+   - LOCKED (1명): Luna PIN
+   첫 화면이 "비어 있지 않게" 하면서도 사용자 선택권 유지. */
 const ALWAYS_ON_AGENTS = new Set(['ceo']);
+const DEFAULT_ON_AGENTS = new Set(['secretary','youtube','writer','designer']);
 const OPTIONAL_AGENTS = new Set(['secretary','youtube','writer','designer','instagram','business','developer','researcher']);
 let _backendHiredAgents = null;  /* backend 동기화. null = 미수신 */
 let _backendActiveAgents = null;  /* v2.89.107 active.json 동기화 */
@@ -4376,8 +4382,8 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
          보여줘 사용자가 "이제 뭐 할 수 있지?" 즉시 파악. 이전엔 "설정 완료. 명령
          내려보세요" 만으로 무엇이 가능한지 모호했음. */
       const co = companyState.name || '회사';
-      /* v2.89.107 — 활성 5명 + 옵트인 4명 + 채용 게이트 1명 안내 */
-      addCorpBanner('✅ '+co+' 출범! 9명 팀 — 🟢 활성 5명: 🧭 CEO · 📺 YouTube · 🎨 디자이너 · ✍️ 작가 · 📅 비서 / ⏸ 옵션 4명 (📷 인스타·💼 비즈·🛠 개발·🔍 리서치): 카드 클릭해서 ON / 🔒 1명 (🎵 루나): 채용 PIN 필요');
+      /* v2.89.110 — 기본 5명 ON + 옵션 4명 OFF + 루나 PIN. 사용자가 카드 클릭해서 자유롭게 변경 가능. */
+      addCorpBanner('✅ '+co+' 출범! 9명 팀 — 🟢 기본 ON 5명: 🧭 CEO · 📺 YouTube · 🎨 디자이너 · ✍️ 작가 · 📅 비서 (사용자가 OFF 가능) / ⏸ 옵션 4명 (📷 인스타·💼 비즈·🛠 개발·🔍 리서치): 카드 클릭해서 ON / 🔒 1명 (🎵 루나): 채용 PIN 필요');
       addCorpBanner('💡 "다음 영상 컨셉 5개 뽑아줘" 처럼 자연어로 던지시면 CEO가 분배합니다.');
     }
     break;

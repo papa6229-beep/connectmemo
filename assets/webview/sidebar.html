@@ -1330,17 +1330,34 @@ internetBtn.addEventListener('click', ()=>{
 });
 
 /* Syntax Highlighting (lightweight) */
+/* v2.89.111 — 신택스 하이라이터 재작성. 이전 버전 두 가지 사고:
+   1) esc()는 \n을 <br>로 변환 → 라인 주석 regex `[^\n]*`가 전체 코드를 먹음
+   2) 주석 wrap 후 `<span class="cm">`의 'class' 단어가 키워드 regex에 다시 매칭 →
+      `<span <span class="kw">class</span>="cm">` 같은 이중 wrap → 깨진 HTML 출력.
+   해결: \n 보존하는 escSafe 사용 + 주석/문자열은 슬롯에 stash해서 후속 regex 보호. */
+function _escSafe(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function highlight(code,lang){
-  let h=esc(code);
-  h=h.replace(new RegExp("(\\/\\/[^\\n]*)", "g"),'<span class="cm">$1</span>');
-  h=h.replace(new RegExp("(#[^\\n]*)", "g"),'<span class="cm">$1</span>');
-  h=h.replace(new RegExp("(\\/\\*[\\s\\S]*?\\*\\/)", "g"),'<span class="cm">$1</span>');
-  h=h.replace(/(&quot;[^&]*?&quot;|&#x27;[^&]*?&#x27;)/g,'<span class="str">$1</span>');
-  h=h.replace(new RegExp("\\b(function|const|let|var|return|if|else|for|while|class|import|export|from|default|async|await|try|catch|throw|new|this|def|self|print|lambda|yield|with|as|raise|except|finally)\\b", "g"),'<span class="kw">$1</span>');
-  h=h.replace(new RegExp("\\b(\\d+\\.?\\d*)\\b", "g"),'<span class="num">$1</span>');
-  h=h.replace(new RegExp("\\b(True|False|None|true|false|null|undefined|NaN)\\b", "g"),'<span class="num">$1</span>');
-  h=h.replace(new RegExp("\\b(String|Number|Boolean|Array|Object|Map|Set|Promise|void|int|float|str|list|dict|tuple)\\b", "g"),'<span class="type">$1</span>');
-  h=h.replace(/([=!+*/%|&^~?:-]+)/g,'<span class="op">$1</span>');
+  /* 비코드 언어(markdown·text·report)는 하이라이팅 안 함 — 키워드 매칭이 오히려 노이즈 */
+  const safeLang = (lang||'').toLowerCase().trim();
+  const isProgLang = !!safeLang && !/^(text|md|markdown|plain|log|diff|none|code)$/.test(safeLang);
+  let h = _escSafe(code);
+  if (!isProgLang) return h;
+  /* 주석·문자열 우선 추출 → 슬롯에 stash. 후속 regex가 슬롯 placeholder를
+     건드리지 않도록 \x00N\x00 형식으로. */
+  const slots = [];
+  const stash = (html) => { slots.push(html); return '\x00'+(slots.length-1)+'\x01'; };
+  h = h.replace(/(&quot;[^&\n]*?&quot;|&#39;[^&\n]*?&#39;)/g, m => stash('<span class="str">'+m+'</span>'));
+  h = h.replace(/(\/\/[^\n]*)/g, m => stash('<span class="cm">'+m+'</span>'));
+  h = h.replace(/(#[^\n]*)/g, m => stash('<span class="cm">'+m+'</span>'));
+  h = h.replace(/(\/\*[\s\S]*?\*\/)/g, m => stash('<span class="cm">'+m+'</span>'));
+  /* 키워드·숫자·타입은 슬롯 보호된 텍스트에만 적용 */
+  h = h.replace(/\b(function|const|let|var|return|if|else|for|while|class|import|export|from|default|async|await|try|catch|throw|new|this|def|self|print|lambda|yield|with|as|raise|except|finally)\b/g,'<span class="kw">$1</span>');
+  h = h.replace(/\b(\d+\.?\d*)\b/g,'<span class="num">$1</span>');
+  h = h.replace(/\b(True|False|None|true|false|null|undefined|NaN)\b/g,'<span class="num">$1</span>');
+  h = h.replace(/\b(String|Number|Boolean|Array|Object|Map|Set|Promise|void|int|float|str|list|dict|tuple)\b/g,'<span class="type">$1</span>');
+  h = h.replace(/([=!+*/%|&^~?:-]+)/g,'<span class="op">$1</span>');
+  /* 슬롯 복원 */
+  h = h.replace(/\x00(\d+)\x01/g, (_, i) => slots[parseInt(i,10)] || '');
   return h;
 }
 

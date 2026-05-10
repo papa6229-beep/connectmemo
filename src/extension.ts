@@ -7903,6 +7903,96 @@ export function activate(context: vscode.ExtensionContext) {
                     }
                 })();
             }
+            else if (req.method === 'POST' && req.url === '/api/template-inject') {
+                /* v2.89.120 — 템플릿 팩 주입. EZER 등 외부 도구가 코드 boilerplate
+                   묶음을 주면 두뇌의 40_템플릿/<agentId>/<name>/ 로 폴더 구조로 저장.
+                   코다리 같은 에이전트가 다음 작업에 자동 참조.
+                   payload: { agent, name, manifest, readme, files: {filename: content} } */
+                (async () => {
+                    console.log('[Connect AI Bridge] /api/template-inject hit @', new Date().toISOString());
+                    vscode.window.setStatusBarMessage('📋 Connect AI: 템플릿팩 수신', 4000);
+                    try {
+                        const body = await readRequestBody(req);
+                        const parsed = JSON.parse(body);
+                        const agentId = typeof parsed.agent === 'string' ? parsed.agent.trim() : 'developer';
+                        const rawName = typeof parsed.name === 'string' ? parsed.name : '';
+                        const manifest = (parsed.manifest && typeof parsed.manifest === 'object') ? parsed.manifest : null;
+                        const readme = typeof parsed.readme === 'string' ? parsed.readme : '';
+                        const files = (parsed.files && typeof parsed.files === 'object') ? parsed.files : {};
+                        const displayName = typeof parsed.displayName === 'string' ? parsed.displayName.trim() : '';
+                        const description = typeof parsed.description === 'string' ? parsed.description.trim() : '';
+                        if (!AGENT_ORDER.includes(agentId)) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: `unknown agent: ${agentId}. 가능: ${AGENT_ORDER.join(', ')}` }));
+                            return;
+                        }
+                        const safeName = safeBasename(rawName.replace(/[^a-zA-Z0-9가-힣_-]/gi, '_'));
+                        if (!safeName) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'name 필드가 유효하지 않습니다.' }));
+                            return;
+                        }
+                        if (!_isBrainDirExplicitlySet()) {
+                            const ensured = await _ensureBrainDir();
+                            if (!ensured) {
+                                res.writeHead(400, { 'Content-Type': 'application/json' });
+                                res.end(JSON.stringify({ error: '두뇌 폴더를 먼저 선택해주세요.' }));
+                                return;
+                            }
+                        }
+                        const brainDir = _getBrainDir();
+                        const tplRoot = path.join(brainDir, '40_템플릿', agentId, safeName);
+                        if (!tplRoot.startsWith(path.resolve(brainDir) + path.sep)) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'invalid path' }));
+                            return;
+                        }
+                        fs.mkdirSync(tplRoot, { recursive: true });
+                        /* 1) manifest.json (제공된 거 + 주입 메타) */
+                        const stampedManifest = Object.assign({}, manifest || {}, {
+                            name: manifest?.name || displayName || safeName,
+                            _injectedAt: new Date().toISOString(),
+                            _injectedFrom: typeof parsed.source === 'string' ? parsed.source : 'external'
+                        });
+                        fs.writeFileSync(path.join(tplRoot, 'manifest.json'), JSON.stringify(stampedManifest, null, 2), 'utf-8');
+                        /* 2) README.md */
+                        const readmeBody = readme.trim() ? readme :
+                            `# ${displayName || safeName}\n\n${description || '주입된 템플릿'}\n`;
+                        fs.writeFileSync(path.join(tplRoot, 'README.md'), readmeBody, 'utf-8');
+                        /* 3) files/ — 각 파일을 검증된 이름으로 저장 (경로 traversal 방지) */
+                        const filesDir = path.join(tplRoot, 'files');
+                        fs.mkdirSync(filesDir, { recursive: true });
+                        let writtenCount = 0;
+                        for (const [filename, content] of Object.entries(files)) {
+                            if (typeof content !== 'string') continue;
+                            const safeFn = safeBasename(String(filename).replace(/[^a-zA-Z0-9._-]/gi, '_'));
+                            if (!safeFn) continue;
+                            const filePath = path.join(filesDir, safeFn);
+                            if (!filePath.startsWith(path.resolve(filesDir) + path.sep)) continue;
+                            fs.writeFileSync(filePath, content, 'utf-8');
+                            writtenCount++;
+                        }
+                        /* 4) 알림 + 채팅 카드 */
+                        const a = AGENTS[agentId];
+                        const agentLabel = a ? `${a.emoji} ${a.name}` : agentId;
+                        vscode.window.showInformationMessage(
+                            `📋 새 템플릿 주입됨: ${displayName || safeName} → ${agentLabel} (${writtenCount}개 파일)`
+                        );
+                        /* 채팅 카드 — 스킬 카드 패턴 재사용 (broadcastSkillCard 가 일반적인 inject 카드 렌더링) */
+                        try { provider.broadcastSkillCard(agentId, safeName, `📋 ${displayName || safeName} (템플릿 ${writtenCount}개 파일)`, description); } catch { /* optional */ }
+                        setTimeout(() => {
+                            provider.sendPromptFromExtension(`[A.U 히든 커맨드: ${agentLabel} 에이전트가 방금 '${displayName || safeName}' 템플릿 팩 주입받았습니다. 코드 boilerplate ${writtenCount}개 파일 + README. 매트릭스 톤으로 한 줄. "${agentLabel}, ${displayName || safeName} 템플릿 ${writtenCount}개 파일 장착. 다음 작업에 자동 활용." 부가 설명 X.]`);
+                        }, 1500);
+                        _safeGitAutoSync(_getBrainDir(), `Auto-Inject Template [${agentId}]: ${safeName}`, provider);
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ success: true, location: tplRoot, agent: agentId, name: safeName, filesWritten: writtenCount }));
+                    } catch (e: any) {
+                        const status = e.message === 'BODY_TOO_LARGE' ? 413 : 500;
+                        res.writeHead(status, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: e.message }));
+                    }
+                })();
+            }
             else {
                 res.writeHead(404);
                 res.end();

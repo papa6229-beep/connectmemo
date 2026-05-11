@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.132 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.133 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.132';
+const _CONNECT_AI_VERSION = '2.89.133';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -18439,6 +18439,31 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 const userMsg = `[CEO의 지시]\n${t.task}\n\n[원 사용자 명령 참고]\n${prompt}`;
 
                 let out = '';
+                /* v2.89.133 — 키트 shortcut. 명시적 호출(`코다리야 ...`) + 두뇌 키트
+                   강하게 매칭되는 명령이면 LLM 호출 자체 건너뛰고 pack_apply 직접 실행.
+                   LM Studio 죽어있거나 context 모자라도 시연 깨지지 않음.
+                   조건: explicit 호출 + t.agent === developer + 매칭 점수 ≥ 10. */
+                const shortcut = (explicit && t.agent === 'developer')
+                    ? this._tryKitShortcut(t.agent, prompt)
+                    : null;
+                if (shortcut) {
+                    out = shortcut;
+                    /* 사무실에 작업 시작 신호 한 번 → 사용자가 코다리 카드 펄스 봄 */
+                    try {
+                        this._broadcastCorporate({ type: 'agentBusy', agent: t.agent, elapsedSec: 0 });
+                    } catch { /* ignore */ }
+                    /* statusBar 알림 */
+                    try {
+                        vscode.window.setStatusBarMessage(
+                            `⚡ ${a.emoji} ${a.name} 키트 자동 적용 — LLM 우회`, 5000
+                        );
+                    } catch { /* ignore */ }
+                    /* shortcut 경로 — 아래 heartbeat / LLM 호출 블록 통째로 스킵 */
+                }
+
+                /* v2.89.133 — shortcut 경로는 heartbeat / LLM 호출 자체를 스킵.
+                   pack_apply 결과는 dispatch 의 _executeActions / cmdRegex 가 곧바로 잡음. */
+                if (!shortcut) {
                 /* v2.89.131 — 진행 표시 + 사무실 동기화 + 첫 토큰 마커.
                    사용자가 "11분간 멈춘 것 같다"고 한 사고 해결. 5초마다 statusBar +
                    30초마다 채팅창 한 줄 + 가상 사무실 캐릭터 상태 갱신. 첫 토큰 도착
@@ -18541,6 +18566,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                        호출됐어도 idempotent 하니까 두 번 클리어해도 안전. */
                     clearInterval(heartbeatInterval);
                 }
+                } /* end if (!shortcut) — v2.89.133 LLM 우회 분기 닫음 */
                 /* v2.89.9 — 진짜 도구 실행. corporate dispatch에서도 에이전트가
                    <run_command>...</run_command> 출력하면 시스템이 실제로 실행하고
                    stdout/stderr를 다시 출력에 주입. 이게 LLM hallucination을
@@ -19350,6 +19376,76 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             }
         }
         return null;
+    }
+
+    /** v2.89.133 — 키트 shortcut. 명시적 코다리 호출 + 두뇌 키트와 강하게 매칭되는
+     *  명령이면 LLM 호출 자체를 건너뛰고 pack_apply 직접 실행하는 가짜 LLM 응답을
+     *  생성한다. LM Studio 가 죽어있거나 context 모자라도 시연이 깨지지 않음.
+     *
+     *  매칭 점수 (pack_apply 와 동일 규칙):
+     *    - manifest.keywords 1개 매칭 = 10점
+     *    - manifest.name 부분 일치 = 5점
+     *    - manifest.category = 3점
+     *  점수 ≥ 10 이면 shortcut 발동. 아니면 null 반환 → 기존 LLM 흐름.
+     *
+     *  반환: out 문자열 (이미 <run_command> 태그 포함 → _executeActions 가 자동 실행).
+     */
+    private _tryKitShortcut(agentId: string, userPrompt: string): string | null {
+        if (agentId !== 'developer') return null;
+        const a = AGENTS[agentId];
+        if (!a) return null;
+
+        const lowerPrompt = userPrompt.toLowerCase();
+        const brainDir = _getBrainDir();
+        const kitsRoot = path.join(brainDir, '40_템플릿', 'developer');
+        if (!fs.existsSync(kitsRoot)) return null;
+
+        let best: { kit: string; score: number; manifest: any } | null = null;
+        try {
+            for (const dirent of fs.readdirSync(kitsRoot, { withFileTypes: true })) {
+                if (!dirent.isDirectory()) continue;
+                const kitName = dirent.name;
+                const manifestPath = path.join(kitsRoot, kitName, 'manifest.json');
+                if (!fs.existsSync(manifestPath)) continue;
+                let manifest: any;
+                try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')); }
+                catch { continue; }
+
+                let score = 0;
+                const kws: string[] = Array.isArray(manifest.keywords) ? manifest.keywords : [];
+                for (const k of kws) {
+                    const kl = String(k).toLowerCase();
+                    if (kl && lowerPrompt.includes(kl)) score += 10;
+                }
+                const nameStr = String(manifest.name || '').toLowerCase();
+                if (nameStr && lowerPrompt.includes(nameStr)) score += 5;
+                const cat = String(manifest.category || '').toLowerCase();
+                if (cat && lowerPrompt.includes(cat)) score += 3;
+
+                if (score > 0 && (!best || score > best.score)) {
+                    best = { kit: kitName, score, manifest };
+                }
+            }
+        } catch { return null; }
+
+        if (!best || best.score < 10) return null;
+
+        /* 가짜 LLM 응답 생성. <run_command> 태그가 들어있어서 dispatch 의
+           _executeActions(skipRunCommand=true 인 corporate 모드) 가 아니라
+           코드 18495 근처의 직접 run_command 실행 경로가 잡아서 실행함.
+           우리는 skipRunCommand=true 로 호출하니까 이 명령은 별도로 처리해야 함. */
+        const escapedIntent = userPrompt.replace(/"/g, '\\"');
+        const fakeOutput = `${a.emoji} ${a.name}: 명시적 호출 + 매칭 키트 발견. LLM 우회 — 시스템이 직접 \`${best.kit}\` 적용합니다.
+
+> 📋 매칭 점수: **${best.score}점** (\`${best.manifest.name || best.kit}\`)
+> 💡 \`pack_apply.py\` 를 즉시 실행 → 사용자 프로젝트에 키트 파일 복사·설정 자동화.
+
+<run_command>cd "${path.join(getCompanyDir(), '_agents', 'developer', 'tools').replace(/\\/g, '/')}" && KIT_NAME="${best.kit}" USER_INTENT="${escapedIntent}" python3 pack_apply.py</run_command>
+
+📊 평가: 진행중 — pack_apply 실행 결과 대기.
+📝 다음 단계: 적용 완료 후 사용자가 결과 폴더에서 \`open index.html\` 또는 \`npm run dev\` 로 결과물 확인.
+`;
+        return fakeOutput;
     }
 
     /** v2.89.131 — fuzzy path hint. list_files/read_file 이 디렉토리 못 찾을 때

@@ -238,6 +238,36 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
+/* v2.89.127 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+   식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
+const _CONNECT_AI_VERSION = '2.89.127';
+
+/* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
+function _versionLessThan(a: string, b: string): boolean {
+    const pa = a.split('.').map(n => parseInt(n, 10) || 0);
+    const pb = b.split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const ai = pa[i] || 0, bi = pb[i] || 0;
+        if (ai !== bi) return ai < bi;
+    }
+    return false;
+}
+
+/* v2.89.127 — 포트 4825에 이미 떠있는 Bridge가 우리 것인지 식별.
+   - ours: connect-ai-bridge 식별자
+   - version: 그 인스턴스 버전 (옛 버전이면 자동 인계 대상)
+   - pid: 종료 대상 PID */
+async function _probeExistingBridge(): Promise<{ ours: boolean; version: string; pid: number }> {
+    try {
+        const r = await axios.get('http://127.0.0.1:4825/ping', { timeout: 1500 });
+        const d = r.data;
+        if (d && d.app === 'connect-ai-bridge') {
+            return { ours: true, version: String(d.version || ''), pid: Number(d.pid || 0) };
+        }
+    } catch { /* not running or different app */ }
+    return { ours: false, version: '', pid: 0 };
+}
+
 /* v2.89.120 — 특정 TCP 포트 점유 프로세스 강제 종료 (cross-platform).
    "이걸 메인으로 하기" UX 에 사용: 다른 Anti-Gravity 인스턴스가 4825 잡고 있을 때
    해당 PID 찾아 SIGKILL. 종료된 PID 배열 반환 (빈 배열이면 미발견).
@@ -7715,7 +7745,17 @@ export function activate(context: vscode.ExtensionContext) {
                 const brainDir = _getBrainDir();
                 const brainCount = fs.existsSync(brainDir) ? provider._findBrainFiles(brainDir).length : 0;
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ status: 'ok', msg: 'Connect AI Bridge Ready', config: getConfig(), brain: { fileCount: brainCount, enabled: provider._brainEnabled } }));
+                /* v2.89.127 — 신원·버전 정보 추가. 다른 Connect AI 인스턴스가 충돌 시
+                   이 응답 보고 "우리 거다 → 조용히 공유 모드 / 옛 버전이면 자동 인계" 판단. */
+                res.end(JSON.stringify({
+                    status: 'ok',
+                    msg: 'Connect AI Bridge Ready',
+                    app: 'connect-ai-bridge',
+                    version: _CONNECT_AI_VERSION,
+                    pid: process.pid,
+                    config: getConfig(),
+                    brain: { fileCount: brainCount, enabled: provider._brainEnabled }
+                }));
             }
             else if (req.method === 'POST' && req.url === '/api/exam') {
                 (async () => {
@@ -8189,35 +8229,66 @@ export function activate(context: vscode.ExtensionContext) {
             if (err?.code === 'EADDRINUSE') {
                 _bridgeRetryCount++;
                 if (_bridgeRetryCount > 2) {
-                    /* 2번 이상 충돌 시 무한 루프 방지 */
                     vscode.window.showErrorMessage(
-                        '🚫 Bridge 인계 2회 실패. 다른 Anti-Gravity 창을 직접 닫고 Anti-Gravity 재시작해주세요.'
+                        '🚫 Bridge 인계 2회 실패. 다른 Anti-Gravity 창을 직접 닫고 재시작해주세요.'
                     );
                     return;
                 }
-                const choice = await vscode.window.showWarningMessage(
-                    '🚫 Connect AI Bridge: 포트 4825가 이미 사용 중입니다.\n다른 Anti-Gravity 인스턴스가 Bridge를 잡고 있어요. 이 인스턴스를 메인으로 전환하시겠어요?',
-                    { modal: false },
-                    '🎯 이걸 메인으로 (이전 종료)',
-                    '🚫 이번엔 보기 모드로'
-                );
-                if (choice === '🎯 이걸 메인으로 (이전 종료)') {
+
+                /* v2.89.127 — 자동 판단: 4825 잡고 있는 게 우리 Bridge 인지 ping 으로 확인.
+                   1) 우리 거 + 같은 버전 → 조용히 공유 모드 (popup 없음, 사용자 인지 X)
+                   2) 우리 거 + 옛 버전 → 자동 인계 (popup 없음)
+                   3) 다른 앱 → 사용자에게 선택 (옛 popup 유지)
+                   이렇게 하면 95% 사용자는 EADDRINUSE 마주칠 일 자체가 없음. */
+                const probe = await _probeExistingBridge();
+
+                if (probe.ours && probe.version === _CONNECT_AI_VERSION) {
+                    /* 같은 버전 — 다른 윈도우/인스턴스가 메인. 조용히 공유 모드. */
+                    console.log(`[Connect AI Bridge] 공유 모드 — 다른 인스턴스(PID ${probe.pid})가 이미 메인`);
+                    vscode.window.setStatusBarMessage(`🔗 Bridge 공유 모드 (메인: 다른 윈도우)`, 5000);
+                    return;
+                }
+
+                if (probe.ours && probe.version && _versionLessThan(probe.version, _CONNECT_AI_VERSION)) {
+                    /* 옛 버전 — 자동 인계. 사용자에게 한 줄 알림만. */
+                    console.log(`[Connect AI Bridge] 옛 버전(${probe.version}) 감지 → 자동 인계 시작`);
                     const killed = _killProcessesOnPort(4825);
                     if (killed.length > 0) {
-                        vscode.window.showInformationMessage(`✅ 이전 Bridge 종료됨 (PID ${killed.join(', ')}). 1.5초 후 재시작 시도...`);
-                        /* 포트 해제 대기 시간 좀 더 길게 (1.5s) + close() 우선 호출 후 재listen.
-                           server.close() 는 진행 중 연결이 없으면 즉시 콜백, 있으면 다 닫고 콜백. */
+                        vscode.window.setStatusBarMessage(
+                            `🔄 옛 Bridge(${probe.version}) 자동 인계 → ${_CONNECT_AI_VERSION}`, 6000
+                        );
+                        setTimeout(() => {
+                            try { (server as any).close(() => _tryStartBridge(true)); }
+                            catch { _tryStartBridge(true); }
+                        }, 1500);
+                    } else {
+                        vscode.window.setStatusBarMessage('🟡 Bridge 공유 모드 (옛 버전이 메인 — 자동 인계 실패)', 6000);
+                    }
+                    return;
+                }
+
+                /* 미상의 앱이 4825 잡고 있음 → 옛 사용자 확인 다이얼로그 */
+                const choice = await vscode.window.showWarningMessage(
+                    '🚫 포트 4825가 다른 앱에 사용 중입니다 (Connect AI 아님).\n자동 인계할까요?',
+                    { modal: false },
+                    '🎯 인계 (다른 앱 종료)',
+                    '🚫 이번엔 보기 모드'
+                );
+                if (choice === '🎯 인계 (다른 앱 종료)') {
+                    const killed = _killProcessesOnPort(4825);
+                    if (killed.length > 0) {
+                        vscode.window.showInformationMessage(`✅ 점유 프로세스 종료됨 (PID ${killed.join(', ')}). 재시작...`);
                         setTimeout(() => {
                             try { (server as any).close(() => _tryStartBridge(true)); }
                             catch { _tryStartBridge(true); }
                         }, 1500);
                     } else {
                         vscode.window.showErrorMessage(
-                            '⚠️ 포트 점유 프로세스를 찾지 못했어요. 다른 Anti-Gravity 창을 직접 닫아주세요. (또는 터미널에서 `lsof -ti:4825 | xargs kill -9`)'
+                            '⚠️ 포트 점유 프로세스를 찾지 못했어요. 직접 점검 필요: `lsof -ti:4825 | xargs kill -9`'
                         );
                     }
                 } else {
-                    vscode.window.setStatusBarMessage('🟡 Connect AI Bridge: 보기 모드 (포트 충돌, EZER 연동 미작동)', 6000);
+                    vscode.window.setStatusBarMessage('🟡 Connect AI Bridge: 보기 모드 (포트 충돌)', 6000);
                 }
             } else {
                 vscode.window.showErrorMessage(`🚫 Connect AI Bridge 시작 실패: ${err?.message || err}`);

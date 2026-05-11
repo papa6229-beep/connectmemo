@@ -1179,3 +1179,113 @@ window.addEventListener('message', e => {
   }
 });
 vscode.postMessage({ type: 'refresh' });
+/* ───────── v2.89.142 — Revenue Card (회사 대시보드의 매출 위젯) ───────── */
+(function setupRevenueCard() {
+  const openBtn = document.getElementById('openRevDashBtn');
+  const askBtn  = document.getElementById('askHyunbinBtn');
+  if (openBtn) openBtn.addEventListener('click', () => {
+    vscode.postMessage({ type: 'openRevenueDashboard' });
+  });
+  if (askBtn) askBtn.addEventListener('click', () => {
+    vscode.postMessage({ type: 'askHyunbinRevenue' });
+  });
+  /* 데이터 요청 — extension 이 paypal_revenue.py 호출해서 미니 KPI + sparkline 회신 */
+  vscode.postMessage({ type: 'requestRevenueMini' });
+})();
+
+function _fmtRevAmount(v, cur) {
+  if (v == null) return '—';
+  const n = Number(v);
+  if (n === 0) return '0';
+  const abs = Math.abs(n);
+  if (abs >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function _animateNum(el, target, opts = {}) {
+  if (!el) return;
+  const dur = opts.duration || 900;
+  const dec = opts.decimals != null ? opts.decimals : 0;
+  const startVal = parseFloat(el.dataset.last || '0') || 0;
+  const t0 = performance.now();
+  function tick(now) {
+    const p = Math.min(1, (now - t0) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);
+    const v = startVal + (target - startVal) * eased;
+    if (opts.formatter) el.textContent = opts.formatter(v);
+    else el.textContent = v.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    if (p < 1) requestAnimationFrame(tick);
+    else el.dataset.last = String(target);
+  }
+  requestAnimationFrame(tick);
+}
+
+function _renderRevMiniSpark(byDay, primaryCur) {
+  const svg = document.getElementById('revSparkSvg');
+  if (!svg) return;
+  const days = [];
+  const today = new Date();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const day = byDay[key];
+    const v = day && day[primaryCur] ? day[primaryCur].gross : 0;
+    days.push(v);
+  }
+  const maxV = Math.max(...days, 1);
+  const W = 280, H = 60, padT = 4, padB = 4;
+  const innerH = H - padT - padB;
+  const xOf = (i) => (i / (days.length - 1)) * W;
+  const yOf = (v) => padT + innerH - (v / maxV) * innerH;
+  const pts = days.map((v, i) => xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1)).join(' ');
+  const areaPts = '0,' + (padT + innerH) + ' ' + pts + ' ' + W + ',' + (padT + innerH);
+  const peakIdx = days.reduce((acc, v, i) => v > days[acc] ? i : acc, 0);
+  const peakDot = days[peakIdx] > 0
+    ? '<circle class="peak" cx="' + xOf(peakIdx).toFixed(1) + '" cy="' + yOf(days[peakIdx]).toFixed(1) + '" r="3.5"></circle>'
+    : '';
+  svg.innerHTML =
+    '<defs><linearGradient id="revSparkGrad" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0%" stop-color="#22d3ee" stop-opacity="0.4"/>' +
+    '<stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/></linearGradient></defs>' +
+    '<polygon class="area" points="' + areaPts + '"></polygon>' +
+    '<polyline class="line" points="' + pts + '"></polyline>' + peakDot;
+}
+
+function _renderRevenueMini(data) {
+  const card = document.getElementById('revenueCard');
+  if (!card) return;
+  if (data?.error) {
+    document.getElementById('revSubtitle').textContent = '⚠️ ' + (data.error || '연결 확인 필요');
+    return;
+  }
+  if (!data || !data.totals) {
+    document.getElementById('revSubtitle').textContent = '💡 외부 연결 패널에서 PayPal Client ID/Secret 입력 → 즉시 분석';
+    return;
+  }
+  const totals = data.totals;
+  const period = totals.by_period || {};
+  const byCur = totals.by_currency || {};
+  const primaryCur = Object.entries(byCur).sort((a,b) => (b[1].gross||0)-(a[1].gross||0))[0]?.[0] || 'USD';
+  const cur = byCur[primaryCur] || { gross: 0, count: 0 };
+
+  /* skeleton 제거 */
+  card.querySelectorAll('.rev-skeleton').forEach(el => el.classList.remove('rev-skeleton'));
+  document.getElementById('revSubtitle').textContent =
+    primaryCur + ' 매출 실시간 분석 · ' + cur.count + '건 거래 · 클릭 → 풀스크린';
+
+  _animateNum(document.getElementById('revMonth'), period.month || 0, {
+    formatter: (v) => primaryCur === 'USD' ? '$' + _fmtRevAmount(v) : _fmtRevAmount(v) + ' ' + primaryCur
+  });
+  _animateNum(document.getElementById('revWeek'), period.week || 0, {
+    formatter: (v) => primaryCur === 'USD' ? '$' + _fmtRevAmount(v) : _fmtRevAmount(v) + ' ' + primaryCur
+  });
+  _animateNum(document.getElementById('revCount'), cur.count || 0, { decimals: 0 });
+
+  _renderRevMiniSpark(data.by_day || {}, primaryCur);
+}
+
+window.addEventListener('message', e => {
+  const m = e.data;
+  if (m.type === 'revenueMini') _renderRevenueMini(m.data);
+});

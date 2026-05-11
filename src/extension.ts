@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.141 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.142 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.141';
+const _CONNECT_AI_VERSION = '2.89.142';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -10516,6 +10516,59 @@ class CompanyDashboardPanel {
             try {
                 if (msg?.type === 'refresh') {
                     await this._sendState();
+                } else if (msg?.type === 'openRevenueDashboard') {
+                    /* v2.89.142 — 매출 카드 버튼 → 풀 대시보드 패널 띄움 */
+                    RevenueDashboardPanel.createOrShow();
+                } else if (msg?.type === 'askHyunbinRevenue') {
+                    /* v2.89.142 — 현빈에게 매출 분석 의뢰. 사이드바 채팅창에 명령 주입 +
+                       focus. 가상 사무실 → 채팅창으로 자연스러운 이동. */
+                    try {
+                        await vscode.commands.executeCommand('connect-ai-lab.focusChat');
+                        if (_activeChatProvider) {
+                            (_activeChatProvider as any)._view?.webview?.postMessage?.({
+                                type: 'injectPrompt',
+                                value: '현빈아, 이번 달 PayPal 매출 실데이터 가져와서 분석하고 다음 액션 1개 추천해줘.'
+                            });
+                        }
+                    } catch { /* ignore */ }
+                } else if (msg?.type === 'requestRevenueMini') {
+                    /* v2.89.142 — 회사 대시보드의 미니 매출 위젯 데이터 요청.
+                       paypal_revenue.py OUTPUT=json 로 실행 → 응답을 webview 에 회신. */
+                    try {
+                        const ppToolDir = path.join(getCompanyDir(), '_agents', 'business', 'tools');
+                        const ppScript = path.join(ppToolDir, 'paypal_revenue.py');
+                        const ppJson = path.join(ppToolDir, 'paypal_revenue.json');
+                        if (!fs.existsSync(ppScript) || !fs.existsSync(ppJson)) {
+                            this._panel.webview.postMessage({ type: 'revenueMini', data: { error: 'PayPal 미설정 — 외부 연결 패널에서 입력하세요' } });
+                            return;
+                        }
+                        const cfg = JSON.parse(_safeReadText(ppJson) || '{}');
+                        if (!cfg.CLIENT_ID || !cfg.CLIENT_SECRET) {
+                            this._panel.webview.postMessage({ type: 'revenueMini', data: null });
+                            return;
+                        }
+                        const env = { ...process.env, OUTPUT: 'json', LOOKBACK_DAYS: '30' };
+                        const r = await new Promise<{ exitCode: number; output: string }>((resolve) => {
+                            const cp = require('child_process');
+                            const p = cp.spawn(_pythonCmd(), [ppScript], { cwd: ppToolDir, env });
+                            let out = '';
+                            p.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+                            p.on('close', (code: number) => resolve({ exitCode: code, output: out }));
+                            setTimeout(() => { try { p.kill(); } catch {} resolve({ exitCode: -1, output: out }); }, 18000);
+                        });
+                        if (r.exitCode !== 0 || !r.output) {
+                            this._panel.webview.postMessage({ type: 'revenueMini', data: { error: 'PayPal 호출 실패 — 권한·자격증명 확인' } });
+                            return;
+                        }
+                        let data: any;
+                        try { data = JSON.parse(r.output); } catch {
+                            this._panel.webview.postMessage({ type: 'revenueMini', data: { error: '응답 파싱 실패' } });
+                            return;
+                        }
+                        this._panel.webview.postMessage({ type: 'revenueMini', data });
+                    } catch (e: any) {
+                        this._panel.webview.postMessage({ type: 'revenueMini', data: { error: e?.message || String(e) } });
+                    }
                 } else if (msg?.type === 'setAgentActive' && msg.agent) {
                     /* v2.89.107 — 활성/비활성 토글. PIN 안 받음 (Luna는 별도 hireAgent). */
                     const aid = String(msg.agent || '').trim();
@@ -11192,6 +11245,35 @@ class CompanyDashboardPanel {
       <span class="tl-chip" data-filter="locked" title="채용 PIN 필요"><span class="tl-dot tl-dot-lock"></span>채용 대기 <span class="tl-count" id="tlLock">0</span></span>
     </div>
     <div class="team-grid" id="teamBody"></div>
+  </section>
+
+  <!-- v2.89.142 — 매출 카드. 회사 대시보드 메인 진입점.
+       클릭하면 풀 매출 대시보드 패널 (매트릭스 풍) 열림. -->
+  <section class="card span-12 revenue-card" id="revenueCard">
+    <div class="rev-glyph-rain" aria-hidden="true"></div>
+    <div class="rev-inner">
+      <div class="rev-left">
+        <div class="rev-eyebrow">REVENUE COMMAND CENTER · <span class="rev-live"><span class="rev-pulse"></span> LIVE</span></div>
+        <div class="rev-title">💰 매출 컨트롤 센터</div>
+        <div class="rev-sub" id="revSubtitle">PayPal 연결을 확인하는 중…</div>
+      </div>
+      <div class="rev-kpis" id="revKpis">
+        <div class="rev-kpi rev-skeleton"><div class="rev-kpi-l">이번 달</div><div class="rev-kpi-v" id="revMonth">—</div></div>
+        <div class="rev-kpi rev-skeleton"><div class="rev-kpi-l">7일</div><div class="rev-kpi-v" id="revWeek">—</div></div>
+        <div class="rev-kpi rev-skeleton"><div class="rev-kpi-l">거래</div><div class="rev-kpi-v" id="revCount">—</div></div>
+      </div>
+      <div class="rev-spark">
+        <svg id="revSparkSvg" viewBox="0 0 280 60" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="rev-actions">
+        <button class="rev-btn primary" id="openRevDashBtn">
+          <span class="rev-btn-glow"></span>
+          <span>풀스크린 매출 대시보드</span>
+          <span class="rev-btn-arrow">→</span>
+        </button>
+        <button class="rev-btn ghost" id="askHyunbinBtn" title="현빈 에이전트에게 매출 분석 요청">🧠 현빈에게 분석 의뢰</button>
+      </div>
+    </div>
   </section>
 
   <!-- 2) 오늘의 일 — open tasks (left) + approvals (right). Compact. -->

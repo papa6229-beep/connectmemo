@@ -216,6 +216,7 @@ def main():
     brain_root = _find_brain_root()
 
     # v3: KIT_NAME 비어있고 USER_INTENT 있으면 자동 매칭
+    selection_card = ""
     if not kit_name and user_intent:
         detected, score, alts = _autodetect_kit(brain_root, user_intent)
         if detected:
@@ -223,10 +224,27 @@ def main():
             _log(f"자동 추론 → '{kit_name}' (매칭 점수 {score})", "info")
             if score == 0:
                 _log("  ⚠️ 사용자 의도와 명확한 매칭 없음. 가장 일반적인 키트로 fallback.", "warn")
-            if len(alts) > 1:
-                others = ", ".join([f"{n}({s})" for n, s, _ in alts[1:3] if s > 0])
-                if others:
-                    _log(f"  다른 후보: {others}", "info")
+            # 시각 카드 (stdout에 마크다운 — 채팅창에 렌더링됨)
+            card_lines = [
+                "",
+                "## 🎯 키트 자동 선택",
+                "",
+                f"> 사용자 의도: _\"{user_intent}\"_",
+                "",
+                "| 순위 | 키트 | 매칭 점수 | 비고 |",
+                "|---|---|---|---|",
+            ]
+            for i, (n, s, desc) in enumerate(alts):
+                marker = "**⭐ 선택**" if n == kit_name else ""
+                d_short = (desc[:50] + "…") if len(desc) > 50 else desc
+                card_lines.append(f"| {i+1} | `{n}` | **{s}** | {marker} {d_short} |")
+            if score == 0:
+                card_lines.append("")
+                card_lines.append("⚠️ _명확한 매칭 없음 — fallback으로 가장 일반적인 키트 선택._")
+            card_lines.append("")
+            card_lines.append("> 💡 다른 키트로 바꾸려면 `pack_apply` 를 `KIT_NAME=<원하는 키트>` 로 다시 실행.")
+            card_lines.append("")
+            selection_card = "\n".join(card_lines)
 
     if not kit_name:
         kits = _list_kits(brain_root)
@@ -299,15 +317,20 @@ def main():
         else:
             _log("App.tsx 못 찾음 — 수동으로 import + JSX 추가 필요", "warn")
 
-    # 결과
+    # 결과 — stdout 으로 마크다운 (채팅창 렌더링)
+    if selection_card:
+        print(selection_card)
+    print()
+    print(f"## ✅ 적용 완료: `{manifest.get('name', kit_name)}`")
+    print()
+    print(f"- **위치**: `{project}`")
+    print(f"- **기반**: {manifest.get('base', '?')}")
+    if "expo" in (manifest.get("base", "").lower()):
+        print(f"- **실행**: `cd {project} && npm start` → 폰에 Expo Go 깔고 QR 스캔")
+    else:
+        print(f"- **실행**: `cd {project} && npm run dev` → http://localhost:5173")
     print()
     _log(f"적용 완료: {kit_name}", "ok")
-    _log(f"다음 단계:", "info")
-    _log(f"  cd {project}", "info")
-    if "expo" in (manifest.get("base", "").lower()):
-        _log(f"  npm start  # → 폰에 Expo Go 깔고 QR 스캔", "info")
-    else:
-        _log(f"  npm run dev  # → http://localhost:5173 (또는 3000)", "info")
 
 
 if __name__ == "__main__":

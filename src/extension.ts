@@ -5523,50 +5523,43 @@ function readAgentTemplates(agentId: string, maxChars = 2000): string {
       .map(e => e.name);
   } catch { return ''; }
   if (folders.length === 0) return '';
-  const summaries: string[] = [];
-  let used = 0;
-  for (const name of folders) {
-    if (used >= maxChars) break;
+  /* v2.89.125 — 스케일링: 매니페스트 풀 inject 대신 압축 형식 (이름 + 한 줄).
+     실제 manifest+README는 pack_apply 가 필요 시 디스크에서 직접 읽음. 컨텍스트 절약.
+     500자 이내 (10~20개 키트도 안전). */
+  const MAX_KITS_LISTED = 20;
+  const briefs: { name: string; title: string; desc: string; keywords: string[]; files: number }[] = [];
+  for (const name of folders.slice(0, MAX_KITS_LISTED)) {
     const tplDir = path.join(templatesDir, name);
-    /* manifest.json 우선, 없으면 README.md 의 첫 문단 */
     let manifest: any = null;
     try {
       const mp = path.join(tplDir, 'manifest.json');
       if (fs.existsSync(mp)) manifest = JSON.parse(fs.readFileSync(mp, 'utf-8') || '{}');
-    } catch { /* malformed manifest — skip */ }
-    const readmePath = path.join(tplDir, 'README.md');
-    const readmeBody = fs.existsSync(readmePath) ? _safeReadText(readmePath).trim() : '';
-    /* 파일 목록 (files/ 하위) */
-    let fileList: string[] = [];
+    } catch { /* malformed */ }
+    let fileCount = 0;
     try {
       const filesDir = path.join(tplDir, 'files');
-      if (fs.existsSync(filesDir)) {
-        fileList = fs.readdirSync(filesDir).filter(f => !f.startsWith('.'));
-      }
+      if (fs.existsSync(filesDir)) fileCount = fs.readdirSync(filesDir).length;
     } catch { /* ignore */ }
-    /* 요약 빌드 */
-    const title = manifest?.name || name;
-    const desc = manifest?.description || readmeBody.split('\n').find(l => l.trim() && !l.startsWith('#'))?.trim() || '';
-    const stack = manifest?.base || manifest?.stack || '';
-    const lines: string[] = [];
-    lines.push(`### 📋 ${title}`);
-    if (desc) lines.push(`- 설명: ${desc.slice(0, 200)}`);
-    if (stack) lines.push(`- 기반: ${stack}`);
-    lines.push(`- 위치: \`${tplDir.replace(os.homedir(), '~')}/\``);
-    if (fileList.length > 0) {
-      lines.push(`- 포함 파일: ${fileList.slice(0, 8).join(', ')}${fileList.length > 8 ? ' …' : ''}`);
-    }
-    if (readmeBody) {
-      /* README 첫 200자 */
-      const excerpt = readmeBody.replace(/^#.*$/gm, '').replace(/\n\n+/g, '\n').trim().slice(0, 240);
-      if (excerpt) lines.push(`- 사용법 요약: ${excerpt}`);
-    }
-    const block = lines.join('\n');
-    summaries.push(block);
-    used += block.length + 4;
+    briefs.push({
+      name,
+      title: manifest?.name || name,
+      desc: (manifest?.description || '').slice(0, 90),
+      keywords: (manifest?.keywords || []).slice(0, 5),
+      files: fileCount,
+    });
   }
-  if (summaries.length === 0) return '';
-  return `\n\n[${AGENTS[agentId]?.name || agentId} 사용 가능한 템플릿 (보고 베껴 쓰세요. 사용 결정 시 \`<read_file path="...">\` 로 실제 파일 읽기)]\n${summaries.join('\n\n')}\n`;
+  if (briefs.length === 0) return '';
+  /* 압축 한 줄 포맷: `- name (📄 N파일): 설명 [키워드, ...]` */
+  const lines = briefs.map(b =>
+    `- \`${b.name}\` (📄 ${b.files}): ${b.desc}${b.keywords.length ? ` _[${b.keywords.join(', ')}]_` : ''}`
+  );
+  const overflow = folders.length > MAX_KITS_LISTED ? `\n_(총 ${folders.length}개 중 상위 ${MAX_KITS_LISTED}개. 나머지는 \`pack_apply\` 자동 매칭 사용)_` : '';
+  /* lean 모드: 키워드 생략 — 더 짧게 */
+  if (maxChars <= 1200) {
+    const tightLines = briefs.map(b => `- \`${b.name}\`: ${b.desc.slice(0, 60)}`);
+    return `\n\n[${AGENTS[agentId]?.name || agentId} 키트 ${folders.length}개 — \`pack_apply\` USER_INTENT 사용 권장]\n${tightLines.join('\n')}${overflow}\n`;
+  }
+  return `\n\n[${AGENTS[agentId]?.name || agentId} 키트 (${folders.length}개) — 사용 시 \`pack_apply\` 도구 호출. KIT_NAME 비우고 USER_INTENT 에 사용자 명령 그대로 → 자동 매칭]\n${lines.join('\n')}${overflow}\n`;
 }
 
 function readAgentSkills(agentId: string, maxChars = 4000): string {

@@ -14,6 +14,7 @@
   "apply": {
     "copy_to": "src/components/",
     "post_install": ["npm install lucide-react"],
-    "app_imports": ["Nav", "About", "Work", "Skills", "Contact"]
+    "app_imports": ["Nav", "About", "Work", "Skills", "Contact"],
+    "app_body": "<Nav /><About /><Work /><Skills /><Contact />"
   }
 }

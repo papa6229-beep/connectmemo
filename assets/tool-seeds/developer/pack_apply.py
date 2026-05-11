@@ -50,15 +50,29 @@ def _run(cmd, cwd):
 
 
 def _copy_tree(src_dir, dst_dir):
+    """v2: 기존 파일이 있으면 .backup 자동 생성 (사용자 코드 보호).
+    백업이 이미 있으면 덮어쓰지 않음 (멱등성)."""
     os.makedirs(dst_dir, exist_ok=True)
     copied = 0
+    backed_up = []
     for root, _dirs, files in os.walk(src_dir):
         rel = os.path.relpath(root, src_dir)
         target = os.path.join(dst_dir, rel) if rel != "." else dst_dir
         os.makedirs(target, exist_ok=True)
         for f in files:
-            shutil.copy2(os.path.join(root, f), os.path.join(target, f))
+            dst_path = os.path.join(target, f)
+            if os.path.exists(dst_path):
+                bk = dst_path + ".backup"
+                if not os.path.exists(bk):
+                    try:
+                        shutil.copy2(dst_path, bk)
+                        backed_up.append(os.path.relpath(dst_path, dst_dir))
+                    except Exception:
+                        pass
+            shutil.copy2(os.path.join(root, f), dst_path)
             copied += 1
+    if backed_up:
+        _log(f"기존 파일 {len(backed_up)}개 .backup 보존: {', '.join(backed_up[:3])}{' …' if len(backed_up) > 3 else ''}", "info")
     return copied
 
 

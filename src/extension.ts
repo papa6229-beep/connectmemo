@@ -6282,8 +6282,8 @@ const AGENT_TOOLS_CATALOG: Record<string, { tool: string; desc: string; planned?
         { tool: 'pack_apply', desc: '두뇌의 키트 (landing·portfolio·dashboard·mobile)를 프로젝트에 자동 적용 + npm install + App.tsx 업데이트' },
         { tool: 'web_preview', desc: 'dev server 백그라운드 실행 + URL 자동 추출' },
         { tool: 'pwa_setup', desc: '웹사이트 → PWA 변환 (manifest·sw·아이콘 자동 생성)' },
+        { tool: 'lint_test', desc: '코드 수정 후 자가 검증 — tsc·py_compile·npm scripts 자동 실행 + 결과 리포트' },
         { tool: 'git_committer', desc: '작업 단위 자동 커밋 (의미 단위 + git add -A 금지)', planned: true },
-        { tool: 'lint_test', desc: '테스트·린트·타입체크 자동 실행 + 결과 코다리 컨텍스트로 inject', planned: true },
         { tool: 'deploy_cli', desc: 'Vercel/Netlify/Cloudflare 배포 (deploy --prod는 항상 승인)', planned: true },
     ],
     business: [
@@ -6432,6 +6432,7 @@ function _seedAgentToolsIfMissing(agentId: string) {
       _seedDeveloperWebPreview(toolsDir);
       _seedDeveloperPwaSetup(toolsDir);
       _seedDeveloperPackApply(toolsDir);
+      _seedDeveloperLintTest(toolsDir);
     } else if (agentId === 'business') {
       /* v2.89.121 — 비즈니스 에이전트 도구. PayPal 매출 자동 분석. */
       const toolsDir = path.join(getCompanyDir(), '_agents', agentId, 'tools');
@@ -6521,7 +6522,7 @@ function _seedDeveloperWebInit(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'web_init.py'), py, 'web_init_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'web_init.py'), py, 'web_init_v3');
   _mergeSchemaIntoJson(path.join(toolsDir, 'web_init.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'web_init.md'), md, 'web_init_v1');
 }
@@ -6548,6 +6549,28 @@ function _seedDeveloperWebPreview(toolsDir: string) {
   _seedFileForceUpgrade(path.join(toolsDir, 'web_preview.py'), py, 'web_preview_v1');
   _mergeSchemaIntoJson(path.join(toolsDir, 'web_preview.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'web_preview.md'), md, 'web_preview_v1');
+}
+
+function _seedDeveloperLintTest(toolsDir: string) {
+  const py = _loadToolSeed('developer/lint_test.py');
+  const md = _loadToolSeed('developer/lint_test.md');
+  const json = JSON.stringify({
+    PROJECT_PATH: '',
+    STRICT: 'false',
+    _schema: {
+      PROJECT_PATH: { type: 'text', label: '📁 프로젝트 경로', hint: '비우면 web_init 마지막 결과 사용' },
+      STRICT: {
+        type: 'select', label: '⚙️ 엄격 모드',
+        options: [
+          { value: 'false', label: '느슨 — 모든 검증 시도 (기본)' },
+          { value: 'true',  label: '엄격 — 첫 실패 시 중단' },
+        ],
+      },
+    },
+  }, null, 2);
+  _seedFileForceUpgrade(path.join(toolsDir, 'lint_test.py'), py, 'lint_test_v1');
+  _mergeSchemaIntoJson(path.join(toolsDir, 'lint_test.json'), json);
+  _seedFileForceUpgrade(path.join(toolsDir, 'lint_test.md'), md, 'lint_test_v1');
 }
 
 function _seedDeveloperPackApply(toolsDir: string) {

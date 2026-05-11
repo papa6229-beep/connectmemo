@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: web_init_v2
+# version: web_init_v3
 """웹·모바일 프로젝트 자동 초기화 — 5개 템플릿 중 선택.
 
 config:
@@ -225,8 +225,8 @@ def main():
 
     # 이름 검증
     import re
-    if not re.match(r"^[a-z0-9][a-z0-9-]*$", name):
-        _log(f"프로젝트 이름은 소문자·숫자·하이픈만: {name}", "err")
+    if not re.match(r"^[a-z0-9][a-z0-9_-]*$", name):
+        _log(f"프로젝트 이름은 소문자·숫자·하이픈·언더스코어만: {name}", "err")
         sys.exit(1)
 
     # 출력 위치

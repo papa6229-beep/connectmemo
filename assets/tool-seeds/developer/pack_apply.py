@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: pack_apply_v1
+# version: pack_apply_v2
 """두뇌의 템플릿 팩을 사용자 프로젝트에 한 번에 적용.
 
 흐름:
@@ -16,7 +16,7 @@
   - 한 명령으로 "키트 적용 완료"
   - 의존성 누락 없음 (manifest 가 진실 소스)
 """
-import os, sys, json, subprocess, shutil, re
+import os, sys, json, subprocess, shutil
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -72,33 +72,45 @@ def _find_app_file(project_path):
 
 
 def _update_app_tsx(app_path, imports, body):
-    """import 추가 + body 교체. 이미 있으면 스킵."""
+    """App.tsx 를 깨끗하게 새로 작성. 원본은 .backup 으로 보존.
+    v2: regex 부분 매칭으로 옛 JSX 가 남던 사고 → 전체 덮어쓰기 + 백업 방식으로 변경."""
     try:
         with open(app_path, "r", encoding="utf-8") as f:
-            content = f.read()
+            original = f.read()
     except Exception:
         return False
-    changed = False
-    # imports 추가
-    for name in imports:
-        if f"import {name}" not in content:
-            content = f"import {name} from './components/{name}'\n" + content
-            changed = True
-    # body 교체 — return ( ... ) 사이를 새 body로
-    if body and changed:
-        # 가장 단순한 패턴: return ( ... )
-        new_content, n = re.subn(
-            r"return\s*\(\s*[\s\S]*?\s*\)\s*;?\s*\}",
-            f"return (\n    <>\n      {body}\n    </>\n  );\n}}",
-            content,
-            count=1,
-        )
-        if n > 0:
-            content = new_content
-    if changed:
+
+    # 이미 키트 적용됐으면 skip
+    if all(f"from './components/{n}'" in original for n in imports):
+        return False
+
+    # 백업 — 사용자가 손댄 거 잃지 않게
+    try:
+        backup_path = app_path + ".backup"
+        if not os.path.exists(backup_path):
+            with open(backup_path, "w", encoding="utf-8") as f:
+                f.write(original)
+    except Exception:
+        pass
+
+    # 새 App.tsx — 깨끗한 최소 버전
+    import_lines = "\n".join([f"import {n} from './components/{n}'" for n in imports])
+    new_content = f"""{import_lines}
+
+export default function App() {{
+  return (
+    <main className="min-h-screen bg-white text-gray-900">
+      {body}
+    </main>
+  );
+}}
+"""
+    try:
         with open(app_path, "w", encoding="utf-8") as f:
-            f.write(content)
-    return changed
+            f.write(new_content)
+        return True
+    except Exception:
+        return False
 
 
 def main():

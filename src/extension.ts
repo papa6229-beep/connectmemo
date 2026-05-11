@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.133 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.134 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.133';
+const _CONNECT_AI_VERSION = '2.89.134';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -19430,20 +19430,31 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
 
         if (!best || best.score < 10) return null;
 
-        /* 가짜 LLM 응답 생성. <run_command> 태그가 들어있어서 dispatch 의
-           _executeActions(skipRunCommand=true 인 corporate 모드) 가 아니라
-           코드 18495 근처의 직접 run_command 실행 경로가 잡아서 실행함.
-           우리는 skipRunCommand=true 로 호출하니까 이 명령은 별도로 처리해야 함. */
+        /* v2.89.134 — PROJECT_PATH 자동 생성. pack_apply 가 빈 경로 거부 안 하게.
+           폴더명: 키트 이름에서 '-kit' suffix 제거 + timestamp 안 붙여서 매번 같은
+           폴더 (기존 파일 덮어쓰지만 .backup 자동 보존). */
         const escapedIntent = userPrompt.replace(/"/g, '\\"');
+        const projectName = best.kit.replace(/-kit$/, '');
+        const projectDir = path.join(os.homedir(), 'connect-ai-projects', projectName);
+        const toolsDir = path.join(getCompanyDir(), '_agents', 'developer', 'tools').replace(/\\/g, '/');
+        const projectDirShell = projectDir.replace(/\\/g, '/');
+
+        /* 매니페스트의 apply.open_in_browser 가 있으면 그 파일을 open. 없으면 index.html
+           이 있을 가능성에 베팅 (대부분의 vanilla 키트). */
+        const openTarget = best.manifest?.apply?.open_in_browser || 'index.html';
+
         const fakeOutput = `${a.emoji} ${a.name}: 명시적 호출 + 매칭 키트 발견. LLM 우회 — 시스템이 직접 \`${best.kit}\` 적용합니다.
 
 > 📋 매칭 점수: **${best.score}점** (\`${best.manifest.name || best.kit}\`)
-> 💡 \`pack_apply.py\` 를 즉시 실행 → 사용자 프로젝트에 키트 파일 복사·설정 자동화.
+> 📁 대상 프로젝트: \`${projectDir.replace(os.homedir(), '~')}\`
+> 💡 \`pack_apply.py\` 즉시 실행 → 키트 파일 복사·설정 자동화.
 
-<run_command>cd "${path.join(getCompanyDir(), '_agents', 'developer', 'tools').replace(/\\/g, '/')}" && KIT_NAME="${best.kit}" USER_INTENT="${escapedIntent}" python3 pack_apply.py</run_command>
+<run_command>mkdir -p "${projectDirShell}" && cd "${toolsDir}" && KIT_NAME="${best.kit}" USER_INTENT="${escapedIntent}" PROJECT_PATH="${projectDirShell}" python3 pack_apply.py</run_command>
 
-📊 평가: 진행중 — pack_apply 실행 결과 대기.
-📝 다음 단계: 적용 완료 후 사용자가 결과 폴더에서 \`open index.html\` 또는 \`npm run dev\` 로 결과물 확인.
+<run_command>open "${projectDirShell}/${openTarget}"</run_command>
+
+📊 평가: 완료 — 키트 적용 + 결과 파일 자동 오픈까지 시스템이 처리.
+📝 다음 단계: 브라우저에 결과 보임. 코드 커스터마이즈는 \`${projectDir.replace(os.homedir(), '~')}/\` 폴더에서.
 `;
         return fakeOutput;
     }

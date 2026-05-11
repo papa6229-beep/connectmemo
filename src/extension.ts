@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.130 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.131 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.130';
+const _CONNECT_AI_VERSION = '2.89.131';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -7290,6 +7290,12 @@ ${a.specialty}${personaBlock}
 
 OS 차이: 백그라운드 프로세스는 맥/리눅스에선 \`nohup ... &\`, 윈도우에선 \`start /b ...\` (시스템이 \`run_command\`를 \`shell:true\`로 실행하므로 양쪽 모두 작동).
 
+[🛑 절대 경로 사용 규칙 — v2.89.131]
+- 이전 turn 에서 파일을 만들었다면 그 **절대 경로 그대로** 다시 쓰세요. 추측 금지.
+- 시스템이 system prompt 아래쪽에 "당신이 최근 작업한 파일들" 블록으로 정확한 경로를 알려줍니다. 그걸 신뢰하세요.
+- 당신의 도구 폴더 (\`_agents/<id>/tools/\`) 와 사용자 프로젝트 폴더는 다릅니다. 사용자가 "이 프로젝트에 ..."라고 했으면 그 폴더는 도구 폴더 안이 아닙니다.
+- 경로가 헷갈리면 추측하지 말고 \`<list_files path="~/Downloads/지식메모리/_company"/>\` 처럼 상위 폴더부터 탐색하세요.
+
 [출력 규칙]
 - 한국어 마크다운으로 작성
 - 첫 줄: 한 줄 시작 신호 (예: "${a.emoji} ${a.name}: 작업 시작합니다.")
@@ -14099,6 +14105,29 @@ window.addEventListener('message', e => {
       appendOutChunk(m.agent, m.value || '');
       break;
     }
+    case 'agentBusy': {
+      /* v2.89.131 — LLM 호출 대기 중 5초마다 들어오는 신호. 작업 중인 에이전트의
+         책상을 'working' 상태로 유지 + 페르소나 thought·status 반복 노출. */
+      try {
+        const a = agentMap[m.agent];
+        if (!a) break;
+        setDeskState(m.agent, 'working');
+        const p = (typeof PERSONALITY !== 'undefined') ? PERSONALITY[m.agent] : null;
+        const elapsed = Number(m.elapsedSec || 0);
+        if (p) {
+          /* 10초마다 새 thought, 5초마다 status icon. 작업의 리듬감 표현 */
+          if (elapsed % 10 < 5 && Array.isArray(p.thoughts) && p.thoughts.length > 0) {
+            const t = p.thoughts[Math.floor(Math.random() * p.thoughts.length)];
+            try { showThought(m.agent, t, 4500); } catch {}
+          }
+          if (Array.isArray(p.status) && p.status.length > 0) {
+            const s = p.status[Math.floor(Math.random() * p.status.length)];
+            try { showStatusIcon(m.agent, s, 3500); } catch {}
+          }
+        }
+      } catch { /* office view 안 떠있어도 ignore */ }
+      break;
+    }
     case 'agentEnd': {
       setDeskState(m.agent, 'done');
       endOutCard(m.agent);
@@ -14284,6 +14313,16 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
     private _abortController?: AbortController;
     private _lastPrompt?: string;
     private _lastModel?: string;
+    /** v2.89.131 — 최근 파일 액션 추적. 코다리(또는 다른 specialist) 가 직전 turn 에
+     *  만든·편집한 파일의 절대 경로를 기억해서, 다음 turn 의 system prompt 에 명시
+     *  주입한다. 이전엔 chat history 안 깊은 곳에 묻혀서 LLM 이 잊고 경로 추측 → 못
+     *  찾는 사고 자주 났음. 가장 최근 10개만 보관, 30분 묵은 건 자동 폐기. */
+    private _recentFileActions: Array<{
+        agentId: string;
+        absPath: string;
+        action: 'create' | 'edit' | 'delete';
+        ts: number;
+    }> = [];
     /** Tracks user activity for autonomous cycle gating — only fires auto-work
      *  when user has been idle for the configured threshold. */
     private _lastUserActivityTs: number = Date.now();
@@ -18376,13 +18415,68 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                    lean 모드 = decisions·memory·brain RAG 생략 → 토큰 ~9000자 감소 →
                    추론 30~50% 빨라짐 + 환각 더 줄어듦 (메모리에서 끌어올 거리 없음). */
                 const useLeanContext = (realtimeData.length > 200) || (peerCtx.length > 500);
-                const sysPrompt = `${buildSpecialistPrompt(t.agent)}${this._getProjectMemory()}${buildAgentConfigStatus(t.agent)}${realtimeData}${readAgentSharedContext(t.agent, { lean: useLeanContext })}${peerCtx}${hallucinationGuard}`;
+                /* v2.89.131 — 최근 파일 액션 컨텍스트. 코다리가 직전에 만든 파일의 절대
+                   경로를 잊고 "_agents/developer/test/" 같은 추측 경로로 list_files
+                   호출해 실패하던 사고 차단. */
+                const recentFilesCtx = this._buildRecentFilesContext(t.agent);
+                const sysPrompt = `${buildSpecialistPrompt(t.agent)}${this._getProjectMemory()}${buildAgentConfigStatus(t.agent)}${realtimeData}${readAgentSharedContext(t.agent, { lean: useLeanContext })}${peerCtx}${hallucinationGuard}${recentFilesCtx}`;
                 const userMsg = `[CEO의 지시]\n${t.task}\n\n[원 사용자 명령 참고]\n${prompt}`;
 
                 let out = '';
+                /* v2.89.131 — 진행 표시 + 사무실 동기화 + 첫 토큰 마커.
+                   사용자가 "11분간 멈춘 것 같다"고 한 사고 해결. 5초마다 statusBar +
+                   30초마다 채팅창 한 줄 + 가상 사무실 캐릭터 상태 갱신. 첫 토큰 도착
+                   시 모두 클리어 + "응답 시작 (XX초 소요)" 채팅 메시지. */
+                const llmStartTs = Date.now();
+                let heartbeatChatTick = 0; /* 채팅창에 push 한 횟수 (30초 단위) */
+                const heartbeatInterval = setInterval(() => {
+                    const elapsedSec = Math.round((Date.now() - llmStartTs) / 1000);
+                    const mm = Math.floor(elapsedSec / 60);
+                    const ss = elapsedSec % 60;
+                    const timeStr = mm > 0 ? `${mm}분 ${ss}초` : `${ss}초`;
+                    /* statusBar — 항상 갱신 (5초마다) */
+                    try {
+                        vscode.window.setStatusBarMessage(
+                            `⏳ ${a.emoji} ${a.name} 작업 중 — ${timeStr} 경과`, 6500
+                        );
+                    } catch { /* ignore */ }
+                    /* 가상 사무실 broadcast — 작업 중 thought/status 표시 */
+                    try {
+                        this._broadcastCorporate({
+                            type: 'agentBusy',
+                            agent: t.agent,
+                            elapsedSec
+                        });
+                    } catch { /* ignore */ }
+                    /* 채팅창 — 30초마다 한 줄만 (시끄럽지 않게) */
+                    const tick = Math.floor(elapsedSec / 30);
+                    if (tick > heartbeatChatTick && elapsedSec >= 30) {
+                        heartbeatChatTick = tick;
+                        post({
+                            type: 'response',
+                            value: `⏳ ${a.emoji} ${a.name} 코드 작성 중 — ${timeStr} 경과 _(모델이 무거운 작업 처리 중. 정상)_`
+                        });
+                    }
+                }, 5000);
                 try {
-                    out = await this._callAgentLLM(sysPrompt, userMsg, modelName, t.agent, true);
+                    out = await this._callAgentLLM(sysPrompt, userMsg, modelName, t.agent, true, {
+                        onFirstToken: () => {
+                            clearInterval(heartbeatInterval);
+                            const waitSec = Math.round((Date.now() - llmStartTs) / 1000);
+                            const mm = Math.floor(waitSec / 60);
+                            const ss = waitSec % 60;
+                            const timeStr = mm > 0 ? `${mm}분 ${ss}초` : `${ss}초`;
+                            try {
+                                post({
+                                    type: 'response',
+                                    value: `📝 ${a.emoji} ${a.name} 응답 시작 — 첫 토큰까지 ${timeStr} 대기`
+                                });
+                            } catch { /* ignore */ }
+                            try { vscode.window.setStatusBarMessage(`✍️ ${a.emoji} ${a.name} 응답 생성 중`, 8000); } catch { /* ignore */ }
+                        }
+                    });
                 } catch (e: any) {
+                    clearInterval(heartbeatInterval);
                     if (isAborted()) {
                         post({ type: 'agentEnd', agent: t.agent });
                         post({ type: 'error', value: '🛑 사용자가 중단했어요.' });
@@ -18426,6 +18520,10 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     } else {
                         out = errBlock;
                     }
+                } finally {
+                    /* v2.89.131 — 정상 종료·예외 모두 interval 클리어 보장. onFirstToken 이
+                       호출됐어도 idempotent 하니까 두 번 클리어해도 안전. */
+                    clearInterval(heartbeatInterval);
                 }
                 /* v2.89.9 — 진짜 도구 실행. corporate dispatch에서도 에이전트가
                    <run_command>...</run_command> 출력하면 시스템이 실제로 실행하고
@@ -18530,6 +18628,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                         appendToOutput: (s) => fileInjections.push(s),
                         silent: true,
                         skipRunCommand: true,
+                        agentId: t.agent, /* v2.89.131 — 최근 파일 액션 트래킹 */
                     });
                     fileReport.push(...fr);
                     if (fileReport.length > 0) {
@@ -18999,7 +19098,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
         modelName: string,
         agentId: string,
         broadcast: boolean,
-        opts?: { jsonMode?: boolean }
+        opts?: { jsonMode?: boolean; onFirstToken?: () => void }
     ): Promise<string> {
         const { ollamaBase, defaultModel, timeout } = getConfig();
         /* v2.89.26 — 에이전트별 모델 override. 사용자가 외부 연결 패널에서
@@ -19072,7 +19171,12 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     throw err;
                 }
             }
+            let firstTokenFired = false;
             await this._consumeLLMStream(response.data, signal, true, (token) => {
+                if (!firstTokenFired && token) {
+                    firstTokenFired = true;
+                    try { opts?.onFirstToken?.(); } catch { /* ignore */ }
+                }
                 result += token;
                 if (broadcast) broadcast_fn(token);
             });
@@ -19085,7 +19189,12 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             };
             if (opts?.jsonMode) body.format = 'json';
             const response = await axios.post(apiUrl, body, { timeout, responseType: 'stream', signal });
+            let firstTokenFired = false;
             await this._consumeLLMStream(response.data, signal, false, (token) => {
+                if (!firstTokenFired && token) {
+                    firstTokenFired = true;
+                    try { opts?.onFirstToken?.(); } catch { /* ignore */ }
+                }
                 result += token;
                 if (broadcast) broadcast_fn(token);
             });
@@ -19171,9 +19280,94 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
     //              specialist 응답 끝에 append → 다음 에이전트와 final report에 컨텍스트 전달).
     //            opts.silent: vscode.window 알림 억제 (회사 모드는 카드 뷰에서 보고됨).
     // --------------------------------------------------------
+    /** v2.89.131 — 직전 파일 액션 추적. agentId 가 주어졌을 때만 _recentFileActions
+     *  에 기록. 다음 turn 의 system prompt 에 "최근 작업한 파일" 블록으로 주입돼서
+     *  코다리가 파일 위치 잊고 추측 경로 만드는 사고 차단. */
+    private _trackFileAction(agentId: string | undefined, absPath: string, action: 'create' | 'edit' | 'delete') {
+        if (!agentId) return;
+        const now = Date.now();
+        /* 같은 파일·같은 액션 직전 기록 있으면 시간만 갱신 (중복 방지) */
+        const dup = this._recentFileActions.find(r => r.absPath === absPath && r.agentId === agentId);
+        if (dup) {
+            dup.action = action;
+            dup.ts = now;
+        } else {
+            this._recentFileActions.push({ agentId, absPath, action, ts: now });
+        }
+        /* 30분 묵은 건 제거 + 최대 20개 cap (오래된 것부터 잘림) */
+        const cutoff = now - 30 * 60 * 1000;
+        this._recentFileActions = this._recentFileActions.filter(r => r.ts > cutoff);
+        if (this._recentFileActions.length > 20) {
+            this._recentFileActions = this._recentFileActions.slice(-20);
+        }
+    }
+
+    /** v2.89.131 — fuzzy path hint. list_files/read_file 이 디렉토리 못 찾을 때
+     *  비슷한 이름의 디렉토리를 _recentFileActions + 회사 폴더 하위에서 탐색해 제안.
+     *  코다리가 "_agents/developer/test/" 추측 → 실제 "_company/test/" 매핑 자동 회복. */
+    private _fuzzyPathHint(missingPath: string): string {
+        const baseName = path.basename(missingPath);
+        if (!baseName || baseName === '.' || baseName === '/') return '';
+        const seen = new Set<string>();
+        const hits: string[] = [];
+        /* 1) 최근 액션 안에 같은 basename 가진 파일 있으면 1순위 */
+        for (const r of this._recentFileActions) {
+            if (path.basename(r.absPath) === baseName || r.absPath.includes(`/${baseName}/`) || r.absPath.endsWith(`/${baseName}`)) {
+                const parent = path.dirname(r.absPath);
+                if (!seen.has(parent)) {
+                    seen.add(parent);
+                    hits.push(parent);
+                }
+            }
+        }
+        /* 2) 회사 폴더 1~2단계 깊이만 빠르게 스캔 */
+        try {
+            const companyDir = getCompanyDir();
+            if (companyDir && fs.existsSync(companyDir)) {
+                const queue: Array<{ dir: string; depth: number }> = [{ dir: companyDir, depth: 0 }];
+                while (queue.length > 0 && hits.length < 5) {
+                    const { dir, depth } = queue.shift()!;
+                    if (depth > 2) continue;
+                    let entries: fs.Dirent[];
+                    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+                    for (const e of entries) {
+                        if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === '_agents') continue;
+                        if (e.isDirectory()) {
+                            const full = path.join(dir, e.name);
+                            if (e.name === baseName && !seen.has(full)) {
+                                seen.add(full);
+                                hits.push(full);
+                            }
+                            if (depth < 2) queue.push({ dir: full, depth: depth + 1 });
+                        }
+                    }
+                }
+            }
+        } catch { /* ignore */ }
+        if (hits.length === 0) return '';
+        const lines = hits.slice(0, 3).map(p => `  • ${p}`).join('\n');
+        return `\n💡 비슷한 경로 발견 — 다음 중 하나 의도였나요?\n${lines}\n   → 정확한 절대 경로로 다시 시도하세요.`;
+    }
+
+    /** v2.89.131 — system prompt 주입용 블록. 해당 에이전트가 최근 만진 파일들의
+     *  절대 경로 리스트. 코다리가 "방금 만든 파일 어디?"라고 물을 일 자체 차단. */
+    private _buildRecentFilesContext(agentId: string): string {
+        const mine = this._recentFileActions
+            .filter(r => r.agentId === agentId)
+            .slice(-10);
+        if (mine.length === 0) return '';
+        const lines = mine.map(r => {
+            const label = r.action === 'create' ? '✅ 생성' : r.action === 'edit' ? '✏️ 편집' : '🗑️ 삭제';
+            const mins = Math.max(1, Math.round((Date.now() - r.ts) / 60000));
+            return `  - ${label}: ${r.absPath}  (${mins}분 전)`;
+        }).join('\n');
+        return `\n\n[🗂️ 당신이 최근 작업한 파일들 — 절대 경로 정확]\n${lines}\n\n` +
+               `⚠️ 이전에 만든 파일을 다시 참조할 때 이 절대 경로를 그대로 사용하세요. 추측 금지. "내 도구 폴더 기준 상대 경로"로 변환하지 마세요.\n`;
+    }
+
     private async _executeActions(
         aiMessage: string,
-        opts?: { rootOverride?: string; appendToOutput?: (s: string) => void; silent?: boolean; skipRunCommand?: boolean }
+        opts?: { rootOverride?: string; appendToOutput?: (s: string) => void; silent?: boolean; skipRunCommand?: boolean; agentId?: string }
     ): Promise<string[]> {
         const report: string[] = [];
         let brainModified = false;
@@ -19256,6 +19450,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 fs.writeFileSync(absPath, content, 'utf-8');
                 if (absPath.startsWith(_getBrainDir())) brainModified = true;
                 report.push(`${existed ? '✏️ 덮어씀' : '✅ 생성'}: ${absPath.replace(os.homedir(), '~')}`);
+                this._trackFileAction(opts?.agentId, absPath, existed ? 'edit' : 'create');
                 if (!firstCreatedFile) { firstCreatedFile = absPath; }
             } catch (err: any) {
                 report.push(`❌ 생성 실패: ${relPath} — ${err.message}`);
@@ -19355,6 +19550,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     } else {
                         report.push(`✏️ 편집 완료: ${absPath.replace(os.homedir(), '~')} (${editCount}건${deltaStr})`);
                     }
+                    this._trackFileAction(opts?.agentId, absPath, 'edit');
                     // Open edited file
                     if (!opts?.silent) {
                         await vscode.window.showTextDocument(vscode.Uri.file(absPath), { preview: false });
@@ -19398,6 +19594,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     }
                     if (absPath.startsWith(_getBrainDir())) brainModified = true;
                     report.push(`🗑️ 삭제: ${absPath.replace(os.homedir(), '~')}`);
+                    this._trackFileAction(opts?.agentId, absPath, 'delete');
                 } else {
                     report.push(`⚠️ 삭제 스킵: ${relPath} — 파일이 존재하지 않습니다.`);
                 }
@@ -19462,7 +19659,13 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                         this._chatHistory.push({ role: 'user', content: injection });
                     }
                 } else {
-                    report.push(`⚠️ 읽기 실패: ${relPath} — 파일이 존재하지 않습니다.`);
+                    const hint = this._fuzzyPathHint(absPath);
+                    report.push(`⚠️ 읽기 실패: ${relPath} — 파일이 존재하지 않습니다.${hint}`);
+                    if (hint) {
+                        const injection = `[시스템: read_file 실패]\n경로: ${absPath}\n${hint}`;
+                        if (opts?.appendToOutput) opts.appendToOutput('\n\n' + injection);
+                        else this._chatHistory.push({ role: 'user', content: injection });
+                    }
                 }
             } catch (err: any) {
                 report.push(`❌ 읽기 실패: ${relPath} — ${err.message}`);
@@ -19495,7 +19698,14 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     if (opts?.appendToOutput) opts.appendToOutput('\n\n' + injection);
                     else this._chatHistory.push({ role: 'user', content: injection });
                 } else {
-                    report.push(`⚠️ 목록 실패: ${relDir} — 디렉토리가 존재하지 않습니다.`);
+                    const hint = this._fuzzyPathHint(absDir);
+                    report.push(`⚠️ 목록 실패: ${relDir} — 디렉토리가 존재하지 않습니다.${hint}`);
+                    /* hint 를 다음 LLM turn 도 보게 chat history (또는 inline) 에 주입 */
+                    if (hint) {
+                        const injection = `[시스템: list_files 실패]\n경로: ${absDir}\n${hint}`;
+                        if (opts?.appendToOutput) opts.appendToOutput('\n\n' + injection);
+                        else this._chatHistory.push({ role: 'user', content: injection });
+                    }
                 }
             } catch (err: any) {
                 report.push(`❌ 목록 실패: ${relDir} — ${err.message}`);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: paypal_revenue_v1
+# version: paypal_revenue_v2
 """PayPal 매출 자동 분석 — Connect AI 비즈니스 에이전트 전용.
 
 흐름:
@@ -110,6 +110,27 @@ def _fetch_transactions(base_url: str, token: str, start: datetime, end: datetim
     return all_txs
 
 
+def _parse_project_from_subject(subject: str):
+    """v2: PayPal createOrder 의 description 에서 게임/프로젝트 + 아이템 추출.
+       규약: "{Project Name} — {Item Name}"  (em-dash 또는 -- 또는 :).
+       예시:
+         "Neon Survivor — Premium Pack" → ("neon-survivor", "Premium Pack")
+         "Neon Survivor — Revive"       → ("neon-survivor", "Revive")
+         "Chick Game: Custom Skin"      → ("chick-game", "Custom Skin")
+       구분자 못 찾으면 전체를 프로젝트로 취급 + item = "(unspecified)".
+    """
+    if not subject:
+        return "(unknown)", "(unspecified)"
+    s = subject.strip()
+    for sep in [" — ", " -- ", " – ", ": "]:
+        if sep in s:
+            proj, item = s.split(sep, 1)
+            slug = proj.strip().lower().replace(" ", "-")
+            return slug or "(unknown)", item.strip() or "(unspecified)"
+    slug = s.lower().replace(" ", "-")
+    return slug or "(unknown)", "(unspecified)"
+
+
 def _summarize(txs, default_currency: str = ""):
     """거래 리스트 → 마크다운 리포트."""
     now = datetime.now(timezone.utc)
@@ -119,6 +140,8 @@ def _summarize(txs, default_currency: str = ""):
 
     by_currency = {}            # {USD: {"gross": float, "fees": float, "refunds": float, "count": int}}
     by_period = {"today": 0.0, "week": 0.0, "month": 0.0}
+    by_project = {}             # v2: {"neon-survivor": {"gross": float, "count": int, "currency": "USD",
+                                #                       "items": {"Premium Pack": {"gross": float, "count": int}}}}
     transactions_clean = []     # 정상 거래 (T0000 = 일반 결제)
     refunds = []
 
@@ -139,7 +162,8 @@ def _summarize(txs, default_currency: str = ""):
             by_currency[currency] = {"gross": 0.0, "fees": 0.0, "refunds": 0.0, "count": 0}
         c = by_currency[currency]
 
-        if event_code.startswith("T1") or "REFUND" in event_code or value < 0:
+        is_refund = event_code.startswith("T1") or "REFUND" in event_code or value < 0
+        if is_refund:
             c["refunds"] += abs(value)
             refunds.append((ts, value, currency))
         else:
@@ -153,6 +177,18 @@ def _summarize(txs, default_currency: str = ""):
                     by_period["week"] += value
                 if ts >= month_start:
                     by_period["month"] += value
+            # v2: 프로젝트별 그룹화 (정상 거래만 집계 — 환불은 별도 통계)
+            subject = info.get("transaction_subject", "") or info.get("transaction_note", "")
+            proj, item = _parse_project_from_subject(subject)
+            if proj not in by_project:
+                by_project[proj] = {"gross": 0.0, "count": 0, "currency": currency, "items": {}}
+            p = by_project[proj]
+            p["gross"] += value
+            p["count"] += 1
+            if item not in p["items"]:
+                p["items"][item] = {"gross": 0.0, "count": 0}
+            p["items"][item]["gross"] += value
+            p["items"][item]["count"] += 1
         fee = float(info.get("fee_amount", {}).get("value", "0") or 0)
         c["fees"] += abs(fee)
 
@@ -180,6 +216,31 @@ def _summarize(txs, default_currency: str = ""):
         net = d["gross"] - d["refunds"] - d["fees"]
         lines.append(f"| **{cur}** | {d['gross']:,.2f} | -{d['refunds']:,.2f} | -{d['fees']:,.2f} | **{net:,.2f}** | {d['count']}건 |")
     lines.append("")
+
+    # v2: 프로젝트(게임) 별 매출 — 카탈로그에 있는 게임들이 description 으로 자동 분류됨
+    if by_project:
+        lines.append("## 🎮 프로젝트별 매출")
+        lines.append("")
+        lines.append("| 프로젝트 | 거래 수 | 매출 | 통화 | 상위 아이템 |")
+        lines.append("|---|---|---|---|---|")
+        sorted_projects = sorted(by_project.items(), key=lambda x: -x[1]["gross"])
+        for proj, p in sorted_projects:
+            top_items = sorted(p["items"].items(), key=lambda x: -x[1]["gross"])[:2]
+            top_str = ", ".join(f"{name} ({d['count']}건)" for name, d in top_items)
+            lines.append(f"| **{proj}** | {p['count']}건 | {p['gross']:,.2f} | {p['currency']} | {top_str} |")
+        lines.append("")
+        # 상세 아이템 분해 (각 프로젝트별)
+        for proj, p in sorted_projects:
+            if len(p["items"]) <= 1:
+                continue
+            lines.append(f"### 🎯 {proj} 아이템 분해")
+            lines.append("")
+            lines.append("| 아이템 | 거래 수 | 매출 | ARPU |")
+            lines.append("|---|---|---|---|")
+            for name, d in sorted(p["items"].items(), key=lambda x: -x[1]["gross"]):
+                arpu = d["gross"] / d["count"] if d["count"] > 0 else 0
+                lines.append(f"| {name} | {d['count']}건 | {d['gross']:,.2f} | {arpu:,.2f} |")
+            lines.append("")
 
     # 기간별 (default_currency 기준)
     primary_cur = default_currency or (sorted(by_currency.items(), key=lambda x: -x[1]["gross"])[0][0] if by_currency else "USD")

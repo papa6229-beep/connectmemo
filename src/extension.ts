@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.135 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.136 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.135';
+const _CONNECT_AI_VERSION = '2.89.136';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -3618,7 +3618,37 @@ async function _runDailyBriefingOnce(force = false): Promise<void> {
             }
         } catch { /* ignore */ }
 
-        const body = `🌅 *${company} — 아침 브리핑*\n_${dateStr}_\n${calBlock}${taskBlock}${yhBlock}\n_명령: \`/today\` 다시 보기 · \`/tools\` 도구 상태_`;
+        /* 4. v2.89.136 — 어제 PayPal 매출 (가능하면). business/tools/paypal_revenue.py
+           를 LOOKBACK_DAYS=1 으로 동기 실행 → 어제 총 매출·거래수만 한 줄 추출.
+           paypal 설정 안 됐거나 실패 시 silently skip — 브리핑 자체는 항상 발송. */
+        let revBlock = '';
+        try {
+            const ppToolDir = path.join(getCompanyDir(), '_agents', 'business', 'tools');
+            const ppScript = path.join(ppToolDir, 'paypal_revenue.py');
+            const ppJson = path.join(ppToolDir, 'paypal_revenue.json');
+            if (fs.existsSync(ppScript) && fs.existsSync(ppJson)) {
+                const env = { ...process.env, LOOKBACK_DAYS: '1' };
+                const r = await new Promise<{ exitCode: number; output: string }>((resolve) => {
+                    const cp = require('child_process');
+                    const p = cp.spawn(_pythonCmd(), [ppScript], { cwd: ppToolDir, env });
+                    let out = '';
+                    p.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+                    p.on('close', (code: number) => resolve({ exitCode: code, output: out }));
+                    setTimeout(() => { try { p.kill(); } catch {} resolve({ exitCode: -1, output: out }); }, 15000);
+                });
+                if (r.exitCode === 0 && r.output) {
+                    /* 출력 마크다운에서 첫 통화 행 추출 — 예: "| **USD** | 14.95 | -0 | ..." */
+                    const m = r.output.match(/\|\s*\*\*([A-Z]{3})\*\*\s*\|\s*([\d.,]+)\s*\|[^|]+\|[^|]+\|\s*\*\*([\d.,]+)\*\*\s*\|\s*(\d+)건/);
+                    if (m) {
+                        revBlock = `\n*💰 어제 매출*\n  ${m[1]} ${m[2]} (순매출 ${m[3]}, ${m[4]}건)\n`;
+                    } else if (/거래가 없어요/.test(r.output)) {
+                        revBlock = '\n*💰 어제 매출*\n  _거래 0건_\n';
+                    }
+                }
+            }
+        } catch { /* ignore — briefing 자체는 항상 진행 */ }
+
+        const body = `🌅 *${company} — 아침 브리핑*\n_${dateStr}_\n${calBlock}${taskBlock}${revBlock}${yhBlock}\n_명령: \`/today\` 다시 보기 · \`/tools\` 도구 상태_`;
         await sendTelegramReport(body);
         if (_extCtx) {
             _extCtx.globalState.update(_DAILY_BRIEFING_KEY, today);
@@ -6521,7 +6551,7 @@ function _seedBusinessPaypalRevenue(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'paypal_revenue.py'), py, 'paypal_revenue_v1');
+  _seedFileForceUpgrade(path.join(toolsDir, 'paypal_revenue.py'), py, 'paypal_revenue_v2');
   _mergeSchemaIntoJson(path.join(toolsDir, 'paypal_revenue.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'paypal_revenue.md'), md, 'paypal_revenue_v1');
 }
@@ -7147,6 +7177,12 @@ async function prefetchAgentRealtimeData(agentId: string): Promise<string> {
   if (agentId === 'youtube') {
     candidates.push({ tool: 'my_videos_check.py', label: 'YouTube 채널 영상 분석 (실제 API 데이터)' });
     candidates.push({ tool: 'youtube_account.py', label: 'YouTube 설정 확인 (fallback)' });
+  }
+  /* v2.89.136 — business prefetch. 현빈에게 매출 질문 들어오면 paypal_revenue.py
+     자동 실행 → 거래 + 게임별 분류 + 환불·수수료 마크다운 컨텍스트로 주입 →
+     현빈이 환각 없이 진짜 숫자로 분석. 유튜브(레오) 와 동일 패턴. */
+  if (agentId === 'business') {
+    candidates.push({ tool: 'paypal_revenue.py', label: 'PayPal 매출 분석 (게임·프로젝트별, 실제 거래 데이터)' });
   }
   if (candidates.length === 0) return '';
   const toolsDir = path.join(getCompanyDir(), '_agents', agentId, 'tools');
@@ -11541,7 +11577,7 @@ class ApiConnectionsPanel {
     <div>
       <div class="eyebrow">CONNECT AI · 외부 연결</div>
       <h1>API 키 한 곳에서 관리</h1>
-      <div class="hero-sub">텔레그램 · YouTube · Google Calendar · GitHub · Instagram — 모든 자격증명을 한 패널에서 입력하고 저장합니다. 같은 값이 \`_agents/<id>/config.md\`로 저장돼요.</div>
+      <div class="hero-sub">텔레그램 · YouTube · Google Calendar · GitHub · Instagram — 모든 자격증명을 한 패널에서 입력하고 저장합니다. 같은 값이 <code>_agents/&lt;id&gt;/config.md</code>로 저장돼요.</div>
     </div>
   </div>
 </header>

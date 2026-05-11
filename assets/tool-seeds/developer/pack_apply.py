@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: pack_apply_v2
+# version: pack_apply_v3
 """두뇌의 템플릿 팩을 사용자 프로젝트에 한 번에 적용.
 
 흐름:
@@ -127,13 +127,113 @@ export default function App() {{
         return False
 
 
+def _find_brain_root():
+    """두뇌 폴더 자동 탐색 (한국어 폴더명 포함)."""
+    cands = [
+        os.path.expanduser("~/.connect-ai-brain"),
+        os.path.expanduser("~/Downloads/지식메모리"),
+        os.path.expanduser("~/.connect-ai-brain-imported"),
+    ]
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    return cands[0]  # 첫 번째 fallback
+
+
+def _list_kits(brain_root):
+    """developer 카테고리의 모든 키트와 manifest 반환."""
+    tdir = os.path.join(brain_root, "40_템플릿", "developer")
+    if not os.path.exists(tdir):
+        return []
+    kits = []
+    for name in os.listdir(tdir):
+        d = os.path.join(tdir, name)
+        if not os.path.isdir(d):
+            continue
+        mp = os.path.join(d, "manifest.json")
+        if not os.path.exists(mp):
+            continue
+        try:
+            with open(mp, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            kits.append({"name": name, "manifest": manifest})
+        except Exception:
+            pass
+    return kits
+
+
+def _score_kit(manifest, intent_text):
+    """매니페스트 vs 사용자 의도(intent_text) 매칭 점수.
+    keywords + name + description 단어 매칭. 한국어·영어 모두."""
+    if not intent_text:
+        return 0
+    haystack = " ".join([
+        manifest.get("name", ""),
+        manifest.get("description", ""),
+        " ".join(manifest.get("keywords") or []),
+        manifest.get("category", ""),
+    ]).lower()
+    intent_lc = intent_text.lower()
+    score = 0
+    # keywords 직접 매칭 (높은 가중치)
+    for kw in (manifest.get("keywords") or []):
+        if kw.lower() in intent_lc:
+            score += 10
+    # name 자체가 의도에 있으면 (예: "landing-kit" → "landing")
+    for token in manifest.get("name", "").split():
+        if len(token) >= 3 and token.lower() in intent_lc:
+            score += 5
+    # 카테고리
+    if (manifest.get("category", "").lower() or "") in intent_lc:
+        score += 3
+    return score
+
+
+def _autodetect_kit(brain_root, intent_text):
+    """사용자 의도에서 가장 적합한 키트 자동 추론. (kit_name, score, alternatives) 반환."""
+    kits = _list_kits(brain_root)
+    if not kits:
+        return None, 0, []
+    scored = [(k["name"], _score_kit(k["manifest"], intent_text), k["manifest"].get("description", "")) for k in kits]
+    scored.sort(key=lambda x: -x[1])
+    if scored[0][1] == 0:
+        # 매치 0 — fallback: 가장 일반적인 landing-kit
+        for k in kits:
+            if k["name"] == "landing-kit":
+                return "landing-kit", 0, scored[:3]
+        return kits[0]["name"], 0, scored[:3]
+    return scored[0][0], scored[0][1], scored[:3]
+
+
 def main():
     cfg = _load(CONFIG)
     init_cfg = _load(WEB_INIT_CFG)
 
     kit_name = (cfg.get("KIT_NAME") or "").strip()
+    user_intent = (cfg.get("USER_INTENT") or "").strip()
+
+    # 두뇌 폴더 찾기 (자동 추론에도 필요)
+    brain_root = _find_brain_root()
+
+    # v3: KIT_NAME 비어있고 USER_INTENT 있으면 자동 매칭
+    if not kit_name and user_intent:
+        detected, score, alts = _autodetect_kit(brain_root, user_intent)
+        if detected:
+            kit_name = detected
+            _log(f"자동 추론 → '{kit_name}' (매칭 점수 {score})", "info")
+            if score == 0:
+                _log("  ⚠️ 사용자 의도와 명확한 매칭 없음. 가장 일반적인 키트로 fallback.", "warn")
+            if len(alts) > 1:
+                others = ", ".join([f"{n}({s})" for n, s, _ in alts[1:3] if s > 0])
+                if others:
+                    _log(f"  다른 후보: {others}", "info")
+
     if not kit_name:
-        _log("KIT_NAME 비어있음. 'landing-kit', 'portfolio-kit', 'dashboard-kit', 'mobile-kit' 중 하나", "err")
+        kits = _list_kits(brain_root)
+        avail = ", ".join([f"'{k['name']}'" for k in kits]) or "(두뇌에 키트 없음 — EZER 에서 먼저 주입)"
+        _log(f"KIT_NAME 비어있고 USER_INTENT 도 없음.", "err")
+        _log(f"  방법 1: KIT_NAME 명시 → {avail}", "info")
+        _log(f"  방법 2: USER_INTENT 에 '다이어트 SaaS 랜딩' 같은 자연어 입력 → 자동 추론", "info")
         sys.exit(1)
 
     project = (cfg.get("PROJECT_PATH") or "").strip()
@@ -147,15 +247,6 @@ def main():
         _log(f"프로젝트 폴더 없음: {project}", "err")
         sys.exit(1)
 
-    # 두뇌의 키트 폴더 찾기
-    brain_root = os.path.expanduser("~/.connect-ai-brain")
-    if not os.path.exists(brain_root):
-        # fallback: 환경변수 또는 .connect-ai-brain-imported
-        for cand in ["~/Downloads/지식메모리", "~/.connect-ai-brain-imported"]:
-            cand_path = os.path.expanduser(cand)
-            if os.path.exists(cand_path):
-                brain_root = cand_path
-                break
     kit_dir = os.path.join(brain_root, "40_템플릿", "developer", kit_name)
     if not os.path.exists(kit_dir):
         _log(f"키트 없음: {kit_dir}", "err")

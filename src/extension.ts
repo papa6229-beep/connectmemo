@@ -5934,6 +5934,20 @@ ${_GOAL_PREAMBLE}
 - \`<run_command>git add 특정파일 && git commit -m "..."</run_command>\` — 절대 \`git add -A\` 금지 (시크릿 끌릴 수 있음).
 - 사용자가 명시 요청 안 하면 push 절대 X.
 
+## 키트 선택 (pack_apply 자동 매칭)
+사용자가 사이트·앱 만들어달라 하면 자동 흐름:
+1. web_init 으로 프로젝트 셋업
+2. pack_apply 호출 시 **KIT_NAME 비우고 USER_INTENT 에 사용자 명령 그대로** → 시스템이 키워드 매칭으로 자동 선택
+3. 시스템이 매칭 못 하면 fallback (landing-kit)
+
+명시적 선택이 필요할 때만 KIT_NAME 직접 지정:
+- "랜딩"·"홈페이지"·"SaaS"·"출시" → landing-kit
+- "포트폴리오"·"프리랜서"·"자기소개" → portfolio-kit
+- "대시보드"·"관리자"·"admin"·"분석" → dashboard-kit
+- "모바일"·"앱"·"iOS"·"안드로이드" → mobile-kit (Expo)
+
+여러 개 후보면 USER_INTENT 자동 매칭에 맡기는 게 안전. 잘못 골랐다 싶으면 다시 호출해서 KIT_NAME 명시.
+
 ## 코드 출력 포맷
 - 작은 변경: \`<edit_file>\` + \`<find>/<replace>\` 정확한 매칭
 - 새 파일: \`<create_file path="...">\` 전체 내용
@@ -6577,19 +6591,26 @@ function _seedDeveloperPackApply(toolsDir: string) {
   const py = _loadToolSeed('developer/pack_apply.py');
   const md = _loadToolSeed('developer/pack_apply.md');
   const json = JSON.stringify({
-    KIT_NAME: 'landing-kit',
+    KIT_NAME: '',
+    USER_INTENT: '',
     PROJECT_PATH: '',
     _schema: {
       KIT_NAME: {
         type: 'select',
-        label: '🧩 키트 선택',
-        hint: '두뇌에 주입된 템플릿 팩 중 하나. EZER Pack Vault 에서 먼저 주입하세요.',
+        label: '🧩 키트 (명시 선택, 선택 사항)',
+        hint: '비우면 USER_INTENT 로 자동 추론. 명시하면 무조건 그 키트 사용.',
         options: [
+          { value: '',              label: '(자동 추론 — USER_INTENT 사용)' },
           { value: 'landing-kit',   label: '🏠 Landing Kit — SaaS 랜딩 (6 섹션)' },
           { value: 'portfolio-kit', label: '👤 Portfolio Kit — 1인 크리에이터 (5 섹션)' },
           { value: 'dashboard-kit', label: '📊 Dashboard Kit — SaaS 관리자' },
           { value: 'mobile-kit',    label: '📱 Mobile Kit — Expo 모바일 앱 (3 화면)' },
         ],
+      },
+      USER_INTENT: {
+        type: 'text',
+        label: '🎯 사용자 의도 (자연어, 자동 매칭용)',
+        hint: '예: "다이어트 SaaS 랜딩" → 자동으로 landing-kit. "내 작품 모음" → portfolio-kit.',
       },
       PROJECT_PATH: {
         type: 'text',
@@ -6598,7 +6619,7 @@ function _seedDeveloperPackApply(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v3');
   _mergeSchemaIntoJson(path.join(toolsDir, 'pack_apply.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.md'), md, 'pack_apply_v1');
 }

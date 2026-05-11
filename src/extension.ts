@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.134 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.135 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.134';
+const _CONNECT_AI_VERSION = '2.89.135';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -6642,7 +6642,7 @@ function _seedDeveloperPackApply(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v4');
+  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v5');
   _mergeSchemaIntoJson(path.join(toolsDir, 'pack_apply.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.md'), md, 'pack_apply_v1');
 }
@@ -19438,6 +19438,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
         const projectDir = path.join(os.homedir(), 'connect-ai-projects', projectName);
         const toolsDir = path.join(getCompanyDir(), '_agents', 'developer', 'tools').replace(/\\/g, '/');
         const projectDirShell = projectDir.replace(/\\/g, '/');
+        const brainRootShell = brainDir.replace(/\\/g, '/');
 
         /* 매니페스트의 apply.open_in_browser 가 있으면 그 파일을 open. 없으면 index.html
            이 있을 가능성에 베팅 (대부분의 vanilla 키트). */
@@ -19449,7 +19450,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
 > 📁 대상 프로젝트: \`${projectDir.replace(os.homedir(), '~')}\`
 > 💡 \`pack_apply.py\` 즉시 실행 → 키트 파일 복사·설정 자동화.
 
-<run_command>mkdir -p "${projectDirShell}" && cd "${toolsDir}" && KIT_NAME="${best.kit}" USER_INTENT="${escapedIntent}" PROJECT_PATH="${projectDirShell}" python3 pack_apply.py</run_command>
+<run_command>mkdir -p "${projectDirShell}" && cd "${toolsDir}" && BRAIN_ROOT="${brainRootShell}" KIT_NAME="${best.kit}" USER_INTENT="${escapedIntent}" PROJECT_PATH="${projectDirShell}" python3 pack_apply.py</run_command>
 
 <run_command>open "${projectDirShell}/${openTarget}"</run_command>
 

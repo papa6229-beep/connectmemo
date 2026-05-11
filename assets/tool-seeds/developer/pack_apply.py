@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: pack_apply_v4
+# version: pack_apply_v5
 """두뇌의 템플릿 팩을 사용자 프로젝트에 한 번에 적용.
 
 흐름:
@@ -128,10 +128,20 @@ export default function App() {{
 
 
 def _find_brain_root():
-    """두뇌 폴더 자동 탐색 (한국어 폴더명 포함)."""
+    """두뇌 폴더 자동 탐색 (한국어 폴더명 포함).
+
+    v4: BRAIN_ROOT 환경변수가 가장 강함 (Connect AI 익스텐션이 직접 지정).
+    이전엔 ~/.connect-ai-brain 가 빈 폴더로 존재만 해도 우선 매칭돼서
+    실제 사용자 두뇌(~/Downloads/지식메모리) 의 키트를 못 찾던 사고 차단.
+    """
+    env = os.environ.get("BRAIN_ROOT", "").strip()
+    if env:
+        ep = os.path.expanduser(env)
+        if os.path.exists(ep):
+            return ep
     cands = [
-        os.path.expanduser("~/.connect-ai-brain"),
         os.path.expanduser("~/Downloads/지식메모리"),
+        os.path.expanduser("~/.connect-ai-brain"),
         os.path.expanduser("~/.connect-ai-brain-imported"),
     ]
     for c in cands:

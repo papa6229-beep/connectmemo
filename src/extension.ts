@@ -238,6 +238,47 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
+/* v2.89.120 — 특정 TCP 포트 점유 프로세스 강제 종료 (cross-platform).
+   "이걸 메인으로 하기" UX 에 사용: 다른 Anti-Gravity 인스턴스가 4825 잡고 있을 때
+   해당 PID 찾아 SIGKILL. 종료된 PID 배열 반환 (빈 배열이면 미발견).
+   - macOS/Linux: `lsof -ti:<port>` → 한 줄당 PID → `kill -9 <pid>`
+   - Windows: `netstat -ano` 파싱 → LISTENING 행의 마지막 컬럼 PID → `taskkill /F /PID`
+   본인 PID는 안 죽임 (자기 자신 자살 방지). */
+function _killProcessesOnPort(port: number): number[] {
+    const ourPid = process.pid;
+    const killed: number[] = [];
+    try {
+        if (process.platform === 'win32') {
+            const r = spawnSync('netstat', ['-ano'], { encoding: 'utf-8', timeout: 5000 });
+            const lines = (r.stdout || '').split(/\r?\n/);
+            const pidSet = new Set<number>();
+            for (const line of lines) {
+                /* LISTENING 행만, 포트 매칭 */
+                if (!/LISTENING/i.test(line)) continue;
+                if (!new RegExp(`[:.]${port}\\b`).test(line)) continue;
+                const m = line.trim().split(/\s+/);
+                const pid = parseInt(m[m.length - 1], 10);
+                if (!isNaN(pid) && pid > 0 && pid !== ourPid) pidSet.add(pid);
+            }
+            for (const pid of pidSet) {
+                const k = spawnSync('taskkill', ['/F', '/PID', String(pid)], { encoding: 'utf-8', timeout: 3000 });
+                if (k.status === 0) killed.push(pid);
+            }
+        } else {
+            /* macOS / Linux: lsof -ti:<port> */
+            const r = spawnSync('lsof', ['-ti', `:${port}`], { encoding: 'utf-8', timeout: 5000 });
+            const pids = (r.stdout || '').split(/\r?\n/).map(s => parseInt(s.trim(), 10)).filter(p => !isNaN(p) && p > 0 && p !== ourPid);
+            for (const pid of pids) {
+                const k = spawnSync('kill', ['-9', String(pid)], { encoding: 'utf-8', timeout: 3000 });
+                if (k.status === 0) killed.push(pid);
+            }
+        }
+    } catch (e) {
+        console.error('[Connect AI] _killProcessesOnPort 실패:', e);
+    }
+    return killed;
+}
+
 /* v2.89.93 — OS 파일 익스플로러로 파일/폴더 열기 (Finder · Windows Explorer ·
    Linux GNOME Files). 결과 메시지를 반환해서 호출처가 사용자에게 보여줄 수 있게. */
 function _revealInOsExplorer(targetPath: string): { ok: boolean; message: string } {
@@ -7998,18 +8039,46 @@ export function activate(context: vscode.ExtensionContext) {
                 res.end();
             }
         });
-        server.on('error', (err: any) => {
+        /* v2.89.120 — 포트 4825 충돌 시 사용자에게 "이걸 메인으로" 선택권.
+           이전엔 그냥 에러만 띄우고 끝 → 사용자가 어느 창 닫아야 할지도 모름 + EZER
+           연동 깨짐. 이제: lsof / taskkill 로 점유 프로세스 PID 찾아 종료 + 재시도. */
+        const _tryStartBridge = (isRetry = false) => {
+            server.listen(4825, '127.0.0.1', () => {
+                console.log('[Connect AI Bridge] listening on http://127.0.0.1:4825');
+                vscode.window.setStatusBarMessage(
+                    isRetry ? '🟢 Connect AI Bridge: 이 인스턴스가 메인 (포트 4825)' : '🟢 Connect AI Bridge: 포트 4825 listening',
+                    4000
+                );
+            });
+        };
+        server.on('error', async (err: any) => {
             // listen() failures arrive as 'error' events, NOT as throws.
-            const msg = err?.code === 'EADDRINUSE'
-                ? `🚫 Connect AI Bridge: 포트 4825가 이미 사용 중입니다. 다른 안티그래비티 인스턴스를 종료하고 재시작해 주세요. (EZER / A.U Training 연동이 동작하지 않습니다.)`
-                : `🚫 Connect AI Bridge 시작 실패: ${err?.message || err}`;
             console.error('[Connect AI Bridge] server error:', err);
-            vscode.window.showErrorMessage(msg);
+            if (err?.code === 'EADDRINUSE') {
+                const choice = await vscode.window.showWarningMessage(
+                    '🚫 Connect AI Bridge: 포트 4825가 이미 사용 중입니다.\n다른 Anti-Gravity 인스턴스가 Bridge를 잡고 있어요. 이 인스턴스를 메인으로 전환하시겠어요?',
+                    { modal: false },
+                    '🎯 이걸 메인으로 (이전 종료)',
+                    '🚫 이번엔 보기 모드로'
+                );
+                if (choice === '🎯 이걸 메인으로 (이전 종료)') {
+                    const killed = _killProcessesOnPort(4825);
+                    if (killed.length > 0) {
+                        vscode.window.showInformationMessage(`✅ 이전 Bridge 종료됨 (PID ${killed.join(', ')}). 1초 후 재시작.`);
+                        setTimeout(() => _tryStartBridge(true), 1000);
+                    } else {
+                        vscode.window.showErrorMessage(
+                            '⚠️ 포트 점유 프로세스를 찾지 못했어요. 다른 Anti-Gravity 창을 직접 닫아주세요. (또는 터미널에서 `lsof -ti:4825 | xargs kill -9` 실행)'
+                        );
+                    }
+                } else {
+                    vscode.window.setStatusBarMessage('🟡 Connect AI Bridge: 보기 모드 (포트 충돌, EZER 연동 미작동)', 6000);
+                }
+            } else {
+                vscode.window.showErrorMessage(`🚫 Connect AI Bridge 시작 실패: ${err?.message || err}`);
+            }
         });
-        server.listen(4825, '127.0.0.1', () => {
-            console.log('[Connect AI Bridge] listening on http://127.0.0.1:4825');
-            vscode.window.setStatusBarMessage('🟢 Connect AI Bridge: 포트 4825 listening', 4000);
-        });
+        _tryStartBridge(false);
     } catch (e: any) {
         console.error('[Connect AI Bridge] failed to start:', e);
         vscode.window.showErrorMessage(`🚫 Connect AI Bridge 초기화 실패: ${e?.message || e}`);

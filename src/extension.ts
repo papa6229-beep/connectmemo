@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.142 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.143 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.142';
+const _CONNECT_AI_VERSION = '2.89.143';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -12346,6 +12346,61 @@ class OfficePanel {
                 case 'officeReady':
                     this._sendInit();
                     break;
+                case 'openRevenueDashboard':
+                    /* v2.89.143 — 가상 사무실 HUD 클릭 → 풀스크린 매출 대시보드 */
+                    RevenueDashboardPanel.createOrShow();
+                    break;
+                case 'askHyunbinRevenue':
+                    /* v2.89.143 — 현빈에게 매출 분석 명령 자동 주입 */
+                    try {
+                        await vscode.commands.executeCommand('connect-ai-lab.focusChat');
+                        if (_activeChatProvider) {
+                            (_activeChatProvider as any)._view?.webview?.postMessage?.({
+                                type: 'injectPrompt',
+                                value: '현빈아, 이번 달 PayPal 매출 실데이터 가져와서 분석하고 다음 액션 1개 추천해줘.'
+                            });
+                        }
+                    } catch { /* ignore */ }
+                    break;
+                case 'requestRevenueMini': {
+                    /* v2.89.143 — 사무실 우상단 HUD 데이터 요청. paypal_revenue.py OUTPUT=json. */
+                    try {
+                        const ppToolDir = path.join(getCompanyDir(), '_agents', 'business', 'tools');
+                        const ppScript = path.join(ppToolDir, 'paypal_revenue.py');
+                        const ppJson = path.join(ppToolDir, 'paypal_revenue.json');
+                        if (!fs.existsSync(ppScript) || !fs.existsSync(ppJson)) {
+                            panel.webview.postMessage({ type: 'revenueMini', data: { error: 'PayPal 미설정' } });
+                            break;
+                        }
+                        const cfg = JSON.parse(_safeReadText(ppJson) || '{}');
+                        if (!cfg.CLIENT_ID || !cfg.CLIENT_SECRET) {
+                            panel.webview.postMessage({ type: 'revenueMini', data: null });
+                            break;
+                        }
+                        const env = { ...process.env, OUTPUT: 'json', LOOKBACK_DAYS: '30' };
+                        const r = await new Promise<{ exitCode: number; output: string }>((resolve) => {
+                            const cp = require('child_process');
+                            const p = cp.spawn(_pythonCmd(), [ppScript], { cwd: ppToolDir, env });
+                            let out = '';
+                            p.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+                            p.on('close', (code: number) => resolve({ exitCode: code, output: out }));
+                            setTimeout(() => { try { p.kill(); } catch {} resolve({ exitCode: -1, output: out }); }, 18000);
+                        });
+                        if (r.exitCode !== 0 || !r.output) {
+                            panel.webview.postMessage({ type: 'revenueMini', data: { error: 'PayPal 호출 실패' } });
+                            break;
+                        }
+                        try {
+                            const data = JSON.parse(r.output);
+                            panel.webview.postMessage({ type: 'revenueMini', data });
+                        } catch {
+                            panel.webview.postMessage({ type: 'revenueMini', data: { error: '응답 파싱 실패' } });
+                        }
+                    } catch (e: any) {
+                        panel.webview.postMessage({ type: 'revenueMini', data: { error: e?.message || String(e) } });
+                    }
+                    break;
+                }
                 case 'officePrompt': {
                     const prompt = String(msg.value || '').trim();
                     if (!prompt) return;
@@ -13341,6 +13396,142 @@ body.dispatching .beams{opacity:1}
 .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-dim);font-size:12px;text-align:center;padding:40px 20px;line-height:1.7}
 .empty .empty-icon{font-size:48px;margin-bottom:12px;opacity:.6}
 .empty code{background:var(--surface);border:1px solid var(--border);padding:2px 6px;border-radius:4px;color:var(--accent);font-family:'SF Mono',monospace}
+
+/* ============================================================
+   v2.89.143 — Floating Revenue Command Center
+   사무실 우상단 떠 있는 매트릭스 풍 HUD. 사무실 분위기 안 깨고 별도 레이어.
+============================================================ */
+.hud-revenue.clickable{cursor:pointer;transition:all .2s;position:relative}
+.hud-revenue.clickable:hover{background:rgba(34,211,238,.08);transform:translateY(-1px)}
+.hud-revenue .icon{color:#22d3ee;text-shadow:0 0 8px #22d3ee}
+.hud-rev-pulse{position:absolute;top:6px;right:6px;width:5px;height:5px;border-radius:50%;background:#22d3ee;box-shadow:0 0 6px #22d3ee;animation:hudRevPulse 1.4s ease-in-out infinite}
+@keyframes hudRevPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.6)}}
+
+.floating-revenue{
+  position:fixed;top:88px;right:22px;width:300px;z-index:50;
+  background:linear-gradient(160deg,rgba(11,17,48,.94),rgba(8,12,32,.86));
+  border:1px solid rgba(103,232,249,.3);
+  border-radius:16px;
+  padding:14px 16px;
+  box-shadow:0 16px 48px rgba(34,211,238,.18),0 4px 16px rgba(0,0,0,.6);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  overflow:hidden;
+  font-family:'SF Pro Display',-apple-system,sans-serif;
+  transition:transform .3s cubic-bezier(.2,.8,.2,1),opacity .3s;
+  animation:frSlideIn .5s cubic-bezier(.2,.8,.2,1);
+}
+@keyframes frSlideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+.floating-revenue.hidden{transform:translateX(360px);opacity:0;pointer-events:none}
+
+.fr-glow{
+  position:absolute;inset:-30px;
+  background:radial-gradient(circle at 20% 0%,rgba(34,211,238,.25),transparent 60%),
+             radial-gradient(circle at 100% 100%,rgba(167,139,250,.2),transparent 60%);
+  pointer-events:none;
+}
+.floating-revenue::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,#22d3ee 30%,#a78bfa 70%,transparent);
+  opacity:.8;
+}
+
+.fr-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;position:relative;z-index:2}
+.fr-icon{font-size:1.6rem;filter:drop-shadow(0 0 10px #22d3ee)}
+.fr-title{flex:1;min-width:0}
+.fr-eyebrow{
+  font-size:.6rem;letter-spacing:.22em;text-transform:uppercase;
+  color:#67e8f9;font-weight:800;
+  text-shadow:0 0 8px rgba(34,211,238,.5);
+  display:flex;align-items:center;gap:6px;
+}
+.fr-live{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:1px 6px;background:rgba(52,211,153,.15);
+  border:1px solid rgba(52,211,153,.35);border-radius:999px;
+  color:#34d399;font-size:.55rem;letter-spacing:.1em;
+}
+.fr-pulse{
+  width:5px;height:5px;border-radius:50%;background:#34d399;
+  box-shadow:0 0 6px #34d399;animation:hudRevPulse 1.4s ease-in-out infinite;
+}
+.fr-name{
+  font-size:1.05rem;font-weight:900;
+  background:linear-gradient(135deg,#fff,#67e8f9);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  letter-spacing:-.01em;line-height:1.2;margin-top:2px;
+}
+.fr-close{
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
+  color:#94a3b8;width:22px;height:22px;border-radius:50%;
+  cursor:pointer;font-size:.7rem;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;transition:all .15s;
+}
+.fr-close:hover{background:rgba(244,63,94,.2);border-color:rgba(244,63,94,.5);color:#fff}
+
+.fr-body{position:relative;z-index:2;margin-bottom:10px}
+.fr-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
+.fr-kpi{
+  padding:8px 6px;background:rgba(255,255,255,.025);
+  border:1px solid rgba(103,232,249,.1);border-radius:8px;text-align:center;
+}
+.fr-kpi-l{
+  font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;
+  color:#64748b;font-weight:700;margin-bottom:2px;
+}
+.fr-kpi-v{
+  font-size:1.05rem;font-weight:900;font-variant-numeric:tabular-nums;
+  background:linear-gradient(135deg,#fff,#67e8f9);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  line-height:1.1;letter-spacing:-.02em;
+}
+.fr-spark{width:100%;height:36px;margin:4px 0 6px}
+.fr-spark .area{fill:url(#frSparkGrad)}
+.fr-spark .line{stroke:#67e8f9;stroke-width:1.8;fill:none;filter:drop-shadow(0 0 4px #22d3ee)}
+.fr-spark .peak{fill:#fbbf24;filter:drop-shadow(0 0 5px #fbbf24)}
+.fr-sub{
+  font-size:.68rem;color:#64748b;
+  text-align:center;letter-spacing:.05em;
+}
+
+.fr-actions{display:flex;flex-direction:column;gap:6px;position:relative;z-index:2}
+.fr-btn{
+  position:relative;padding:8px 12px;border:none;border-radius:9px;
+  font-size:.78rem;font-weight:800;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  transition:all .2s;font-family:inherit;
+}
+.fr-btn.primary{
+  background:linear-gradient(135deg,#0891b2,#22d3ee);color:#fff;
+  box-shadow:0 4px 14px rgba(34,211,238,.4),inset 0 1px 0 rgba(255,255,255,.2);
+}
+.fr-btn.primary:hover{transform:translateY(-1px);box-shadow:0 6px 22px rgba(34,211,238,.6)}
+.fr-btn.primary:active{transform:translateY(0)}
+.fr-btn-arrow{transition:transform .2s}
+.fr-btn.primary:hover .fr-btn-arrow{transform:translateX(3px)}
+.fr-btn.ghost{
+  background:rgba(255,255,255,.04);border:1px solid rgba(167,139,250,.25);
+  color:#c4b5fd;font-size:.72rem;padding:6px 10px;
+}
+.fr-btn.ghost:hover{background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.5)}
+
+/* Reopen pip — floating 닫혔을 때만 보임 */
+.fr-reopen{
+  position:fixed;top:88px;right:22px;width:44px;height:44px;
+  border-radius:50%;border:1px solid rgba(103,232,249,.4);
+  background:linear-gradient(135deg,rgba(8,145,178,.9),rgba(34,211,238,.9));
+  color:#fff;font-size:1.2rem;cursor:pointer;z-index:50;
+  display:none;align-items:center;justify-content:center;
+  box-shadow:0 8px 24px rgba(34,211,238,.4);
+  transition:all .2s;animation:frReopenPulse 2.5s ease-in-out infinite;
+}
+.fr-reopen.show{display:flex}
+.fr-reopen:hover{transform:scale(1.1);box-shadow:0 10px 32px rgba(34,211,238,.6)}
+@keyframes frReopenPulse{0%,100%{box-shadow:0 8px 24px rgba(34,211,238,.4)}50%{box-shadow:0 8px 36px rgba(34,211,238,.7)}}
+
+@media (max-width:900px){
+  .floating-revenue{width:260px;top:78px;right:12px}
+  .fr-reopen{top:78px;right:12px}
+}
 </style>
 </head>
 <body>
@@ -13376,6 +13567,12 @@ body.dispatching .beams{opacity:1}
       <div class="icon">👥</div>
       <div class="text"><div class="lbl">Working</div><div class="val" id="hudWorking">0/7</div></div>
     </div>
+    <!-- v2.89.143 — 매출 HUD stat. 클릭 시 풀스크린 매출 대시보드 열림. -->
+    <div class="stat hud-revenue clickable" id="hudRevenueStat" title="매출 대시보드 열기">
+      <div class="icon">💰</div>
+      <div class="text"><div class="lbl">Revenue (30d)</div><div class="val" id="hudRevenue">—</div></div>
+      <div class="hud-rev-pulse"></div>
+    </div>
   </div>
 
   <!-- Action zone — primary CTA prominent, secondary toggles ghost. -->
@@ -13395,6 +13592,49 @@ body.dispatching .beams{opacity:1}
   <span class="sep">·</span>
   <span id="statusActivity">에이전트 자리 잡는 중...</span>
 </div>
+
+<!-- v2.89.143 — Floating Revenue Command Center overlay. 사무실 화면 우상단
+     에 떠 있는 매트릭스 풍 HUD. 미니 KPI + 14일 sparkline + 풀스크린 진입 버튼.
+     사무실 분위기 안 깨고 별도 레이어로 매출 한눈에 확인. -->
+<div class="floating-revenue" id="floatingRevenue">
+  <div class="fr-glow"></div>
+  <div class="fr-head">
+    <div class="fr-icon">💰</div>
+    <div class="fr-title">
+      <div class="fr-eyebrow">REVENUE · <span class="fr-live"><span class="fr-pulse"></span>LIVE</span></div>
+      <div class="fr-name">매출 컨트롤 센터</div>
+    </div>
+    <button class="fr-close" id="frClose" title="숨기기">✕</button>
+  </div>
+  <div class="fr-body">
+    <div class="fr-kpis">
+      <div class="fr-kpi">
+        <div class="fr-kpi-l">30일</div>
+        <div class="fr-kpi-v" id="frMonth" data-last="0">—</div>
+      </div>
+      <div class="fr-kpi">
+        <div class="fr-kpi-l">7일</div>
+        <div class="fr-kpi-v" id="frWeek" data-last="0">—</div>
+      </div>
+      <div class="fr-kpi">
+        <div class="fr-kpi-l">건수</div>
+        <div class="fr-kpi-v" id="frCount" data-last="0">—</div>
+      </div>
+    </div>
+    <svg class="fr-spark" id="frSparkSvg" viewBox="0 0 240 36" preserveAspectRatio="none"></svg>
+    <div class="fr-sub" id="frSub">로딩 중…</div>
+  </div>
+  <div class="fr-actions">
+    <button class="fr-btn primary" id="frOpenDashboard">
+      📊 풀스크린 대시보드
+      <span class="fr-btn-arrow">→</span>
+    </button>
+    <button class="fr-btn ghost" id="frAskHyunbin" title="현빈 에이전트 매출 분석">🧠 현빈 분석</button>
+  </div>
+</div>
+
+<!-- 숨김 상태에서 다시 열 수 있는 작은 핍 (floating 닫혔을 때만 보임) -->
+<button class="fr-reopen" id="frReopen" title="매출 컨트롤 센터 열기">💰</button>
 
 <div class="office-wrap">
   <div class="office-floor" id="floor">
@@ -14799,6 +15039,122 @@ window.addEventListener('message', e => {
     }
   }
 });
+
+/* ============================================================
+   v2.89.143 — Floating Revenue Command Center (사무실 우상단 HUD)
+============================================================ */
+(function setupFloatingRevenue() {
+  const FR = document.getElementById('floatingRevenue');
+  const REOPEN = document.getElementById('frReopen');
+  const HUD_STAT = document.getElementById('hudRevenueStat');
+  const $$ = (id) => document.getElementById(id);
+
+  function frClose() {
+    if (!FR) return;
+    FR.classList.add('hidden');
+    if (REOPEN) REOPEN.classList.add('show');
+  }
+  function frOpen() {
+    if (!FR) return;
+    FR.classList.remove('hidden');
+    if (REOPEN) REOPEN.classList.remove('show');
+    requestRevenueMini();
+  }
+  function requestRevenueMini() {
+    vscode.postMessage({ type: 'requestRevenueMini' });
+  }
+  $$('frClose')?.addEventListener('click', frClose);
+  REOPEN?.addEventListener('click', frOpen);
+  HUD_STAT?.addEventListener('click', frOpen);
+  $$('frOpenDashboard')?.addEventListener('click', () => {
+    vscode.postMessage({ type: 'openRevenueDashboard' });
+  });
+  $$('frAskHyunbin')?.addEventListener('click', () => {
+    vscode.postMessage({ type: 'askHyunbinRevenue' });
+  });
+
+  function _fmt(v) {
+    if (v == null) return '—';
+    const n = Number(v);
+    if (n === 0) return '0';
+    const abs = Math.abs(n);
+    if (abs >= 1000) return (n/1000).toFixed(1) + 'K';
+    return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+  function _animate(el, target, formatter) {
+    if (!el) return;
+    const t0 = performance.now(), dur = 900;
+    const startVal = parseFloat(el.dataset.last || '0') || 0;
+    function tick(now) {
+      const p = Math.min(1, (now - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      const v = startVal + (target - startVal) * eased;
+      el.textContent = formatter ? formatter(v) : Math.round(v).toLocaleString();
+      if (p < 1) requestAnimationFrame(tick);
+      else el.dataset.last = String(target);
+    }
+    requestAnimationFrame(tick);
+  }
+  function _renderSpark(byDay, cur) {
+    const svg = $$('frSparkSvg');
+    if (!svg) return;
+    const days = [];
+    const today = new Date();
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(today); d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const day = byDay[key];
+      days.push(day && day[cur] ? day[cur].gross : 0);
+    }
+    const maxV = Math.max(...days, 1);
+    const W = 240, H = 36;
+    const xOf = (i) => (i / (days.length - 1)) * W;
+    const yOf = (v) => 4 + (28) - (v / maxV) * 28;
+    const pts = days.map((v, i) => xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1)).join(' ');
+    const areaPts = '0,' + (4 + 28) + ' ' + pts + ' ' + W + ',' + (4 + 28);
+    const peakIdx = days.reduce((acc, v, i) => v > days[acc] ? i : acc, 0);
+    const peakDot = days[peakIdx] > 0
+      ? '<circle class="peak" cx="' + xOf(peakIdx).toFixed(1) + '" cy="' + yOf(days[peakIdx]).toFixed(1) + '" r="2.5"></circle>'
+      : '';
+    svg.innerHTML =
+      '<defs><linearGradient id="frSparkGrad" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="#22d3ee" stop-opacity="0.4"/>' +
+      '<stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/></linearGradient></defs>' +
+      '<polygon class="area" points="' + areaPts + '"></polygon>' +
+      '<polyline class="line" points="' + pts + '"></polyline>' + peakDot;
+  }
+  function renderRev(data) {
+    if (data?.error) {
+      $$('frSub').textContent = '⚠️ ' + (data.error || '연결 확인 필요');
+      return;
+    }
+    if (!data || !data.totals) {
+      $$('frSub').textContent = '💡 외부 연결 패널 → PayPal 입력';
+      return;
+    }
+    const totals = data.totals;
+    const period = totals.by_period || {};
+    const byCur = totals.by_currency || {};
+    const primaryCur = Object.entries(byCur).sort((a,b) => (b[1].gross||0)-(a[1].gross||0))[0]?.[0] || 'USD';
+    const cur = byCur[primaryCur] || { gross: 0, count: 0 };
+    const fmt = (v) => primaryCur === 'USD' ? '$' + _fmt(v) : _fmt(v) + ' ' + primaryCur;
+    _animate($$('frMonth'), period.month || 0, fmt);
+    _animate($$('frWeek'), period.week || 0, fmt);
+    _animate($$('frCount'), cur.count || 0);
+    // HUD stat
+    const hudEl = $$('hudRevenue');
+    if (hudEl) hudEl.textContent = fmt(period.month || 0);
+    _renderSpark(data.by_day || {}, primaryCur);
+    $$('frSub').textContent = cur.count + '건 · 실시간 분석';
+  }
+  window.addEventListener('message', e => {
+    const m = e.data;
+    if (m.type === 'revenueMini') renderRev(m.data);
+  });
+  // 초기 + 60초마다 새로고침
+  requestRevenueMini();
+  setInterval(requestRevenueMini, 60000);
+})();
 
 vscode.postMessage({ type: 'officeReady' });
 </script>

@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.131 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.132 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.131';
+const _CONNECT_AI_VERSION = '2.89.132';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -18073,8 +18073,16 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             // 1) CEO에게 작업 분해 요청 (silent — UI에는 카드 펄스만)
             // Phase 2: inject recent conversation history into CEO context so
             // planning is aware of what the company has been doing.
-            post({ type: 'agentStart', agent: 'ceo', task: '작업 분해' });
-            _updateActiveDispatchStep(prompt, 'CEO 계획 수립 중');
+            /* v2.89.132 — 명시적 호출 감지. "코다리야 …" 처럼 사용자가 직접 이름 부르면
+               CEO LLM 호출 건너뛰고 그 에이전트만 단독 dispatch. 30초 vs 11분 차이. */
+            const explicit = this._detectExplicitMention(prompt);
+            if (explicit) {
+                post({ type: 'agentStart', agent: 'ceo', task: `${explicit.agentName} 직접 호출 — CEO 우회` });
+                _updateActiveDispatchStep(prompt, `${explicit.agentName} 직접 호출`);
+            } else {
+                post({ type: 'agentStart', agent: 'ceo', task: '작업 분해' });
+                _updateActiveDispatchStep(prompt, 'CEO 계획 수립 중');
+            }
             let planRaw = '';
             /* v2.89.96 — 단계별 system prompt 빌드 + 각 단계 가드. 어느 단계가
                'Maximum call stack' 던지는지 정확히 표시 → 사용자/우리가 즉시 진단. */
@@ -18136,14 +18144,22 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 return;
             }
             try {
-                planRaw = await this._callAgentLLM(
-                    ceoSystemPrompt,
-                    `[사용자 명령]\n${prompt}`,
-                    modelName,
-                    'ceo',
-                    false,
-                    { jsonMode: true }
-                );
+                /* v2.89.132 — 명시적 호출이면 LLM 안 거치고 직접 plan JSON 생성. */
+                if (explicit) {
+                    planRaw = JSON.stringify({
+                        brief: `사용자가 ${explicit.agentName}를 직접 호출 — 단독 작업`,
+                        tasks: [{ agent: explicit.agentId, task: prompt }]
+                    });
+                } else {
+                    planRaw = await this._callAgentLLM(
+                        ceoSystemPrompt,
+                        `[사용자 명령]\n${prompt}`,
+                        modelName,
+                        'ceo',
+                        false,
+                        { jsonMode: true }
+                    );
+                }
             } catch (e: any) {
                 post({ type: 'agentEnd', agent: 'ceo' });
                 // Pull server-side error detail out of the axios stream response so
@@ -19300,6 +19316,40 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
         if (this._recentFileActions.length > 20) {
             this._recentFileActions = this._recentFileActions.slice(-20);
         }
+    }
+
+    /** v2.89.132 — 명시적 에이전트 호출 감지. "코다리야 …"·"@developer …"·"개발자야 …"
+     *  처럼 사용자가 직접 이름 부른 경우 CEO 단계를 건너뛰고 그 에이전트에게만 dispatch.
+     *  사용자 의도 존중 + 단순 작업의 처리 시간 5배 단축 (CEO LLM 호출 1회 + 다른
+     *  specialist 4명 호출 제거). 자연어로만 명령한 경우는 None 반환 → 기존 CEO 분배. */
+    private _detectExplicitMention(prompt: string): { agentId: string; agentName: string } | null {
+        const lower = prompt.toLowerCase();
+        /* 호출 후보: 한글 닉네임·영문 id·역할 키워드 → agentId 매핑.
+           우선순위 높은 것부터 (코다리 같은 고유 닉네임이 일반어 "개발자"보다 강함). */
+        const candidates: Array<{ patterns: RegExp[]; agentId: string; agentName: string }> = [
+            { patterns: [/코다리[야아!,~ ]/, /코다리야/, /@developer\b/, /@코다리\b/], agentId: 'developer', agentName: '코다리' },
+            { patterns: [/현빈[아야!,~ ]/, /현빈아/, /@business\b/, /@현빈\b/], agentId: 'business', agentName: '현빈' },
+            { patterns: [/루나[야아!,~ ]/, /루나야/, /@editor\b/, /@루나\b/], agentId: 'editor', agentName: '루나' },
+            { patterns: [/레오[야아!,~ ]/, /레오야/, /@youtube\b/, /@레오\b/], agentId: 'youtube', agentName: '레오' },
+            { patterns: [/영숙[아야!,~ ]/, /영숙아/, /@secretary\b/, /@영숙\b/], agentId: 'secretary', agentName: '영숙' },
+            /* 역할 호칭 — 단, 자연스러운 명령에서 잘못 매칭 안 되게 "야"·"!"·"," 같은 호격 표지 필요 */
+            { patterns: [/개발자[야아!,]/, /@developer\b/], agentId: 'developer', agentName: '개발자' },
+            { patterns: [/디자이너[야아!,]/, /@designer\b/], agentId: 'designer', agentName: '디자이너' },
+            { patterns: [/작가[야아!,]/, /@writer\b/], agentId: 'writer', agentName: '작가' },
+            { patterns: [/리서처[야아!,]/, /@researcher\b/], agentId: 'researcher', agentName: '리서처' },
+            { patterns: [/인스타[야아!,]/, /@instagram\b/], agentId: 'instagram', agentName: '인스타' },
+        ];
+        for (const c of candidates) {
+            for (const p of c.patterns) {
+                if (p.test(prompt) || p.test(lower)) {
+                    /* 활성 상태인지 확인 — 비활성 에이전트면 CEO 분배로 fallback */
+                    if (isAgentActive(c.agentId)) {
+                        return { agentId: c.agentId, agentName: c.agentName };
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /** v2.89.131 — fuzzy path hint. list_files/read_file 이 디렉토리 못 찾을 때

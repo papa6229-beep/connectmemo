@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.143 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.144 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.143';
+const _CONNECT_AI_VERSION = '2.89.144';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -7316,7 +7316,16 @@ async function prefetchAgentRealtimeData(agentId: string): Promise<string> {
   if (blocks.length === 0) return '';
   /* 진짜 데이터 확보 여부에 따라 강력한 지시 다르게 */
   const strictRule = gotRealData
-    ? `⚠️ **위 데이터에 없는 숫자는 추측·생성 금지**. "[데이터 입력 필요]" 같은 placeholder 절대 금지. 빈 항목은 "이 지표는 사용 가능 데이터에 포함 안 됨"이라고 솔직히 표시.`
+    ? `⚠️ **위 데이터에 없는 숫자는 추측·생성 금지**. "[데이터 입력 필요]" 같은 placeholder 절대 금지. 빈 항목은 "이 지표는 사용 가능 데이터에 포함 안 됨"이라고 솔직히 표시.
+
+🛑 **read_file·list_files 사용 금지 (실시간 데이터 이미 위에 있음)**:
+위 [실시간 데이터] 블록에 진짜 매출/거래/숫자가 모두 포함돼 있음. README 또는 .md 문서 읽지 마세요 — 그건 사용법 안내일 뿐이고 실데이터 아님. 위 표·숫자를 그대로 인용해서 즉시 분석/액션 제안.
+
+✅ **즉시 답변 패턴**:
+1. 첫 줄: "사장님, 이번 달 매출 [정확한 금액] 입니다."
+2. 핵심 인사이트 1~2개 (위 데이터에서 직접 인용)
+3. 다음 액션 1개 (구체적, 실행 가능)
+4. 마지막 자가평가 + 다음 단계 (필수)`
     : `🛑 **실시간 데이터 가져오기 실패** — 위 출력은 에러 메시지뿐. 사용자에게 정확히 무엇이 문제인지(Python 미설치? 패키지 미설치? API 키 미설정?) 알려주고, 가짜 분석·placeholder 데이터 절대 생성하지 마세요. 작업은 '대기' 평가로 끝내고 다음 단계는 사용자가 환경 셋업 후 재시도.`;
   return `\n\n[실시간 데이터 — 시스템이 방금 도구로 가져온 진짜 출력]\n\n${blocks.join('\n\n')}\n\n${strictRule}`;
 }
@@ -13566,12 +13575,6 @@ body.dispatching .beams{opacity:1}
     <div class="stat" id="hudWorkingStat">
       <div class="icon">👥</div>
       <div class="text"><div class="lbl">Working</div><div class="val" id="hudWorking">0/7</div></div>
-    </div>
-    <!-- v2.89.143 — 매출 HUD stat. 클릭 시 풀스크린 매출 대시보드 열림. -->
-    <div class="stat hud-revenue clickable" id="hudRevenueStat" title="매출 대시보드 열기">
-      <div class="icon">💰</div>
-      <div class="text"><div class="lbl">Revenue (30d)</div><div class="val" id="hudRevenue">—</div></div>
-      <div class="hud-rev-pulse"></div>
     </div>
   </div>
 

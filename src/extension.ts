@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.144 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.145 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.144';
+const _CONNECT_AI_VERSION = '2.89.145';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -19317,9 +19317,19 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                    강하게 매칭되는 명령이면 LLM 호출 자체 건너뛰고 pack_apply 직접 실행.
                    LM Studio 죽어있거나 context 모자라도 시연 깨지지 않음.
                    조건: explicit 호출 + t.agent === developer + 매칭 점수 ≥ 10. */
-                const shortcut = (explicit && t.agent === 'developer')
-                    ? this._tryKitShortcut(t.agent, prompt)
-                    : null;
+                let shortcut: string | null = null;
+                if (explicit && t.agent === 'developer') {
+                    shortcut = this._tryKitShortcut(t.agent, prompt);
+                }
+                /* v2.89.145 — business 매출 shortcut. 명시적 현빈 호출 + 매출/수익/PayPal
+                   키워드면 LLM 우회하고 paypal_revenue.py 결과 + 한 줄 인사이트 직접 표시.
+                   작은 LLM(gemma-2B)이 system prompt 무시하고 README 읽으려는 버릇 차단. */
+                if (!shortcut && explicit && t.agent === 'business') {
+                    const lower = prompt.toLowerCase();
+                    if (/매출|수익|결제|paypal|revenue|매상|매월|이번 달|이번달|월 매출|페이팔|돈|얼마 벌/.test(lower)) {
+                        shortcut = await this._tryRevenueShortcut(prompt);
+                    }
+                }
                 if (shortcut) {
                     out = shortcut;
                     /* 사무실에 작업 시작 신호 한 번 → 사용자가 코다리 카드 펄스 봄 */
@@ -20250,6 +20260,59 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
             }
         }
         return null;
+    }
+
+    /** v2.89.145 — 매출 shortcut. 명시적 현빈 호출 + 매출 키워드면 LLM 우회하고
+     *  paypal_revenue.py 의 마크다운 리포트 + 한 줄 코멘트 직접 표시. 작은 LLM이
+     *  prefetch 무시하고 README 읽으려 하는 버릇 차단.
+     *
+     *  paypal_revenue.json 자격증명 없으면 친절 안내. 호출 실패하면 null →
+     *  기존 LLM 흐름으로 fallback.
+     */
+    private async _tryRevenueShortcut(userPrompt: string): Promise<string | null> {
+        const ppToolDir = path.join(getCompanyDir(), '_agents', 'business', 'tools');
+        const ppScript = path.join(ppToolDir, 'paypal_revenue.py');
+        const ppJson = path.join(ppToolDir, 'paypal_revenue.json');
+        if (!fs.existsSync(ppScript) || !fs.existsSync(ppJson)) return null;
+        let cfg: any = {};
+        try { cfg = JSON.parse(_safeReadText(ppJson) || '{}'); } catch { return null; }
+        if (!cfg.CLIENT_ID || !cfg.CLIENT_SECRET) {
+            return `💼 현빈: 사장님, PayPal Client ID 또는 Secret 이 비어있어 매출을 가져올 수 없어요.
+
+📋 **해결 단계**:
+1. \`Cmd+Shift+P\` → \`Connect AI: 외부 연결\`
+2. 💰 PayPal 카드 → Client ID + Secret 입력
+3. 저장 → 즉시 매출 분석 가능
+
+📊 평가: 대기 — PayPal 자격증명 입력 후 재시도.
+📝 다음 단계: 사장님이 PayPal Developer Dashboard 에서 Client ID/Secret 복사 → 외부 연결 패널 입력.
+`;
+        }
+        try {
+            const env = { ...process.env, LOOKBACK_DAYS: String(cfg.LOOKBACK_DAYS || 30) };
+            const r = await new Promise<{ exitCode: number; output: string; stderr: string }>((resolve) => {
+                const cp = require('child_process');
+                const p = cp.spawn(_pythonCmd(), [ppScript], { cwd: ppToolDir, env });
+                let out = '', err = '';
+                p.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+                p.stderr?.on('data', (d: Buffer) => { err += d.toString(); });
+                p.on('close', (code: number) => resolve({ exitCode: code, output: out, stderr: err }));
+                setTimeout(() => { try { p.kill(); } catch {} resolve({ exitCode: -1, output: out, stderr: err }); }, 25000);
+            });
+            if (r.exitCode !== 0 || !r.output) {
+                return `💼 현빈: PayPal 데이터 가져오기 실패. ${r.stderr.slice(-150) || ''}
+
+📋 외부 연결 패널에서 Client ID/Secret 다시 확인 후 재시도.
+📊 평가: 대기 — 자격증명 확인 필요.
+📝 다음 단계: \`Cmd+Shift+P\` → \`Connect AI: 외부 연결\` 에서 PayPal 카드 점검.
+`;
+            }
+            const insight = `💼 현빈: 사장님, 실시간 PayPal 데이터 가져왔습니다. 즉시 분석 결과 보여드려요.\n\n`;
+            const footer = `\n\n📊 평가: 완료 — 실데이터 기반 분석 (LLM 우회, 환각 없음).\n📝 다음 단계: 위 "💡 다음 액션" 섹션 참고하시고, 더 깊이 분석 필요하면 매출 대시보드 (\`Cmd+Shift+P → 매출 대시보드\`) 에서 시각화 확인.\n`;
+            return insight + r.output + footer;
+        } catch (e: any) {
+            return null;
+        }
     }
 
     /** v2.89.133 — 키트 shortcut. 명시적 코다리 호출 + 두뇌 키트와 강하게 매칭되는

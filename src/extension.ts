@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.140 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.141 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.140';
+const _CONNECT_AI_VERSION = '2.89.141';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -6650,7 +6650,7 @@ function _seedBusinessPaypalRevenue(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'paypal_revenue.py'), py, 'paypal_revenue_v2');
+  _seedFileForceUpgrade(path.join(toolsDir, 'paypal_revenue.py'), py, 'paypal_revenue_v3');
   _mergeSchemaIntoJson(path.join(toolsDir, 'paypal_revenue.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'paypal_revenue.md'), md, 'paypal_revenue_v1');
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: paypal_revenue_v2
+# version: paypal_revenue_v3
 """PayPal 매출 자동 분석 — Connect AI 비즈니스 에이전트 전용.
 
 흐름:
@@ -45,8 +45,17 @@ def _base_url(mode: str) -> str:
     return "https://api-m.paypal.com" if mode.lower() == "live" else "https://api-m.sandbox.paypal.com"
 
 
-def _get_access_token(base_url: str, client_id: str, client_secret: str) -> str:
-    """OAuth2 client_credentials grant — 5분 정도 캐시 가능하지만 매번 새로 발급도 안전."""
+def _has_reporting_scope(token_response: dict) -> bool:
+    """v2: OAuth 응답의 scope 필드에 Reporting (Transaction Search) 권한 있는지 검사.
+       PayPal Dashboard 앱 설정 → Features → Transaction Search 체크 + Save 안 했으면 False.
+       사용자에게 친절한 안내 띄우는 용도."""
+    scopes = (token_response.get("scope") or "").split()
+    return any("reporting" in s for s in scopes)
+
+
+def _get_access_token_full(base_url: str, client_id: str, client_secret: str) -> dict:
+    """v2: OAuth2 client_credentials grant — token + scope 둘 다 반환.
+       scope 검사로 사용자 안내 (Transaction Search 권한 부재 사전 감지)."""
     auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     req = urllib.request.Request(
         f"{base_url}/v1/oauth2/token",
@@ -59,13 +68,17 @@ def _get_access_token(base_url: str, client_id: str, client_secret: str) -> str:
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read().decode())
-            return data["access_token"]
+            return json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         err_body = e.read().decode(errors="ignore")[:200]
         raise RuntimeError(f"OAuth 실패 (HTTP {e.code}): {err_body}")
     except Exception as e:
         raise RuntimeError(f"OAuth 요청 실패: {e}")
+
+
+def _get_access_token(base_url: str, client_id: str, client_secret: str) -> str:
+    """레거시 호환 — token 만 반환."""
+    return _get_access_token_full(base_url, client_id, client_secret)["access_token"]
 
 
 def _fetch_transactions(base_url: str, token: str, start: datetime, end: datetime, currency_filter: str = ""):
@@ -76,8 +89,10 @@ def _fetch_transactions(base_url: str, token: str, start: datetime, end: datetim
     while cur < end:
         page_end = min(cur + timedelta(days=31), end)
         params = {
-            "start_date": cur.isoformat().replace("+00:00", "Z"),
-            "end_date": page_end.isoformat().replace("+00:00", "Z"),
+            # v3: PayPal Transaction Search 는 마이크로초 포함 ISO 형식 거부.
+            #     초 단위까지만 + Z timezone 으로 강제. strftime 으로 안전 포맷.
+            "start_date": cur.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end_date": page_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "fields": "all",
             "page_size": "500",
             "page": "1",
@@ -399,11 +414,43 @@ def main():
     _log(f"PayPal {mode.upper()} 모드 · 최근 {lookback}일 분석", "info")
 
     try:
-        token = _get_access_token(base, client_id, client_secret)
+        token_resp = _get_access_token_full(base, client_id, client_secret)
+        token = token_resp["access_token"]
         _log("OAuth 인증 성공", "ok")
     except Exception as e:
         _log(f"OAuth 실패: {e}", "err")
         sys.exit(1)
+
+    # v2: scope 검사 → Reporting (Transaction Search) 권한 없으면 친절 안내 후 종료
+    if not _has_reporting_scope(token_resp):
+        _log("Transaction Search (Reporting) 권한이 토큰에 없음", "err")
+        _log("  PayPal Developer Dashboard → 본인 앱 → Features → ", "info")
+        _log("  ☑ Transaction search 체크 → Save Changes (반드시!)", "info")
+        _log("  변경 후 1~3분 대기 → 다시 시도", "info")
+        _log("", "info")
+        _log("  💡 자주 놓치는 곳:", "info")
+        _log("  - Default Application 사용 중이면 새 앱 만들기 (Features 잠금 가능)", "info")
+        _log("  - 좌상단 Sandbox/Live 토글이 입력한 자격증명과 같은 환경인지", "info")
+        _log("  - Live 환경은 PayPal 비즈니스 인증 + 별도 권한 신청 필요할 수 있음", "info")
+        if output_mode == "json":
+            print(json.dumps({
+                "error": "reporting_scope_missing",
+                "message": "OAuth 토큰에 Transaction Search 권한 없음",
+                "scope": token_resp.get("scope", ""),
+                "fix": "PayPal Dashboard 앱 Features 에서 Transaction search 체크 + Save"
+            }, ensure_ascii=False, indent=2))
+        else:
+            print("# 💰 PayPal 매출 분석\n")
+            print("> ❌ **Transaction Search 권한 없음** — PayPal Dashboard 에서 활성화 필요")
+            print()
+            print("**해결 단계:**")
+            print("1. https://developer.paypal.com/dashboard/applications")
+            print("2. 좌상단 Sandbox/Live 토글 확인 (현재 모드: `" + mode + "`)")
+            print("3. 본인 앱 클릭")
+            print("4. **Features** 섹션 → ☑ **Transaction search** 체크")
+            print("5. 페이지 하단 **Save Changes** 클릭 (필수!)")
+            print("6. 1~3분 대기 후 매출 대시보드 다시 새로고침")
+        sys.exit(2)
 
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=lookback)

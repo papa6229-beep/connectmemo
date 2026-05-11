@@ -12,12 +12,21 @@ function render(s){
     else status = '<span class="svc-status">미설정</span>';
     const fieldsHtml = svc.fields.map(f => {
       const val = svc.values[f.key] || '';
-      const inputType = f.type === 'password' ? 'password' : 'text';
       const dis = svc.comingSoon ? ' disabled' : '';
+      let inputEl;
+      if (f.type === 'select' && Array.isArray(f.options)) {
+        const opts = f.options.map(o =>
+          '<option value="' + esc(o) + '"' + (o === val ? ' selected' : '') + '>' + esc(o) + '</option>'
+        ).join('');
+        inputEl = '<select' + dis + '>' + opts + '</select>';
+      } else {
+        const inputType = f.type === 'password' ? 'password' : 'text';
+        inputEl = '<input type="' + inputType + '" value="' + esc(val) + '" placeholder="' + esc(f.placeholder || '') + '"' + dis + '>';
+      }
       return '<div class="svc-field" data-key="' + esc(f.key) + '">'
         + '<label>' + esc(f.label) + '</label>'
         + '<div class="svc-input-wrap">'
-        +   '<input type="' + inputType + '" value="' + esc(val) + '" placeholder="' + esc(f.placeholder || '') + '"' + dis + '>'
+        +   inputEl
         +   (f.type === 'password' && !svc.comingSoon ? '<button class="svc-eye" data-eye="1" title="표시/숨김">👁</button>' : '')
         + '</div>'
         + (f.help ? '<div class="svc-help">' + esc(f.help) + '</div>' : '')
@@ -60,7 +69,7 @@ function render(s){
         if (act === 'save') {
           const values = {};
           card.querySelectorAll('.svc-field').forEach(fEl => {
-            values[fEl.dataset.key] = fEl.querySelector('input').value;
+            values[fEl.dataset.key] = (fEl.querySelector('input, select') || {}).value || '';
           });
           vscode.postMessage({ type: 'save', serviceId: id, values });
         } else if (act === 'wizard') {

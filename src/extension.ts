@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.139 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.140 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.139';
+const _CONNECT_AI_VERSION = '2.89.140';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -11298,9 +11298,11 @@ function _loadWebviewAsset(name: string): string {
 interface ApiServiceField {
     key: string;
     label: string;
-    type: 'text' | 'password';
+    type: 'text' | 'password' | 'select';
     placeholder?: string;
     help?: string;
+    /** v2.89.140 — type='select' 일 때 선택지. 예: ['sandbox', 'live']. */
+    options?: string[];
 }
 interface ApiServiceDef {
     id: string;
@@ -11400,7 +11402,7 @@ const API_SERVICES: ApiServiceDef[] = [
         helpUrl: 'https://developer.paypal.com/dashboard/applications',
         agentId: 'business',
         fields: [
-            { key: 'PAYPAL_MODE', label: '모드 (sandbox / live)', type: 'text', placeholder: 'sandbox', help: '테스트는 sandbox, 실제 결제는 live. 기본 sandbox.' },
+            { key: 'PAYPAL_MODE', label: '모드', type: 'select', options: ['sandbox', 'live'], help: '테스트는 sandbox, 실제 결제는 live. ⚠️ Live 는 별도 자격증명 필요 — Developer Dashboard 좌상단 Sandbox/Live 토글 후 Live 앱에서 받은 Client ID/Secret 사용.' },
             { key: 'PAYPAL_CLIENT_ID', label: 'Client ID', type: 'password', help: 'Developer Dashboard → Apps & Credentials → 본인 앱 → Client ID' },
             { key: 'PAYPAL_CLIENT_SECRET', label: 'Client Secret', type: 'password', help: '같은 화면에서 Secret 복사 (Show 클릭)' },
             { key: 'PAYPAL_LOOKBACK_DAYS', label: '분석 기간 (일)', type: 'text', placeholder: '30', help: '비우면 30일. Transaction Search 한도 31일.' },

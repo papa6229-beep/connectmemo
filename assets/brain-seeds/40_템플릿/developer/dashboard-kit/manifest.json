@@ -1,0 +1,20 @@
+{
+  "name": "Dashboard Kit",
+  "version": "1.0.0",
+  "category": "web",
+  "description": "SaaS·관리자 대시보드 — 사이드바·탑바·통계 카드·테이블·차트.",
+  "base": "vite-react + Tailwind v4",
+  "components": ["Sidebar.tsx", "Topbar.tsx", "StatsCards.tsx", "RecentTable.tsx", "DashboardLayout.tsx"],
+  "keywords": ["dashboard", "대시보드", "admin", "관리자", "saas", "analytics"],
+  "dependencies": {
+    "production": ["lucide-react"],
+    "dev": []
+  },
+  "tested_with": { "node": ">=20", "react": "^19", "tailwindcss": "^4" },
+  "apply": {
+    "copy_to": "src/components/",
+    "post_install": ["npm install lucide-react"],
+    "app_imports": ["DashboardLayout"],
+    "app_body": "<DashboardLayout />"
+  }
+}

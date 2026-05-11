@@ -6279,6 +6279,7 @@ const AGENT_TOOLS_CATALOG: Record<string, { tool: string; desc: string; planned?
     ],
     developer: [
         { tool: 'web_init', desc: '5개 템플릿 자동 시작 — vite·next·astro·expo·vanilla' },
+        { tool: 'pack_apply', desc: '두뇌의 키트 (landing·portfolio·dashboard·mobile)를 프로젝트에 자동 적용 + npm install + App.tsx 업데이트' },
         { tool: 'web_preview', desc: 'dev server 백그라운드 실행 + URL 자동 추출' },
         { tool: 'pwa_setup', desc: '웹사이트 → PWA 변환 (manifest·sw·아이콘 자동 생성)' },
         { tool: 'git_committer', desc: '작업 단위 자동 커밋 (의미 단위 + git add -A 금지)', planned: true },
@@ -6424,12 +6425,13 @@ function _seedAgentToolsIfMissing(agentId: string) {
       _seedEditorMusicGenerate(toolsDir);
       _seedEditorMusicToVideo(toolsDir);
     } else if (agentId === 'developer') {
-      /* v2.89.112 — 코다리 도구. 웹·모바일 셋업 + PWA + dev server. */
+      /* v2.89.112+122 — 코다리 도구. 웹·모바일 셋업 + PWA + dev server + 키트 적용. */
       const toolsDir = path.join(getCompanyDir(), '_agents', agentId, 'tools');
       fs.mkdirSync(toolsDir, { recursive: true });
       _seedDeveloperWebInit(toolsDir);
       _seedDeveloperWebPreview(toolsDir);
       _seedDeveloperPwaSetup(toolsDir);
+      _seedDeveloperPackApply(toolsDir);
     } else if (agentId === 'business') {
       /* v2.89.121 — 비즈니스 에이전트 도구. PayPal 매출 자동 분석. */
       const toolsDir = path.join(getCompanyDir(), '_agents', agentId, 'tools');
@@ -6546,6 +6548,36 @@ function _seedDeveloperWebPreview(toolsDir: string) {
   _seedFileForceUpgrade(path.join(toolsDir, 'web_preview.py'), py, 'web_preview_v1');
   _mergeSchemaIntoJson(path.join(toolsDir, 'web_preview.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'web_preview.md'), md, 'web_preview_v1');
+}
+
+function _seedDeveloperPackApply(toolsDir: string) {
+  const py = _loadToolSeed('developer/pack_apply.py');
+  const md = _loadToolSeed('developer/pack_apply.md');
+  const json = JSON.stringify({
+    KIT_NAME: 'landing-kit',
+    PROJECT_PATH: '',
+    _schema: {
+      KIT_NAME: {
+        type: 'select',
+        label: '🧩 키트 선택',
+        hint: '두뇌에 주입된 템플릿 팩 중 하나. EZER Pack Vault 에서 먼저 주입하세요.',
+        options: [
+          { value: 'landing-kit',   label: '🏠 Landing Kit — SaaS 랜딩 (6 섹션)' },
+          { value: 'portfolio-kit', label: '👤 Portfolio Kit — 1인 크리에이터 (5 섹션)' },
+          { value: 'dashboard-kit', label: '📊 Dashboard Kit — SaaS 관리자' },
+          { value: 'mobile-kit',    label: '📱 Mobile Kit — Expo 모바일 앱 (3 화면)' },
+        ],
+      },
+      PROJECT_PATH: {
+        type: 'text',
+        label: '📁 적용할 프로젝트 경로',
+        hint: '비우면 web_init 이 마지막에 만든 프로젝트 자동 사용',
+      },
+    },
+  }, null, 2);
+  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v1');
+  _mergeSchemaIntoJson(path.join(toolsDir, 'pack_apply.json'), json);
+  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.md'), md, 'pack_apply_v1');
 }
 
 function _seedDeveloperPwaSetup(toolsDir: string) {

@@ -1,0 +1,20 @@
+{
+  "name": "Mobile Kit (Expo)",
+  "version": "1.0.0",
+  "category": "mobile",
+  "description": "Expo React Native — iOS·Android·Web 동시 작동. Home·Profile·Settings 3 화면 + Bottom Tab.",
+  "base": "expo + TypeScript",
+  "components": ["App.tsx", "screens/HomeScreen.tsx", "screens/ProfileScreen.tsx", "screens/SettingsScreen.tsx"],
+  "keywords": ["mobile", "expo", "react native", "ios", "android", "앱", "모바일"],
+  "dependencies": {
+    "production": ["@react-navigation/native", "@react-navigation/bottom-tabs", "react-native-screens", "react-native-safe-area-context", "@expo/vector-icons"],
+    "dev": []
+  },
+  "tested_with": { "node": ">=20", "expo": "^52" },
+  "apply": {
+    "copy_to": ".",
+    "post_install": [
+      "npx expo install @react-navigation/native @react-navigation/bottom-tabs react-native-screens react-native-safe-area-context"
+    ]
+  }
+}

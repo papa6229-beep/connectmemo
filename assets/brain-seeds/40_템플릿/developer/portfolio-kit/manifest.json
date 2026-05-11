@@ -1,0 +1,19 @@
+{
+  "name": "Portfolio Kit",
+  "version": "1.0.0",
+  "category": "web",
+  "description": "1인 크리에이터·프리랜서·강사용 포트폴리오 — About·Work·Skills·Contact 4섹션.",
+  "base": "vite-react + Tailwind v4",
+  "components": ["Nav.tsx", "About.tsx", "Work.tsx", "Skills.tsx", "Contact.tsx"],
+  "keywords": ["portfolio", "포트폴리오", "프리랜서", "크리에이터", "강사", "자기소개"],
+  "dependencies": {
+    "production": ["lucide-react"],
+    "dev": []
+  },
+  "tested_with": { "node": ">=20", "react": "^19", "tailwindcss": "^4" },
+  "apply": {
+    "copy_to": "src/components/",
+    "post_install": ["npm install lucide-react"],
+    "app_imports": ["Nav", "About", "Work", "Skills", "Contact"]
+  }
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: pack_apply_v3
+# version: pack_apply_v4
 """두뇌의 템플릿 팩을 사용자 프로젝트에 한 번에 적용.
 
 흐름:
@@ -205,9 +205,45 @@ def _autodetect_kit(brain_root, intent_text):
     return scored[0][0], scored[0][1], scored[:3]
 
 
+def _parse_cli_args():
+    """v4: 로컬 LLM 이 CLI 인자로 호출하는 패턴도 지원.
+       `--kit landing-kit --user-intent "..." --project /path` 또는
+       환경변수 KIT_NAME / USER_INTENT / PROJECT_PATH."""
+    out = {}
+    args = sys.argv[1:]
+    i = 0
+    aliases = {
+        "--kit": "KIT_NAME", "--kit-name": "KIT_NAME",
+        "--user-intent": "USER_INTENT", "--intent": "USER_INTENT",
+        "--project": "PROJECT_PATH", "--project-path": "PROJECT_PATH",
+    }
+    while i < len(args):
+        a = args[i]
+        if a in aliases and i + 1 < len(args):
+            out[aliases[a]] = args[i + 1]
+            i += 2
+        elif "=" in a and a.startswith("--"):
+            k, v = a[2:].split("=", 1)
+            key = aliases.get("--" + k)
+            if key:
+                out[key] = v
+            i += 1
+        else:
+            i += 1
+    for k in ("KIT_NAME", "USER_INTENT", "PROJECT_PATH"):
+        if k in os.environ and os.environ[k].strip():
+            out.setdefault(k, os.environ[k])
+    return out
+
+
 def main():
     cfg = _load(CONFIG)
     init_cfg = _load(WEB_INIT_CFG)
+
+    cli = _parse_cli_args()
+    for k, v in cli.items():
+        if v and str(v).strip():
+            cfg[k] = v
 
     kit_name = (cfg.get("KIT_NAME") or "").strip()
     user_intent = (cfg.get("USER_INTENT") or "").strip()

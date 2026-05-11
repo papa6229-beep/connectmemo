@@ -301,13 +301,93 @@ def _summarize(txs, default_currency: str = ""):
     return "\n".join(lines)
 
 
+def _json_dump(txs, default_currency: str = ""):
+    """v2: OUTPUT=json 모드에서 호출. 마크다운 대신 watcher / 대시보드가 파싱하기
+       쉬운 구조화 JSON 출력. 새 결제 감지 + 대시보드 그래프 양쪽에서 사용."""
+    out = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        "currency_filter": default_currency,
+        "totals": {"by_currency": {}, "by_period": {"today": 0.0, "week": 0.0, "month": 0.0}},
+        "by_project": {},
+        "by_day": {},        # {"2026-05-12": {"USD": {"gross": float, "count": int}}}
+        "transactions": [],  # 최근 100건만
+    }
+    now = datetime.now(timezone.utc)
+    today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    week_start = today_start - timedelta(days=7)
+    month_start = today_start - timedelta(days=30)
+
+    for t in txs:
+        info = t.get("transaction_info", {})
+        amount = info.get("transaction_amount", {})
+        currency = amount.get("currency_code", "USD")
+        value = float(amount.get("value", "0") or 0)
+        event_code = info.get("transaction_event_code", "")
+        tx_id = info.get("transaction_id", "")
+        subject = info.get("transaction_subject", "") or info.get("transaction_note", "")
+        ts_str = info.get("transaction_initiation_date", "")
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except Exception:
+            ts = None
+        is_refund = event_code.startswith("T1") or "REFUND" in event_code or value < 0
+
+        # totals
+        cur_bucket = out["totals"]["by_currency"].setdefault(currency, {"gross": 0.0, "refunds": 0.0, "fees": 0.0, "count": 0})
+        if is_refund:
+            cur_bucket["refunds"] += abs(value)
+        else:
+            cur_bucket["gross"] += value
+            cur_bucket["count"] += 1
+            if ts and currency == (default_currency or currency):
+                if ts >= today_start: out["totals"]["by_period"]["today"] += value
+                if ts >= week_start: out["totals"]["by_period"]["week"] += value
+                if ts >= month_start: out["totals"]["by_period"]["month"] += value
+        cur_bucket["fees"] += abs(float(info.get("fee_amount", {}).get("value", "0") or 0))
+
+        # by_project
+        if not is_refund:
+            proj, item = _parse_project_from_subject(subject)
+            p = out["by_project"].setdefault(proj, {"gross": 0.0, "count": 0, "currency": currency, "items": {}})
+            p["gross"] += value
+            p["count"] += 1
+            it = p["items"].setdefault(item, {"gross": 0.0, "count": 0})
+            it["gross"] += value
+            it["count"] += 1
+
+        # by_day (last 30 days)
+        if ts and ts >= month_start and not is_refund:
+            day_key = ts.strftime("%Y-%m-%d")
+            d = out["by_day"].setdefault(day_key, {})
+            db = d.setdefault(currency, {"gross": 0.0, "count": 0})
+            db["gross"] += value
+            db["count"] += 1
+
+        # transactions (recent first, cap 100)
+        out["transactions"].append({
+            "id": tx_id,
+            "ts": ts.isoformat() if ts else "",
+            "ts_epoch": int(ts.timestamp()) if ts else 0,
+            "value": value,
+            "currency": currency,
+            "subject": subject,
+            "event_code": event_code,
+            "is_refund": is_refund,
+        })
+
+    out["transactions"].sort(key=lambda x: x["ts_epoch"], reverse=True)
+    out["transactions"] = out["transactions"][:100]
+    return out
+
+
 def main():
     cfg = _load()
     mode = (cfg.get("MODE") or "sandbox").strip().lower()
     client_id = (cfg.get("CLIENT_ID") or "").strip()
     client_secret = (cfg.get("CLIENT_SECRET") or "").strip()
-    lookback = int(cfg.get("LOOKBACK_DAYS", 30))
+    lookback = int(os.environ.get("LOOKBACK_DAYS", cfg.get("LOOKBACK_DAYS", 30)))
     currency = (cfg.get("CURRENCY") or "").strip().upper()
+    output_mode = (os.environ.get("OUTPUT") or "markdown").strip().lower()
 
     if not client_id or not client_secret:
         _log("CLIENT_ID 또는 CLIENT_SECRET 비어있음. PayPal Developer Dashboard 에서 발급:", "err")
@@ -330,8 +410,11 @@ def main():
     txs = _fetch_transactions(base, token, start, end, currency)
     _log(f"총 {len(txs)}건 거래 수집", "ok")
 
-    report = _summarize(txs, currency)
-    print(report)
+    if output_mode == "json":
+        print(json.dumps(_json_dump(txs, currency), ensure_ascii=False, indent=2))
+    else:
+        report = _summarize(txs, currency)
+        print(report)
 
 
 if __name__ == "__main__":

@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.137 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.138 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.137';
+const _CONNECT_AI_VERSION = '2.89.138';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -7738,6 +7738,12 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Connect AI extension activated.');
 
     _extCtx = context;
+    /* v2.89.138 — extensionUri 즉시 세팅. 이전엔 "우리 회사 대시보드" 명령
+       처음 열기 전엔 _dashboardExtensionUri=null 이라 ApiConnectionsPanel /
+       RevenueDashboardPanel 가 _loadWebviewAsset() 으로 빈 CSS·JS 받음 →
+       헤더만 보이고 카드·차트 텅 빈 사고. activate 시점에 박아두면 모든
+       webview 가 즉시 asset 사용 가능. */
+    _dashboardExtensionUri = context.extensionUri;
     _migrateCompanyToBrain();
     /* v2.58: nest all company files under _company/ for visual clarity.
        Runs once for users coming from the unified-root layout. */

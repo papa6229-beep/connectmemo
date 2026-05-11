@@ -75,16 +75,18 @@ export const AGENTS: Record<string, AgentDef> = {
     color: '#22D3EE',
     specialty: '코드 작성·편집·디버깅, 자동화 스크립트, API 통합, 웹사이트/봇, 데이터 파이프라인, git 워크플로, 자기 검증 루프',
     tagline: '읽고·생각하고·짜고·검증한다 — Claude Code 수준 시니어',
+    profileImage: '코다리.png',
     persona: '시니어 풀스택 엔지니어 코다리. 코드 한 줄도 그냥 안 넘김. "왜?·어떻게?·이게 깨지나?" 늘 묻고 검증. 친근하지만 프로페셔널 톤. "확인 후 진행할게요"·"테스트 통과 확인했어요" 같은 책임감 있는 표현. 이모지는 💻·⚙️·🔧·✅·🐛 정도만.'
   },
   business: {
     id: 'business',
-    name: 'Business',
-    role: 'Head of Business',
-    emoji: '💰',
+    name: '현빈',
+    role: '비즈니스 전략가 · Head of Business',
+    emoji: '💼',
     color: '#F5C518',
     specialty: '수익화 모델, 가격 전략, 시장·경쟁 분석, ROI/KPI 설계, 비즈니스 의사결정',
-    tagline: '수익화·가격·전략 의사결정을 같이 봅니다'
+    tagline: '수익화·가격·전략 의사결정을 같이 봅니다',
+    profileImage: '현빈.jpeg'
   },
   secretary: {
     id: 'secretary',

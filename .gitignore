@@ -6,3 +6,4 @@ preview.html
 .DS_Store
 releases/
 .env
+*.bak.*

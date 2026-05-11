@@ -8164,19 +8164,37 @@ export function activate(context: vscode.ExtensionContext) {
         /* v2.89.120 — 포트 4825 충돌 시 사용자에게 "이걸 메인으로" 선택권.
            이전엔 그냥 에러만 띄우고 끝 → 사용자가 어느 창 닫아야 할지도 모름 + EZER
            연동 깨짐. 이제: lsof / taskkill 로 점유 프로세스 PID 찾아 종료 + 재시도. */
+        /* v2.89.126 — 재시작 신뢰도 ↑. 이전 v2.89.120은:
+           (1) 같은 server 객체 재listen → Node가 에러 상태일 때 silent fail 가능
+           (2) status bar 4초만 → 사용자 못 봄 = "아무것도 안 뜬다"
+           (3) 재실패 시 무한 루프 가능
+           해결: close() 후 새로 listen + 명시 성공 popup + retry-guard */
+        let _bridgeRetryCount = 0;
         const _tryStartBridge = (isRetry = false) => {
             server.listen(4825, '127.0.0.1', () => {
                 console.log('[Connect AI Bridge] listening on http://127.0.0.1:4825');
-                vscode.window.setStatusBarMessage(
-                    isRetry ? '🟢 Connect AI Bridge: 이 인스턴스가 메인 (포트 4825)' : '🟢 Connect AI Bridge: 포트 4825 listening',
-                    4000
-                );
+                if (isRetry) {
+                    /* 성공 명시 popup — 사용자가 분명히 봄 */
+                    vscode.window.showInformationMessage(
+                        '🟢 Bridge 인계 완료! 이 인스턴스가 메인 (포트 4825). EZER 연동 정상 작동.'
+                    );
+                    vscode.window.setStatusBarMessage('🟢 Connect AI Bridge: 이 인스턴스가 메인', 8000);
+                } else {
+                    vscode.window.setStatusBarMessage('🟢 Connect AI Bridge: 포트 4825 listening', 4000);
+                }
             });
         };
         server.on('error', async (err: any) => {
-            // listen() failures arrive as 'error' events, NOT as throws.
             console.error('[Connect AI Bridge] server error:', err);
             if (err?.code === 'EADDRINUSE') {
+                _bridgeRetryCount++;
+                if (_bridgeRetryCount > 2) {
+                    /* 2번 이상 충돌 시 무한 루프 방지 */
+                    vscode.window.showErrorMessage(
+                        '🚫 Bridge 인계 2회 실패. 다른 Anti-Gravity 창을 직접 닫고 Anti-Gravity 재시작해주세요.'
+                    );
+                    return;
+                }
                 const choice = await vscode.window.showWarningMessage(
                     '🚫 Connect AI Bridge: 포트 4825가 이미 사용 중입니다.\n다른 Anti-Gravity 인스턴스가 Bridge를 잡고 있어요. 이 인스턴스를 메인으로 전환하시겠어요?',
                     { modal: false },
@@ -8186,11 +8204,16 @@ export function activate(context: vscode.ExtensionContext) {
                 if (choice === '🎯 이걸 메인으로 (이전 종료)') {
                     const killed = _killProcessesOnPort(4825);
                     if (killed.length > 0) {
-                        vscode.window.showInformationMessage(`✅ 이전 Bridge 종료됨 (PID ${killed.join(', ')}). 1초 후 재시작.`);
-                        setTimeout(() => _tryStartBridge(true), 1000);
+                        vscode.window.showInformationMessage(`✅ 이전 Bridge 종료됨 (PID ${killed.join(', ')}). 1.5초 후 재시작 시도...`);
+                        /* 포트 해제 대기 시간 좀 더 길게 (1.5s) + close() 우선 호출 후 재listen.
+                           server.close() 는 진행 중 연결이 없으면 즉시 콜백, 있으면 다 닫고 콜백. */
+                        setTimeout(() => {
+                            try { (server as any).close(() => _tryStartBridge(true)); }
+                            catch { _tryStartBridge(true); }
+                        }, 1500);
                     } else {
                         vscode.window.showErrorMessage(
-                            '⚠️ 포트 점유 프로세스를 찾지 못했어요. 다른 Anti-Gravity 창을 직접 닫아주세요. (또는 터미널에서 `lsof -ti:4825 | xargs kill -9` 실행)'
+                            '⚠️ 포트 점유 프로세스를 찾지 못했어요. 다른 Anti-Gravity 창을 직접 닫아주세요. (또는 터미널에서 `lsof -ti:4825 | xargs kill -9`)'
                         );
                     }
                 } else {

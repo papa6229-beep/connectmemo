@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.128 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.129 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.128';
+const _CONNECT_AI_VERSION = '2.89.129';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -2206,8 +2206,8 @@ function _buildCapabilityReport(): string {
     agentSummary.push('  🎨 *디자이너* — ✅ 시안 카피·무드보드·브랜드 컬러 가이드');
     agentSummary.push('  ✍️ *작가* — ✅ 후크·스크립트·블로그·영상 카피');
     agentSummary.push('  🎵 *루나* — ✅ BGM 자동 생성·영상-음악 합성·사운드 디자인');
-    agentSummary.push('  💼 *비즈니스* — ✅ 가격·KPI·전략 분석');
-    agentSummary.push('  🛠 *개발자* — ✅ 사이트·자동화·API 코드');
+    agentSummary.push('  💼 *현빈* — ✅ 가격·KPI·전략 분석');
+    agentSummary.push('  💻 *코다리* — ✅ 사이트·자동화·API 코드');
     agentSummary.push('  🔍 *리서처* — ✅ 트렌드·경쟁사·사실 확인');
     agentSummary.push('  📷 *Instagram* — ✅ 릴스 기획·해시태그·카피');
     lines.push(agentSummary.join('\n'));
@@ -5984,7 +5984,7 @@ ${_GOAL_PREAMBLE}
 - 사용자 데이터·API 키를 코드에 그대로 박기.
 - 테스트 안 돌려보고 "수정 완료했습니다" 출력 → 거짓말.
 `,
-  business: `# 📊 Business 에이전트 — 나의 미션
+  business: `# 💼 현빈 — 비즈니스 전략가 — 나의 미션
 
 ${_GOAL_PREAMBLE}
 ## 장기 목표 (3~6개월)

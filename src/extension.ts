@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.138 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.139 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.138';
+const _CONNECT_AI_VERSION = '2.89.139';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -11392,6 +11392,21 @@ const API_SERVICES: ApiServiceDef[] = [
             { key: 'INSTAGRAM_BUSINESS_ID', label: 'Business Account ID', type: 'text' },
         ],
     },
+    {
+        id: 'paypal',
+        name: 'PayPal (매출 분석)',
+        icon: '💰',
+        summary: '내 게임·서비스의 결제 거래를 분석. 매출 대시보드 + 새 결제 텔레그램 알림에 사용. Developer Dashboard에서 Client ID/Secret 발급.',
+        helpUrl: 'https://developer.paypal.com/dashboard/applications',
+        agentId: 'business',
+        fields: [
+            { key: 'PAYPAL_MODE', label: '모드 (sandbox / live)', type: 'text', placeholder: 'sandbox', help: '테스트는 sandbox, 실제 결제는 live. 기본 sandbox.' },
+            { key: 'PAYPAL_CLIENT_ID', label: 'Client ID', type: 'password', help: 'Developer Dashboard → Apps & Credentials → 본인 앱 → Client ID' },
+            { key: 'PAYPAL_CLIENT_SECRET', label: 'Client Secret', type: 'password', help: '같은 화면에서 Secret 복사 (Show 클릭)' },
+            { key: 'PAYPAL_LOOKBACK_DAYS', label: '분석 기간 (일)', type: 'text', placeholder: '30', help: '비우면 30일. Transaction Search 한도 31일.' },
+            { key: 'PAYPAL_CURRENCY', label: '기본 통화 (선택)', type: 'text', placeholder: 'USD', help: '비우면 모든 통화 표시. USD/KRW 등.' },
+        ],
+    },
 ];
 
 /* Read all current values from each service's config.md. Empty string when
@@ -11427,6 +11442,30 @@ function readAllApiConnections(): Record<string, Record<string, string>> {
                         if (out[svc.id]['TELEGRAM_BOT_TOKEN']) continue;
                     }
                 } catch { /* fall through to config.md */ }
+            }
+            /* v2.89.139 — PayPal 은 paypal_revenue.json 이 단일 진실의 출처. */
+            if (svc.id === 'paypal') {
+                try {
+                    const jsonPath = path.join(getCompanyDir(), '_agents', 'business', 'tools', 'paypal_revenue.json');
+                    if (fs.existsSync(jsonPath)) {
+                        const cfg = JSON.parse(fs.readFileSync(jsonPath, 'utf-8') || '{}');
+                        /* 폼 키 → JSON 키 매핑 */
+                        const map: Record<string, string> = {
+                            PAYPAL_MODE: 'MODE',
+                            PAYPAL_CLIENT_ID: 'CLIENT_ID',
+                            PAYPAL_CLIENT_SECRET: 'CLIENT_SECRET',
+                            PAYPAL_LOOKBACK_DAYS: 'LOOKBACK_DAYS',
+                            PAYPAL_CURRENCY: 'CURRENCY',
+                        };
+                        for (const f of svc.fields) {
+                            const canonical = map[f.key] || f.key;
+                            const raw = cfg[canonical];
+                            const v = (raw === undefined || raw === null) ? '' : String(raw).trim();
+                            out[svc.id][f.key] = looksLikeJunk(f.key, v) ? '' : v;
+                        }
+                        if (Object.values(out[svc.id]).some(v => !!v)) continue;
+                    }
+                } catch { /* fall through */ }
             }
             /* v2.89.18 — YouTube Data API + OAuth Client 캐노니컬 youtube_account.json 우선. */
             if (svc.id === 'youtube' || svc.id === 'youtube-oauth') {
@@ -11581,6 +11620,47 @@ async function saveApiConnection(serviceId: string, values: Record<string, strin
                 fs.writeFileSync(ytJsonPath, JSON.stringify(existing, null, 2));
             } catch (e: any) {
                 console.warn('[saveApiConnection] youtube_account.json sync failed:', e?.message || e);
+            }
+        }
+        /* v2.89.139 — PayPal 캐노니컬 JSON 동기화. paypal_revenue.py / 매출 대시보드 /
+           RevenueWatcher 가 모두 _agents/business/tools/paypal_revenue.json 을 읽음.
+           외부 연결 패널이 그 단일 진실 출처에 직접 write → 별도 설정 단계 불필요. */
+        if (serviceId === 'paypal') {
+            const ppToolDir = path.join(getCompanyDir(), '_agents', 'business', 'tools');
+            const ppJsonPath = path.join(ppToolDir, 'paypal_revenue.json');
+            try {
+                fs.mkdirSync(ppToolDir, { recursive: true });
+                let existing: Record<string, any> = {};
+                if (fs.existsSync(ppJsonPath)) {
+                    try { existing = JSON.parse(fs.readFileSync(ppJsonPath, 'utf-8') || '{}'); } catch { /* malformed */ }
+                }
+                const mode = (values['PAYPAL_MODE'] || 'sandbox').trim().toLowerCase();
+                const clientId = (values['PAYPAL_CLIENT_ID'] || '').trim();
+                const clientSecret = (values['PAYPAL_CLIENT_SECRET'] || '').trim();
+                const lookback = parseInt((values['PAYPAL_LOOKBACK_DAYS'] || '').trim(), 10);
+                const currency = (values['PAYPAL_CURRENCY'] || '').trim().toUpperCase();
+                existing['MODE'] = (mode === 'live' || mode === 'sandbox') ? mode : 'sandbox';
+                if (clientId) existing['CLIENT_ID'] = clientId;
+                if (clientSecret) existing['CLIENT_SECRET'] = clientSecret;
+                existing['LOOKBACK_DAYS'] = isNaN(lookback) ? 30 : Math.max(1, Math.min(31, lookback));
+                existing['CURRENCY'] = currency;
+                if (!('_schema' in existing)) {
+                    existing['_schema'] = {
+                        MODE: { type: 'select', options: ['sandbox', 'live'] },
+                        CLIENT_ID: { type: 'password' },
+                        CLIENT_SECRET: { type: 'password' },
+                        LOOKBACK_DAYS: { type: 'number' },
+                        CURRENCY: { type: 'text' },
+                    };
+                }
+                fs.writeFileSync(ppJsonPath, JSON.stringify(existing, null, 2));
+                if (clientId && clientSecret) {
+                    extraNote = `💰 paypal_revenue.json 동기화 — 매출 대시보드·watcher 즉시 사용 가능 (${existing['MODE']} 모드)`;
+                } else {
+                    extraNote = `⚠️ Client ID + Secret 둘 다 입력해야 매출 분석 가능 (현재 일부 빈 값)`;
+                }
+            } catch (e: any) {
+                console.warn('[saveApiConnection] paypal_revenue.json sync failed:', e?.message || e);
             }
         }
         const cfgPath = path.join(getCompanyDir(), '_agents', svc.agentId, 'config.md');

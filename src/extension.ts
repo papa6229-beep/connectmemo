@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.150 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.151 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.150';
+const _CONNECT_AI_VERSION = '2.89.151';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -14083,6 +14083,45 @@ function spawnDispatchBanner(briefText) {
   }, 2400);
 }
 
+/* v2.89.150 — 회의 종료 배너. specialist 가 자기 자리로 복귀하는 순간. */
+function spawnMeetingEndBanner() {
+  const stage = document.getElementById('stageInner') || document.getElementById('officeStage');
+  if (!stage) return;
+  const old = document.getElementById('meetingEndBanner');
+  if (old) try { old.remove(); } catch {}
+  const banner = document.createElement('div');
+  banner.id = 'meetingEndBanner';
+  banner.style.cssText = [
+    'position:absolute', 'top:38%', 'left:50%', 'transform:translate(-50%,-50%) scale(0.8)',
+    'z-index:30', 'pointer-events:none', 'text-align:center',
+    'font-family:"SF Pro Display",-apple-system,sans-serif',
+    'opacity:0', 'transition:opacity .35s, transform .4s cubic-bezier(.2,.8,.2,1)'
+  ].join(';');
+  banner.innerHTML =
+    '<div style="font-size:clamp(22px,3.2vw,32px); font-weight:900; letter-spacing:.1em;' +
+    'background:linear-gradient(135deg,#34d399,#67e8f9);' +
+    '-webkit-background-clip:text;background-clip:text;color:transparent;' +
+    'text-shadow:0 0 40px rgba(52,211,153,.5);">' +
+    '✨ MEETING COMPLETE' +
+    '</div>' +
+    '<div style="font-size:clamp(11px,1.2vw,14px); color:#34d399; margin-top:4px;' +
+    'letter-spacing:.18em; font-weight:700; text-transform:uppercase;">' +
+    'AGENTS DISPATCHED TO WORKSTATIONS' +
+    '</div>';
+  stage.appendChild(banner);
+  requestAnimationFrame(() => {
+    banner.style.opacity = '1';
+    banner.style.transform = 'translate(-50%,-50%) scale(1)';
+  });
+  setTimeout(() => {
+    try {
+      banner.style.opacity = '0';
+      banner.style.transform = 'translate(-50%,-70%) scale(1.02)';
+      setTimeout(() => { try { banner.remove(); } catch {} }, 400);
+    } catch {}
+  }, 1500);
+}
+
 /* v2.89.150 — 도착 파티클 폭발. specialist 책상에 task 도착 순간. */
 function spawnArrivalBurst(agentId) {
   const el = deskEls[agentId]; if (!el) return;
@@ -15097,6 +15136,8 @@ window.addEventListener('message', e => {
         /* 5. 3.2초 후 자기 자리로 복귀 + working 시작 */
         setTimeout(() => {
           try { document.body.classList.remove('dispatching'); } catch {}
+          /* 회의 종료 배너 — 모든 specialist 가 자기 자리로 복귀하는 순간 */
+          try { spawnMeetingEndBanner(); } catch {}
           ids.forEach((id, i) => {
             setTimeout(() => {
               try {
@@ -15105,7 +15146,11 @@ window.addEventListener('message', e => {
                   const hx = parseFloat(el.dataset.homeX);
                   const hy = parseFloat(el.dataset.homeY);
                   walkToward(id, hx, hy, 1100);
-                  setTimeout(() => { try { setDeskState(id, 'working'); } catch {} }, 1150);
+                  setTimeout(() => {
+                    try { setDeskState(id, 'working'); } catch {}
+                    /* 책상 도착 시 작은 펄스 */
+                    try { showStatusIcon(id, '⚡', 2500); } catch {}
+                  }, 1150);
                 }
               } catch {}
             }, i * 150);
@@ -15114,6 +15159,7 @@ window.addEventListener('message', e => {
           setTimeout(() => {
             try { setDeskState('ceo', 'working'); } catch {}
             try { showThought('ceo', '📝 종합 보고서 작성', 6000); } catch {}
+            try { showStatusIcon('ceo', '✍️', 4000); } catch {}
           }, 800);
         }, 3200);
       } catch { /* office view 미연결 — silent */ }

@@ -61,8 +61,8 @@ def _load_operator_credentials(brain_root):
        이 키를 볼 일이 없음 — 운영자가 빌드 시점에 박힘. """
     creds = {
         "__GEMINI_API_KEY__": "",
-        "__GEMINI_TEXT_MODEL__": "gemini-2.0-flash-exp",
-        "__GEMINI_IMAGE_MODEL__": "imagen-3.0-generate-002",
+        "__GEMINI_TEXT_MODEL__": "gemini-3.1-flash-lite-preview",
+        "__GEMINI_IMAGE_MODEL__": "gemini-3.1-flash-image-preview",
         "__PAYPAL_CLIENT_ID__": "",
     }
     business_tools = os.path.join(brain_root, "_company", "_agents", "business", "tools")

@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.153 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.154 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.153';
+const _CONNECT_AI_VERSION = '2.89.154';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -11641,8 +11641,8 @@ const API_SERVICES: ApiServiceDef[] = [
         agentId: 'business',
         fields: [
             { key: 'GEMINI_API_KEY', label: 'API Key', type: 'password', help: 'aistudio.google.com/apikey 에서 Create API key (무료 tier OK). 이 키가 pack_apply 가 키트에 자동 박아 넣음 — 운영자의 강아지 사주·이미지 생성 서비스 등.' },
-            { key: 'GEMINI_TEXT_MODEL', label: '텍스트 모델', type: 'text', placeholder: 'gemini-2.0-flash-exp', help: '비우면 기본 gemini-2.0-flash-exp (무료). 또는 gemini-2.5-flash, gemini-2.5-pro' },
-            { key: 'GEMINI_IMAGE_MODEL', label: '이미지 모델', type: 'text', placeholder: 'imagen-3.0-generate-002', help: '비우면 기본 Imagen 3 (Gemini 이미지). 빠른 텍스트만 원하면 비워둠.' },
+            { key: 'GEMINI_TEXT_MODEL', label: '텍스트 모델', type: 'text', placeholder: 'gemini-3.1-flash-lite-preview', help: '비우면 기본 gemini-3.1-flash-lite-preview (가성비·1M context·멀티모달). 또는 gemini-3.1-flash, gemini-3.1-pro.' },
+            { key: 'GEMINI_IMAGE_MODEL', label: '이미지 모델', type: 'text', placeholder: 'gemini-3.1-flash-image-preview', help: '비우면 기본 gemini-3.1-flash-image-preview (text+image multimodal). 이미지 생성 안 쓸 거면 비워둠.' },
         ],
     },
 ];
@@ -11935,8 +11935,8 @@ async function saveApiConnection(serviceId: string, values: Record<string, strin
                     try { existing = JSON.parse(fs.readFileSync(gJsonPath, 'utf-8') || '{}'); } catch { /* malformed */ }
                 }
                 const apiKey = (values['GEMINI_API_KEY'] || '').trim();
-                const textModel = (values['GEMINI_TEXT_MODEL'] || '').trim() || 'gemini-2.0-flash-exp';
-                const imageModel = (values['GEMINI_IMAGE_MODEL'] || '').trim() || 'imagen-3.0-generate-002';
+                const textModel = (values['GEMINI_TEXT_MODEL'] || '').trim() || 'gemini-3.1-flash-lite-preview';
+                const imageModel = (values['GEMINI_IMAGE_MODEL'] || '').trim() || 'gemini-3.1-flash-image-preview';
                 if (apiKey) existing['API_KEY'] = apiKey;
                 existing['TEXT_MODEL'] = textModel;
                 existing['IMAGE_MODEL'] = imageModel;

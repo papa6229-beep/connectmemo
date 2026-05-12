@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.148 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.149 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.148';
+const _CONNECT_AI_VERSION = '2.89.149';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -14928,19 +14928,40 @@ window.addEventListener('message', e => {
       break;
     }
     case 'multiDispatch': {
-      /* v2.89.148 — CEO 가 작업 분배한 직후 사무실 협업 시각화.
-         CEO 책상 펄스 + 각 specialist 책상에 task 말풍선 + 화살표 SVG. */
+      /* v2.89.149 — CEO 가 작업 분배 → 사무실 풀 시네마틱:
+         (1) CEO 책상 펄스 + brief 화이트보드 (2) 캐릭터들이 CEO 책상 주변으로 walk
+         (3) cyan 광선 + 황금 점 task 전달 (4) 회의 thought 교환
+         (5) 3초 후 자기 자리로 walk 복귀, working 상태 시작. */
       try {
         const tasks = Array.isArray(m.tasks) ? m.tasks : [];
         if (tasks.length === 0) break;
-        /* 1. CEO 책상 펄스 + brief thought */
-        try { setDeskState('ceo', 'working'); } catch {}
+        const ids = tasks.map(t => t.agent);
+        /* 1. CEO 펄스 + 화이트보드 */
+        try { setDeskState('ceo', 'thinking'); } catch {}
         try { showStatusIcon('ceo', '📋', 4500); } catch {}
         try { showThought('ceo', String(m.brief || '작업 분배 중...').slice(0, 50), 6000); } catch {}
-        /* 2. 각 specialist 에 순차 펄스 + task 말풍선 (0.4s 간격 cascade) */
+        try {
+          if (typeof whiteboard !== 'undefined' && whiteboard) {
+            whiteboard.classList.add('active');
+            whiteboard.innerHTML = '<span class="wb-line">📋 ' + escapeHtml(m.brief || '종합 분석') + '</span>';
+            setTimeout(() => { try { whiteboard.classList.remove('active'); } catch {} }, 9000);
+          }
+        } catch {}
+        try { document.body.classList.add('dispatching'); } catch {}
+        /* 2. 캐릭터들이 CEO 책상 주변으로 walk */
+        const ceoP = (typeof HOME_POS !== 'undefined' && HOME_POS.ceo) ? HOME_POS.ceo : { x: 50, y: 50 };
+        ids.forEach((id, i) => {
+          setTimeout(() => {
+            try { setDeskState(id, 'thinking'); } catch {}
+            const offX = ((i % 4) - 1.5) * 8;
+            const offY = (Math.floor(i / 4)) * 7 + 10;
+            try { walkToward(id, ceoP.x + offX, ceoP.y + offY, 1300); } catch {}
+          }, 100 + i * 180);
+        });
+        /* 3. cyan 광선 + 황금 점 (walk 시작 후 약간 늦게) */
         tasks.forEach((t, i) => {
           setTimeout(() => {
-            try { setDeskState(t.agent, 'working'); } catch {}
+            try { spawnDispatchBeam('ceo', t.agent); } catch {}
             try { showStatusIcon(t.agent, t.emoji || '🎯', 5000); } catch {}
             try {
               const short = (t.task || '').replace(/^\[지시\][\s\S]*/, '').trim().slice(0, 35);
@@ -14951,10 +14972,39 @@ window.addEventListener('message', e => {
                 logActivity('🎯', t.agent, (t.emoji || '🤖') + ' ' + t.name + ' ← CEO task: ' + (t.task || '').slice(0, 60));
               }
             } catch {}
-            /* 3. CEO → specialist 광선 효과 (SVG overlay) */
-            try { spawnDispatchBeam('ceo', t.agent); } catch {}
-          }, 400 + i * 350);
+          }, 1400 + i * 350);
         });
+        /* 4. 회의 중 chatter — 회의실에 모인 동안 한 마디씩 */
+        setTimeout(() => {
+          ids.forEach((id, i) => {
+            setTimeout(() => {
+              const chat = ['알겠습니다!', '바로 시작', '데이터 확인', '잠시만요...', '🚀 ON IT'];
+              try { showThought(id, chat[i % chat.length], 2500); } catch {}
+            }, i * 400);
+          });
+        }, 2200);
+        /* 5. 3.2초 후 자기 자리로 복귀 + working 시작 */
+        setTimeout(() => {
+          try { document.body.classList.remove('dispatching'); } catch {}
+          ids.forEach((id, i) => {
+            setTimeout(() => {
+              try {
+                const el = deskEls[id];
+                if (el) {
+                  const hx = parseFloat(el.dataset.homeX);
+                  const hy = parseFloat(el.dataset.homeY);
+                  walkToward(id, hx, hy, 1100);
+                  setTimeout(() => { try { setDeskState(id, 'working'); } catch {} }, 1150);
+                }
+              } catch {}
+            }, i * 150);
+          });
+          /* CEO 도 'working' 으로 (종합 보고서 작성 중) */
+          setTimeout(() => {
+            try { setDeskState('ceo', 'working'); } catch {}
+            try { showThought('ceo', '📝 종합 보고서 작성', 6000); } catch {}
+          }, 800);
+        }, 3200);
       } catch { /* office view 미연결 — silent */ }
       break;
     }

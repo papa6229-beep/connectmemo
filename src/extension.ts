@@ -14948,7 +14948,7 @@ window.addEventListener('message', e => {
             } catch {}
             try {
               if (typeof logActivity === 'function') {
-                logActivity('🎯', t.agent, `${t.emoji || '🤖'} ${t.name} ← CEO task: ${(t.task || '').slice(0, 60)}`);
+                logActivity('🎯', t.agent, (t.emoji || '🤖') + ' ' + t.name + ' ← CEO task: ' + (t.task || '').slice(0, 60));
               }
             } catch {}
             /* 3. CEO → specialist 광선 효과 (SVG overlay) */

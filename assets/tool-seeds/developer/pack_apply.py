@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: pack_apply_v6
+# version: pack_apply_v7
 """두뇌의 템플릿 팩을 사용자 프로젝트에 한 번에 적용.
 
 흐름:
@@ -49,12 +49,79 @@ def _run(cmd, cwd):
     return True
 
 
-def _copy_tree(src_dir, dst_dir):
+def _load_operator_credentials(brain_root):
+    """v7: 운영자(1인 기업)의 자격증명을 두뇌에서 로드. pack_apply 가 키트 HTML/JS
+       의 placeholder 를 운영자 키로 자동 교체.
+       지원 placeholder:
+         __GEMINI_API_KEY__         → Gemini API 키
+         __GEMINI_TEXT_MODEL__      → 텍스트 모델명
+         __GEMINI_IMAGE_MODEL__     → 이미지 모델명
+         __PAYPAL_CLIENT_ID__       → PayPal Live/Sandbox Client ID
+       자격증명은 외부 연결 패널 (Connect AI) 에서 입력. 키트 사용자(고객) 는
+       이 키를 볼 일이 없음 — 운영자가 빌드 시점에 박힘. """
+    creds = {
+        "__GEMINI_API_KEY__": "",
+        "__GEMINI_TEXT_MODEL__": "gemini-2.0-flash-exp",
+        "__GEMINI_IMAGE_MODEL__": "imagen-3.0-generate-002",
+        "__PAYPAL_CLIENT_ID__": "",
+    }
+    business_tools = os.path.join(brain_root, "_company", "_agents", "business", "tools")
+    # Gemini
+    try:
+        gp = os.path.join(business_tools, "gemini_account.json")
+        if os.path.exists(gp):
+            with open(gp, "r", encoding="utf-8") as f:
+                g = json.load(f)
+            if g.get("API_KEY"): creds["__GEMINI_API_KEY__"] = g["API_KEY"]
+            if g.get("TEXT_MODEL"): creds["__GEMINI_TEXT_MODEL__"] = g["TEXT_MODEL"]
+            if g.get("IMAGE_MODEL"): creds["__GEMINI_IMAGE_MODEL__"] = g["IMAGE_MODEL"]
+    except Exception:
+        pass
+    # PayPal
+    try:
+        pp = os.path.join(business_tools, "paypal_revenue.json")
+        if os.path.exists(pp):
+            with open(pp, "r", encoding="utf-8") as f:
+                p = json.load(f)
+            if p.get("CLIENT_ID"): creds["__PAYPAL_CLIENT_ID__"] = p["CLIENT_ID"]
+    except Exception:
+        pass
+    return creds
+
+
+def _inject_credentials(file_path, creds):
+    """v7: 텍스트 파일 안의 placeholder 를 운영자 자격증명으로 교체.
+       바이너리·이미지 파일은 skip. UTF-8 못 읽으면 skip. """
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except (UnicodeDecodeError, IsADirectoryError):
+        return False
+    except Exception:
+        return False
+    replaced = False
+    for placeholder, value in creds.items():
+        if placeholder in content and value:
+            content = content.replace(placeholder, value)
+            replaced = True
+    if replaced:
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def _copy_tree(src_dir, dst_dir, creds=None):
     """v2: 기존 파일이 있으면 .backup 자동 생성 (사용자 코드 보호).
-    백업이 이미 있으면 덮어쓰지 않음 (멱등성)."""
+    백업이 이미 있으면 덮어쓰지 않음 (멱등성).
+    v7: creds 가 주어지면 복사 후 각 파일에서 placeholder 교체."""
     os.makedirs(dst_dir, exist_ok=True)
     copied = 0
     backed_up = []
+    injected = 0
     for root, _dirs, files in os.walk(src_dir):
         rel = os.path.relpath(root, src_dir)
         target = os.path.join(dst_dir, rel) if rel != "." else dst_dir
@@ -71,8 +138,14 @@ def _copy_tree(src_dir, dst_dir):
                         pass
             shutil.copy2(os.path.join(root, f), dst_path)
             copied += 1
+            # v7: 자격증명 placeholder 자동 inline
+            if creds and any(creds.values()):
+                if _inject_credentials(dst_path, creds):
+                    injected += 1
     if backed_up:
         _log(f"기존 파일 {len(backed_up)}개 .backup 보존: {', '.join(backed_up[:3])}{' …' if len(backed_up) > 3 else ''}", "info")
+    if injected:
+        _log(f"🔐 운영자 자격증명 {injected}개 파일에 자동 inline (Gemini/PayPal placeholder 교체)", "ok")
     return copied
 
 
@@ -338,13 +411,16 @@ def main():
     _log(f"키트: {manifest.get('name', kit_name)} → {project}", "info")
     _log(f"기반: {manifest.get('base', '?')}", "info")
 
-    # 1) 파일 복사
+    # v7: 운영자 자격증명 로드 (Gemini/PayPal placeholder 자동 inline)
+    creds = _load_operator_credentials(brain_root)
+
+    # 1) 파일 복사 (+ placeholder 교체)
     src_files = os.path.join(kit_dir, "files")
     dst_files = os.path.join(project, copy_to.lstrip("./"))
     if not os.path.exists(src_files):
         _log("키트의 files/ 폴더 없음 — 파일 복사 스킵", "warn")
     else:
-        n = _copy_tree(src_files, dst_files)
+        n = _copy_tree(src_files, dst_files, creds=creds)
         _log(f"{n}개 파일 복사 → {dst_files}", "ok")
 
     # 2) 의존성 자동 설치

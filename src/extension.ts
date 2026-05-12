@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.152 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.153 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.152';
+const _CONNECT_AI_VERSION = '2.89.153';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -6839,7 +6839,7 @@ function _seedDeveloperPackApply(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v6');
+  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v7');
   _mergeSchemaIntoJson(path.join(toolsDir, 'pack_apply.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.md'), md, 'pack_apply_v1');
 }
@@ -11632,6 +11632,19 @@ const API_SERVICES: ApiServiceDef[] = [
             { key: 'PAYPAL_CURRENCY', label: '기본 통화 (선택)', type: 'text', placeholder: 'USD', help: '비우면 모든 통화 표시. USD/KRW 등.' },
         ],
     },
+    {
+        id: 'gemini',
+        name: 'Google Gemini (AI 텍스트 + 이미지)',
+        icon: '✨',
+        summary: '운영자의 1인 기업 서비스에서 Gemini AI 호출 (텍스트 + Imagen 3 이미지). 키트 자동 적용 시 HTML 에 자동 inline 박힘. 보안: Google Cloud Console 에서 HTTP Referer 제한 권장.',
+        helpUrl: 'https://aistudio.google.com/apikey',
+        agentId: 'business',
+        fields: [
+            { key: 'GEMINI_API_KEY', label: 'API Key', type: 'password', help: 'aistudio.google.com/apikey 에서 Create API key (무료 tier OK). 이 키가 pack_apply 가 키트에 자동 박아 넣음 — 운영자의 강아지 사주·이미지 생성 서비스 등.' },
+            { key: 'GEMINI_TEXT_MODEL', label: '텍스트 모델', type: 'text', placeholder: 'gemini-2.0-flash-exp', help: '비우면 기본 gemini-2.0-flash-exp (무료). 또는 gemini-2.5-flash, gemini-2.5-pro' },
+            { key: 'GEMINI_IMAGE_MODEL', label: '이미지 모델', type: 'text', placeholder: 'imagen-3.0-generate-002', help: '비우면 기본 Imagen 3 (Gemini 이미지). 빠른 텍스트만 원하면 비워둠.' },
+        ],
+    },
 ];
 
 /* Read all current values from each service's config.md. Empty string when
@@ -11667,6 +11680,27 @@ function readAllApiConnections(): Record<string, Record<string, string>> {
                         if (out[svc.id]['TELEGRAM_BOT_TOKEN']) continue;
                     }
                 } catch { /* fall through to config.md */ }
+            }
+            /* v2.89.153 — Gemini 은 gemini_account.json 이 단일 진실의 출처. */
+            if (svc.id === 'gemini') {
+                try {
+                    const jsonPath = path.join(getCompanyDir(), '_agents', 'business', 'tools', 'gemini_account.json');
+                    if (fs.existsSync(jsonPath)) {
+                        const cfg = JSON.parse(fs.readFileSync(jsonPath, 'utf-8') || '{}');
+                        const map: Record<string, string> = {
+                            GEMINI_API_KEY: 'API_KEY',
+                            GEMINI_TEXT_MODEL: 'TEXT_MODEL',
+                            GEMINI_IMAGE_MODEL: 'IMAGE_MODEL',
+                        };
+                        for (const f of svc.fields) {
+                            const canonical = map[f.key] || f.key;
+                            const raw = cfg[canonical];
+                            const v = (raw === undefined || raw === null) ? '' : String(raw).trim();
+                            out[svc.id][f.key] = looksLikeJunk(f.key, v) ? '' : v;
+                        }
+                        if (Object.values(out[svc.id]).some(v => !!v)) continue;
+                    }
+                } catch { /* fall through */ }
             }
             /* v2.89.139 — PayPal 은 paypal_revenue.json 이 단일 진실의 출처. */
             if (svc.id === 'paypal') {
@@ -11886,6 +11920,34 @@ async function saveApiConnection(serviceId: string, values: Record<string, strin
                 }
             } catch (e: any) {
                 console.warn('[saveApiConnection] paypal_revenue.json sync failed:', e?.message || e);
+            }
+        }
+        /* v2.89.153 — Gemini API 캐노니컬 JSON 동기화. pack_apply 가 키트 적용 시
+           HTML 의 __GEMINI_API_KEY__ placeholder 를 이 키로 자동 inline.
+           운영자 (1인 기업) 의 단일 자격증명을 모든 키트가 공유. */
+        if (serviceId === 'gemini') {
+            const gToolDir = path.join(getCompanyDir(), '_agents', 'business', 'tools');
+            const gJsonPath = path.join(gToolDir, 'gemini_account.json');
+            try {
+                fs.mkdirSync(gToolDir, { recursive: true });
+                let existing: Record<string, any> = {};
+                if (fs.existsSync(gJsonPath)) {
+                    try { existing = JSON.parse(fs.readFileSync(gJsonPath, 'utf-8') || '{}'); } catch { /* malformed */ }
+                }
+                const apiKey = (values['GEMINI_API_KEY'] || '').trim();
+                const textModel = (values['GEMINI_TEXT_MODEL'] || '').trim() || 'gemini-2.0-flash-exp';
+                const imageModel = (values['GEMINI_IMAGE_MODEL'] || '').trim() || 'imagen-3.0-generate-002';
+                if (apiKey) existing['API_KEY'] = apiKey;
+                existing['TEXT_MODEL'] = textModel;
+                existing['IMAGE_MODEL'] = imageModel;
+                fs.writeFileSync(gJsonPath, JSON.stringify(existing, null, 2));
+                if (apiKey) {
+                    extraNote = `✨ Gemini API 키 저장됨 — pack_apply 시 키트 HTML 에 자동 inline (텍스트: ${textModel}, 이미지: ${imageModel})`;
+                } else {
+                    extraNote = `⚠️ API Key 비어있음 — aistudio.google.com/apikey 에서 발급`;
+                }
+            } catch (e: any) {
+                console.warn('[saveApiConnection] gemini_account.json sync failed:', e?.message || e);
             }
         }
         const cfgPath = path.join(getCompanyDir(), '_agents', svc.agentId, 'config.md');

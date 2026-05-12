@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.146 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.147 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.146';
+const _CONNECT_AI_VERSION = '2.89.147';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -19035,14 +19035,40 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                         tasks: [{ agent: explicit.agentId, task: prompt }]
                     });
                 } else {
-                    planRaw = await this._callAgentLLM(
-                        ceoSystemPrompt,
-                        `[사용자 명령]\n${prompt}`,
-                        modelName,
-                        'ceo',
-                        false,
-                        { jsonMode: true }
-                    );
+                    /* v2.89.147 — 종합 보고서 패턴 감지 시 CEO LLM 우회.
+                       "유튜브 + 매출" 같이 여러 데이터 영역 동시 요청 시 작은 LLM 이
+                       "유튜브 1명만" 규칙에 빠져 한쪽 무시하던 버그 차단. */
+                    const lp = prompt.toLowerCase();
+                    const wantsYoutube = /유튜브|youtube|채널|영상|구독|조회/.test(lp);
+                    const wantsRevenue = /매출|페이팔|paypal|수익|결제|매상|돈|이번 ?달/.test(lp);
+                    const isSummary = /종합|전체|현황|보고서|통합|요약|회사 ?(상황|현황)/.test(lp);
+                    if (isSummary && wantsYoutube && wantsRevenue) {
+                        planRaw = JSON.stringify({
+                            brief: '유튜브 채널 + PayPal 매출 종합 분석',
+                            tasks: [
+                                { agent: 'youtube', task: `${prompt}\n\n[지시] 채널 데이터를 분석하고 다음 영상 전략 1개 제안.` },
+                                { agent: 'business', task: `${prompt}\n\n[지시] PayPal 매출을 분석하고 다음 액션 1개 제안.` }
+                            ]
+                        });
+                    } else if (wantsYoutube && wantsRevenue) {
+                        /* 종합 키워드 없이도 두 영역 같이 요청하면 multi-agent. */
+                        planRaw = JSON.stringify({
+                            brief: '유튜브 + 매출 데이터 같이 분석',
+                            tasks: [
+                                { agent: 'youtube', task: prompt },
+                                { agent: 'business', task: prompt }
+                            ]
+                        });
+                    } else {
+                        planRaw = await this._callAgentLLM(
+                            ceoSystemPrompt,
+                            `[사용자 명령]\n${prompt}`,
+                            modelName,
+                            'ceo',
+                            false,
+                            { jsonMode: true }
+                        );
+                    }
                 }
             } catch (e: any) {
                 post({ type: 'agentEnd', agent: 'ceo' });
@@ -19331,10 +19357,11 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                 if (explicit && t.agent === 'developer') {
                     shortcut = this._tryKitShortcut(t.agent, prompt);
                 }
-                /* v2.89.145 — business 매출 shortcut. 명시적 현빈 호출 + 매출/수익/PayPal
-                   키워드면 LLM 우회하고 paypal_revenue.py 결과 + 한 줄 인사이트 직접 표시.
-                   작은 LLM(gemma-2B)이 system prompt 무시하고 README 읽으려는 버릇 차단. */
-                if (!shortcut && explicit && t.agent === 'business') {
+                /* v2.89.147 — business 매출 shortcut. business 에이전트 + 매출/PayPal
+                   키워드면 explicit 여부 무관 LLM 우회. 종합 보고서에서 CEO 가 business 에
+                   분배한 경우도 동일하게 paypal_revenue.py 실데이터 직접 표시. 작은
+                   LLM(gemma-2B) 이 system prompt 무시하고 README 읽으려는 버릇 차단. */
+                if (!shortcut && t.agent === 'business') {
                     const lower = prompt.toLowerCase();
                     if (/매출|수익|결제|paypal|revenue|매상|매월|이번 달|이번달|월 매출|페이팔|돈|얼마 벌/.test(lower)) {
                         shortcut = await this._tryRevenueShortcut(prompt);

@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.147 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.148 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.147';
+const _CONNECT_AI_VERSION = '2.89.148';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -14034,6 +14034,66 @@ function showThought(agentId, text, ms){
   setTimeout(() => { try { t.style.opacity='0'; setTimeout(()=>t.remove(),350); } catch{} }, dur);
 }
 
+/* v2.89.148 — CEO ↔ specialist dispatch 광선 효과. 책상 두 개 사이 SVG line +
+   따라 흐르는 점. 시각적으로 "CEO가 task 보냈다 → specialist 받음" 표현. */
+function spawnDispatchBeam(fromId, toId) {
+  const fromEl = deskEls[fromId], toEl = deskEls[toId];
+  if (!fromEl || !toEl) return;
+  const stage = document.getElementById('stageInner') || document.getElementById('officeStage');
+  if (!stage) return;
+  const stageRect = stage.getBoundingClientRect();
+  const fr = fromEl.getBoundingClientRect();
+  const tr = toEl.getBoundingClientRect();
+  const x1 = fr.left + fr.width / 2 - stageRect.left;
+  const y1 = fr.top + fr.height / 2 - stageRect.top;
+  const x2 = tr.left + tr.width / 2 - stageRect.left;
+  const y2 = tr.top + tr.height / 2 - stageRect.top;
+  let svg = document.getElementById('dispatchBeamLayer');
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'dispatchBeamLayer';
+    svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:20;overflow:visible;';
+    stage.appendChild(svg);
+  }
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+  line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+  line.setAttribute('stroke', '#67e8f9');
+  line.setAttribute('stroke-width', '2');
+  line.setAttribute('stroke-dasharray', '6 4');
+  line.setAttribute('stroke-linecap', 'round');
+  line.style.filter = 'drop-shadow(0 0 6px #22d3ee)';
+  line.style.opacity = '0.85';
+  /* 점선 따라 흐르는 애니메이션 */
+  const anim = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+  anim.setAttribute('attributeName', 'stroke-dashoffset');
+  anim.setAttribute('from', '0'); anim.setAttribute('to', '-30');
+  anim.setAttribute('dur', '0.8s'); anim.setAttribute('repeatCount', 'indefinite');
+  line.appendChild(anim);
+  svg.appendChild(line);
+  /* 흐르는 점 — task 가 specialist 로 이동하는 시각 효과 */
+  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  dot.setAttribute('r', '5');
+  dot.setAttribute('fill', '#fef08a');
+  dot.style.filter = 'drop-shadow(0 0 10px #fbbf24)';
+  const animX = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+  animX.setAttribute('attributeName', 'cx'); animX.setAttribute('from', x1); animX.setAttribute('to', x2);
+  animX.setAttribute('dur', '1.1s'); animX.setAttribute('fill', 'freeze');
+  const animY = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+  animY.setAttribute('attributeName', 'cy'); animY.setAttribute('from', y1); animY.setAttribute('to', y2);
+  animY.setAttribute('dur', '1.1s'); animY.setAttribute('fill', 'freeze');
+  dot.appendChild(animX); dot.appendChild(animY);
+  svg.appendChild(dot);
+  /* 광선 페이드아웃 */
+  setTimeout(() => {
+    try {
+      line.style.transition = 'opacity 0.6s'; line.style.opacity = '0';
+      dot.style.transition = 'opacity 0.4s'; dot.style.opacity = '0';
+      setTimeout(() => { try { line.remove(); dot.remove(); } catch {} }, 700);
+    } catch {}
+  }, 3500);
+}
+
 async function idleChatStep(){
   if (!autoWalkActive) return;
   const idleAgents = agents.filter(a => {
@@ -14865,6 +14925,37 @@ window.addEventListener('message', e => {
     }
     case 'agentChunk': {
       appendOutChunk(m.agent, m.value || '');
+      break;
+    }
+    case 'multiDispatch': {
+      /* v2.89.148 — CEO 가 작업 분배한 직후 사무실 협업 시각화.
+         CEO 책상 펄스 + 각 specialist 책상에 task 말풍선 + 화살표 SVG. */
+      try {
+        const tasks = Array.isArray(m.tasks) ? m.tasks : [];
+        if (tasks.length === 0) break;
+        /* 1. CEO 책상 펄스 + brief thought */
+        try { setDeskState('ceo', 'working'); } catch {}
+        try { showStatusIcon('ceo', '📋', 4500); } catch {}
+        try { showThought('ceo', String(m.brief || '작업 분배 중...').slice(0, 50), 6000); } catch {}
+        /* 2. 각 specialist 에 순차 펄스 + task 말풍선 (0.4s 간격 cascade) */
+        tasks.forEach((t, i) => {
+          setTimeout(() => {
+            try { setDeskState(t.agent, 'working'); } catch {}
+            try { showStatusIcon(t.agent, t.emoji || '🎯', 5000); } catch {}
+            try {
+              const short = (t.task || '').replace(/^\[지시\][\s\S]*/, '').trim().slice(0, 35);
+              showThought(t.agent, short || (t.name + ' 받음!'), 6000);
+            } catch {}
+            try {
+              if (typeof logActivity === 'function') {
+                logActivity('🎯', t.agent, `${t.emoji || '🤖'} ${t.name} ← CEO task: ${(t.task || '').slice(0, 60)}`);
+              }
+            } catch {}
+            /* 3. CEO → specialist 광선 효과 (SVG overlay) */
+            try { spawnDispatchBeam('ceo', t.agent); } catch {}
+          }, 400 + i * 350);
+        });
+      } catch { /* office view 미연결 — silent */ }
       break;
     }
     case 'agentBusy': {
@@ -19270,6 +19361,22 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     path.join(sessionDir, '_brief.md'),
                     `# 📋 작업 브리프\n\n**원 명령:** ${prompt}\n\n## 요약\n${plan.brief}\n\n## 분배\n${plan.tasks.map(t => `- **${AGENTS[t.agent]?.emoji} ${AGENTS[t.agent]?.name}**: ${t.task}`).join('\n')}\n`
                 );
+            } catch { /* ignore */ }
+
+            /* v2.89.148 — 가상 사무실 시각적 협업 동기화.
+               dispatch 시점에 멀티 에이전트 dispatch 이벤트 broadcast →
+               office view 가 CEO → specialist 화살표 + 각 책상 task 말풍선 + 펄스. */
+            try {
+                this._broadcastCorporate({
+                    type: 'multiDispatch',
+                    brief: plan.brief,
+                    tasks: plan.tasks.map(t => ({
+                        agent: t.agent,
+                        emoji: AGENTS[t.agent]?.emoji || '🤖',
+                        name: AGENTS[t.agent]?.name || t.agent,
+                        task: (t.task || '').slice(0, 80),
+                    }))
+                });
             } catch { /* ignore */ }
 
             // 3) 시네마틱 분배 알림

@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.149 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.150 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.149';
+const _CONNECT_AI_VERSION = '2.89.150';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -14034,8 +14034,94 @@ function showThought(agentId, text, ms){
   setTimeout(() => { try { t.style.opacity='0'; setTimeout(()=>t.remove(),350); } catch{} }, dur);
 }
 
+/* v2.89.150 — 화면 중앙 거대 글리치 배너. dispatch 시 시청자가 바로 알게.
+   3초 후 fade. 매트릭스 풍 cyan + violet 그라데이션. */
+function spawnDispatchBanner(briefText) {
+  const stage = document.getElementById('stageInner') || document.getElementById('officeStage');
+  if (!stage) return;
+  const old = document.getElementById('dispatchBanner');
+  if (old) try { old.remove(); } catch {}
+  const banner = document.createElement('div');
+  banner.id = 'dispatchBanner';
+  banner.style.cssText = [
+    'position:absolute', 'top:38%', 'left:50%', 'transform:translate(-50%,-50%) scale(0.6)',
+    'z-index:30', 'pointer-events:none', 'text-align:center',
+    'font-family:"SF Pro Display",-apple-system,sans-serif',
+    'opacity:0', 'transition:opacity .4s, transform .5s cubic-bezier(.2,.8,.2,1)'
+  ].join(';');
+  banner.innerHTML =
+    '<div style="font-size:clamp(28px,5vw,52px); font-weight:900; letter-spacing:.08em;' +
+    'background:linear-gradient(135deg,#67e8f9,#a78bfa,#fbbf24);' +
+    '-webkit-background-clip:text;background-clip:text;color:transparent;' +
+    'text-shadow:0 0 60px rgba(34,211,238,.7);' +
+    'animation:bannerGlitch .35s steps(2) 2;">' +
+    '📋 DISPATCH PROTOCOL' +
+    '</div>' +
+    '<div style="font-size:clamp(13px,1.6vw,18px); color:#67e8f9; margin-top:6px;' +
+    'letter-spacing:.18em; font-weight:700; text-shadow:0 0 12px #22d3ee; ' +
+    'text-transform:uppercase;">' +
+    escapeHtml((briefText || '').slice(0, 80)) +
+    '</div>';
+  /* 글리치 keyframe inject (한 번만) */
+  if (!document.getElementById('bannerGlitchKf')) {
+    const style = document.createElement('style');
+    style.id = 'bannerGlitchKf';
+    style.textContent = '@keyframes bannerGlitch{0%,100%{transform:translate(0,0)}25%{transform:translate(-2px,1px)}50%{transform:translate(2px,-1px)}75%{transform:translate(-1px,-2px)}}';
+    document.head.appendChild(style);
+  }
+  stage.appendChild(banner);
+  requestAnimationFrame(() => {
+    banner.style.opacity = '1';
+    banner.style.transform = 'translate(-50%,-50%) scale(1)';
+  });
+  setTimeout(() => {
+    try {
+      banner.style.opacity = '0';
+      banner.style.transform = 'translate(-50%,-80%) scale(1.05)';
+      setTimeout(() => { try { banner.remove(); } catch {} }, 500);
+    } catch {}
+  }, 2400);
+}
+
+/* v2.89.150 — 도착 파티클 폭발. specialist 책상에 task 도착 순간. */
+function spawnArrivalBurst(agentId) {
+  const el = deskEls[agentId]; if (!el) return;
+  const stage = document.getElementById('stageInner') || document.getElementById('officeStage');
+  if (!stage) return;
+  const stageRect = stage.getBoundingClientRect();
+  const er = el.getBoundingClientRect();
+  const cx = er.left + er.width / 2 - stageRect.left;
+  const cy = er.top + er.height / 2 - stageRect.top;
+  const colors = ['#67e8f9', '#fbbf24', '#a78bfa', '#22d3ee', '#fef08a'];
+  for (let i = 0; i < 12; i++) {
+    const p = document.createElement('div');
+    const ang = (i / 12) * Math.PI * 2;
+    const dist = 30 + Math.random() * 20;
+    const color = colors[i % colors.length];
+    p.style.cssText = [
+      'position:absolute',
+      'left:' + cx + 'px', 'top:' + cy + 'px',
+      'width:6px', 'height:6px', 'border-radius:50%',
+      'background:' + color,
+      'box-shadow:0 0 12px ' + color,
+      'pointer-events:none', 'z-index:25',
+      'transform:translate(-50%,-50%)',
+      'transition:transform .7s cubic-bezier(.2,.8,.2,1),opacity .7s'
+    ].join(';');
+    stage.appendChild(p);
+    requestAnimationFrame(() => {
+      const tx = Math.cos(ang) * dist;
+      const ty = Math.sin(ang) * dist;
+      p.style.transform = 'translate(calc(-50% + ' + tx + 'px),calc(-50% + ' + ty + 'px)) scale(0.4)';
+      p.style.opacity = '0';
+    });
+    setTimeout(() => { try { p.remove(); } catch {} }, 750);
+  }
+}
+
 /* v2.89.148 — CEO ↔ specialist dispatch 광선 효과. 책상 두 개 사이 SVG line +
-   따라 흐르는 점. 시각적으로 "CEO가 task 보냈다 → specialist 받음" 표현. */
+   따라 흐르는 점. 시각적으로 "CEO가 task 보냈다 → specialist 받음" 표현.
+   v2.89.150: 광선 색 cyan→violet 그라데이션 + 황금 점 꼬리 추가 + 도착 파티클. */
 function spawnDispatchBeam(fromId, toId) {
   const fromEl = deskEls[fromId], toEl = deskEls[toId];
   if (!fromEl || !toEl) return;
@@ -14053,45 +14139,64 @@ function spawnDispatchBeam(fromId, toId) {
     svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.id = 'dispatchBeamLayer';
     svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:20;overflow:visible;';
+    /* gradient defs */
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML =
+      '<linearGradient id="beamGrad" x1="0%" y1="0%" x2="100%" y2="0%">' +
+      '<stop offset="0%" stop-color="#67e8f9"/>' +
+      '<stop offset="50%" stop-color="#a78bfa"/>' +
+      '<stop offset="100%" stop-color="#22d3ee"/></linearGradient>';
+    svg.appendChild(defs);
     stage.appendChild(svg);
   }
   const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   line.setAttribute('x1', x1); line.setAttribute('y1', y1);
   line.setAttribute('x2', x2); line.setAttribute('y2', y2);
-  line.setAttribute('stroke', '#67e8f9');
-  line.setAttribute('stroke-width', '2');
-  line.setAttribute('stroke-dasharray', '6 4');
+  line.setAttribute('stroke', 'url(#beamGrad)');
+  line.setAttribute('stroke-width', '3');
+  line.setAttribute('stroke-dasharray', '8 5');
   line.setAttribute('stroke-linecap', 'round');
-  line.style.filter = 'drop-shadow(0 0 6px #22d3ee)';
-  line.style.opacity = '0.85';
+  line.style.filter = 'drop-shadow(0 0 8px #22d3ee) drop-shadow(0 0 14px rgba(167,139,250,.5))';
+  line.style.opacity = '0';
+  requestAnimationFrame(() => { line.style.transition = 'opacity .3s'; line.style.opacity = '0.9'; });
   /* 점선 따라 흐르는 애니메이션 */
   const anim = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
   anim.setAttribute('attributeName', 'stroke-dashoffset');
-  anim.setAttribute('from', '0'); anim.setAttribute('to', '-30');
-  anim.setAttribute('dur', '0.8s'); anim.setAttribute('repeatCount', 'indefinite');
+  anim.setAttribute('from', '0'); anim.setAttribute('to', '-40');
+  anim.setAttribute('dur', '0.7s'); anim.setAttribute('repeatCount', 'indefinite');
   line.appendChild(anim);
   svg.appendChild(line);
-  /* 흐르는 점 — task 가 specialist 로 이동하는 시각 효과 */
-  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  dot.setAttribute('r', '5');
-  dot.setAttribute('fill', '#fef08a');
-  dot.style.filter = 'drop-shadow(0 0 10px #fbbf24)';
-  const animX = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
-  animX.setAttribute('attributeName', 'cx'); animX.setAttribute('from', x1); animX.setAttribute('to', x2);
-  animX.setAttribute('dur', '1.1s'); animX.setAttribute('fill', 'freeze');
-  const animY = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
-  animY.setAttribute('attributeName', 'cy'); animY.setAttribute('from', y1); animY.setAttribute('to', y2);
-  animY.setAttribute('dur', '1.1s'); animY.setAttribute('fill', 'freeze');
-  dot.appendChild(animX); dot.appendChild(animY);
-  svg.appendChild(dot);
+  /* 메인 황금 점 + 꼬리 (3개 trailing dots) */
+  const dots = [];
+  for (let i = 0; i < 3; i++) {
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    const r = 6 - i * 1.5;
+    dot.setAttribute('r', String(Math.max(2, r)));
+    dot.setAttribute('fill', i === 0 ? '#fef08a' : (i === 1 ? '#fbbf24' : '#f59e0b'));
+    dot.style.filter = 'drop-shadow(0 0 ' + (12 - i * 3) + 'px #fbbf24)';
+    dot.style.opacity = String(1 - i * 0.25);
+    const animX = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+    animX.setAttribute('attributeName', 'cx'); animX.setAttribute('from', x1); animX.setAttribute('to', x2);
+    animX.setAttribute('dur', '1.0s'); animX.setAttribute('begin', (i * 0.08) + 's');
+    animX.setAttribute('fill', 'freeze');
+    const animY = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+    animY.setAttribute('attributeName', 'cy'); animY.setAttribute('from', y1); animY.setAttribute('to', y2);
+    animY.setAttribute('dur', '1.0s'); animY.setAttribute('begin', (i * 0.08) + 's');
+    animY.setAttribute('fill', 'freeze');
+    dot.appendChild(animX); dot.appendChild(animY);
+    svg.appendChild(dot);
+    dots.push(dot);
+  }
+  /* 도착 시 파티클 폭발 */
+  setTimeout(() => { try { spawnArrivalBurst(toId); } catch {} }, 1050);
   /* 광선 페이드아웃 */
   setTimeout(() => {
     try {
       line.style.transition = 'opacity 0.6s'; line.style.opacity = '0';
-      dot.style.transition = 'opacity 0.4s'; dot.style.opacity = '0';
-      setTimeout(() => { try { line.remove(); dot.remove(); } catch {} }, 700);
+      dots.forEach(d => { d.style.transition = 'opacity .4s'; d.style.opacity = '0'; });
+      setTimeout(() => { try { line.remove(); dots.forEach(d => d.remove()); } catch {} }, 700);
     } catch {}
-  }, 3500);
+  }, 3200);
 }
 
 async function idleChatStep(){
@@ -14928,14 +15033,20 @@ window.addEventListener('message', e => {
       break;
     }
     case 'multiDispatch': {
-      /* v2.89.149 — CEO 가 작업 분배 → 사무실 풀 시네마틱:
-         (1) CEO 책상 펄스 + brief 화이트보드 (2) 캐릭터들이 CEO 책상 주변으로 walk
-         (3) cyan 광선 + 황금 점 task 전달 (4) 회의 thought 교환
-         (5) 3초 후 자기 자리로 walk 복귀, working 상태 시작. */
+      /* v2.89.150 — 디자인 폭발 시네마틱:
+         (0) 화면 가운데 "📋 DISPATCH" 거대 배너 (글리치)
+         (1) CEO 책상 폭발적 펄스 + 화이트보드 활성화
+         (2) specialist walk → CEO 회의실
+         (3) cyan + violet 광선 + 꼬리 황금 점
+         (4) 도착 파티클 폭발
+         (5) chatter
+         (6) 복귀 walk + working */
       try {
         const tasks = Array.isArray(m.tasks) ? m.tasks : [];
         if (tasks.length === 0) break;
         const ids = tasks.map(t => t.agent);
+        /* 0. 화면 중앙 글리치 배너 */
+        try { spawnDispatchBanner(String(m.brief || '작업 분배')); } catch {}
         /* 1. CEO 펄스 + 화이트보드 */
         try { setDeskState('ceo', 'thinking'); } catch {}
         try { showStatusIcon('ceo', '📋', 4500); } catch {}

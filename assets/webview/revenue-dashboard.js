@@ -50,7 +50,17 @@ function countUp(el, target, opts = {}) {
     const v = startVal + (target - startVal) * eased;
     el.textContent = v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
     if (p < 1) requestAnimationFrame(tick);
-    else el.dataset.last = String(target);
+    else {
+      el.dataset.last = String(target);
+      // v2.89.150 — 완료 시 부모 .kpi 카드에 burst 효과
+      if (target > 0 && target !== startVal) {
+        const card = el.closest('.kpi');
+        if (card) {
+          card.classList.add('complete-burst');
+          setTimeout(() => card.classList.remove('complete-burst'), 800);
+        }
+      }
+    }
   }
   requestAnimationFrame(tick);
 }

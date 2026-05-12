@@ -571,3 +571,43 @@ body::before {
   .kpi-value { font-size: 1.8rem; }
   .donut-svg { width: 160px; height: 160px; }
 }
+
+/* ───────── v2.89.150 — KPI count-up 완료 시 폭발 효과 ───────── */
+.kpi.complete-burst {
+  animation: kpiBurst 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes kpiBurst {
+  0% { transform: scale(1); box-shadow: 0 0 0 rgba(34, 211, 238, 0); }
+  30% { transform: scale(1.08); box-shadow: 0 0 40px rgba(34, 211, 238, 0.6); }
+  100% { transform: scale(1); box-shadow: 0 0 0 rgba(34, 211, 238, 0); }
+}
+
+/* 도넛 slice hover — 강조 효과 */
+.donut-svg circle {
+  transition: stroke-width 0.2s, filter 0.2s;
+}
+.donut-svg circle:hover {
+  stroke-width: 22;
+  filter: drop-shadow(0 0 12px currentColor) brightness(1.2);
+  cursor: pointer;
+}
+
+/* 거래 피드 hover 시 더 명확한 펄스 */
+.tx:hover .tx-amount {
+  transform: scale(1.1);
+  transition: transform 0.18s;
+}
+
+/* Hero 매트릭스 효과 — 백그라운드 글로우 ripple */
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 80% 50%, rgba(167, 139, 250, 0.08), transparent 40%);
+  pointer-events: none;
+  animation: heroRipple 6s ease-in-out infinite;
+}
+@keyframes heroRipple {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}

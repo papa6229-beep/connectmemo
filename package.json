@@ -2,7 +2,7 @@
   "name": "connect-ai-lab",
   "displayName": "Connect AI — AI 1인 기업 · 나만의 에이전트 팀 · 제2의 두뇌",
   "description": "AI 1인 기업가를 위한 워크스페이스. 나만의 AI 에이전트 팀과 제2의 두뇌가 한 곳에서 — CEO + 전문 에이전트들이 내 지식·결정 로그·메모리를 컨텍스트로 24시간 미션 향해 자동으로 일합니다. 100% 로컬·오프라인·무료.",
-  "version": "2.89.151",
+  "version": "2.89.152",
   "publisher": "connectailab",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -234,6 +234,11 @@
           "type": "string",
           "default": "http://127.0.0.1:11434",
           "description": "🤖 AI 서버 주소 (보통 자동으로 잡히니 건드리지 않아도 됩니다)"
+        },
+        "connectAiLab.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "🐍 Python 3 실행 명령/절대 경로 (비우면 자동 감지). 도구 실행 'exit 1' 또는 'Python was not found' 에러 시 여기에 직접 지정. 윈도우 예: 'py -3' 또는 'C:\\\\Python311\\\\python.exe'. 맥 예: '/opt/homebrew/bin/python3' 또는 'python3'. 변경 후 안티그래비티 재시작."
         },
         "connectAiLab.defaultModel": {
           "type": "string",

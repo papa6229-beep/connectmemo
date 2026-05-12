@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: pack_apply_v5
+# version: pack_apply_v6
 """두뇌의 템플릿 팩을 사용자 프로젝트에 한 번에 적용.
 
 흐름:
@@ -226,6 +226,7 @@ def _parse_cli_args():
         "--kit": "KIT_NAME", "--kit-name": "KIT_NAME",
         "--user-intent": "USER_INTENT", "--intent": "USER_INTENT",
         "--project": "PROJECT_PATH", "--project-path": "PROJECT_PATH",
+        "--brain-root": "BRAIN_ROOT", "--brain": "BRAIN_ROOT",
     }
     while i < len(args):
         a = args[i]
@@ -240,7 +241,7 @@ def _parse_cli_args():
             i += 1
         else:
             i += 1
-    for k in ("KIT_NAME", "USER_INTENT", "PROJECT_PATH"):
+    for k in ("KIT_NAME", "USER_INTENT", "PROJECT_PATH", "BRAIN_ROOT"):
         if k in os.environ and os.environ[k].strip():
             out.setdefault(k, os.environ[k])
     return out
@@ -258,6 +259,10 @@ def main():
     kit_name = (cfg.get("KIT_NAME") or "").strip()
     user_intent = (cfg.get("USER_INTENT") or "").strip()
 
+    # v5: CLI --brain-root 가 있으면 env 처럼 작동시켜 _find_brain_root 우선순위 활용
+    cli_brain = cli.get("BRAIN_ROOT", "").strip() if cli else ""
+    if cli_brain:
+        os.environ["BRAIN_ROOT"] = cli_brain
     # 두뇌 폴더 찾기 (자동 추론에도 필요)
     brain_root = _find_brain_root()
 

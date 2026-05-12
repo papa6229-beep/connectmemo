@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.151 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.152 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.151';
+const _CONNECT_AI_VERSION = '2.89.152';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -503,25 +503,93 @@ function gitRun(args: string[], cwd: string, timeout = 30000): { status: number 
 let _autoSyncRunning = false;
 let _companySyncRunning = false; /* separate lock — brain & company can sync in parallel */
 
-/* v2.89.88 — 크로스플랫폼 파이썬 명령. 윈도우는 `python3`이 기본 PATH에 없고
-   `python`은 미설치 시 MS Store 스텁이 떠서 종료코드 9009를 내뱉음 (Python was
-   not found ... 메시지). 맥/리눅스는 `python3`이 표준. 플랫폼별로 분기해서
-   유튜브 채널 분석 같은 도구가 윈도우 사용자에게서 실패하던 문제 수정. */
-function _pythonCmd(): string {
+/* v2.89.152 — 크로스플랫폼 + 자동 감지 + 사용자 override.
+   이전 v2.89.88 은 단순 `python3` (맥) / `python` (윈도우) 분기였는데:
+     - 윈도우 사용자가 `py` 또는 `python3` 으로 설치한 경우 fail
+     - 맥에서 `python3` 미설치 (신규 macOS, Xcode CLT 없음) 시 fail
+     - venv/pyenv 환경 무시
+     - PATH 미동기화 (Anti-Gravity 가 시스템 PATH 못 잡음) 시 spawn 실패
+   해결:
+     1. 사용자 설정 connectAiLab.pythonPath 가장 강함
+     2. 후보 cmd 순차 시도 (which/where 로 실제 존재 확인) — 첫 성공한 거 캐시
+     3. 캐시 못 찾으면 fallback 명령 (사용자에게 안내)
+*/
+let _pythonCmdCache: string | null = null;
+
+function _detectPythonCmd(): string {
+    /* 1. 사용자 명시 경로 — 절대 경로 또는 명령 이름. 가장 강함. */
+    try {
+        const cfg = vscode.workspace.getConfiguration('connectAiLab');
+        const override = (cfg.get<string>('pythonPath') || '').trim();
+        if (override) {
+            /* 절대 경로면 그대로, 명령 이름이면 PATH 검색 */
+            try {
+                const cp = require('child_process');
+                const r = cp.spawnSync(override, ['--version'], { encoding: 'utf-8', timeout: 4000 });
+                if (r.status === 0 || /python\s/i.test((r.stdout || '') + (r.stderr || ''))) {
+                    return override;
+                }
+            } catch { /* fall through */ }
+        }
+    } catch { /* config 못 읽어도 진행 */ }
+
+    /* 2. 플랫폼별 후보 순차 시도 — which/where 로 실재 확인. */
+    const candidates = process.platform === 'win32'
+        ? ['py -3', 'python3', 'python', 'py']
+        : ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3'];
+    const cp = require('child_process');
+    for (const cand of candidates) {
+        try {
+            /* `py -3` 같은 경우 spawn 시 args 분리 필요. spawnSync 로 직접 시도. */
+            const parts = cand.split(' ');
+            const r = cp.spawnSync(parts[0], parts.slice(1).concat(['--version']), {
+                encoding: 'utf-8', timeout: 4000
+            });
+            const out = (r.stdout || '') + (r.stderr || '');
+            if (r.status === 0 && /python\s+3/i.test(out)) {
+                return cand;
+            }
+            /* 일부 환경에선 status non-zero 인데 --version 출력은 정상. */
+            if (/python\s+3\.\d/i.test(out)) return cand;
+        } catch { /* 다음 후보 시도 */ }
+    }
+    /* 3. 다 실패 — 기존 동작 (사용자가 메시지 보고 진단) */
     return process.platform === 'win32' ? 'python' : 'python3';
 }
+
+function _pythonCmd(): string {
+    if (_pythonCmdCache) return _pythonCmdCache;
+    _pythonCmdCache = _detectPythonCmd();
+    return _pythonCmdCache;
+}
+
+/* 사용자가 설정 변경하면 캐시 무효화 — 다음 호출 시 재감지. */
+function _invalidatePythonCmdCache() {
+    _pythonCmdCache = null;
+}
+
 /* 9009 (Windows command-not-found) 또는 "Python was not found" 스텁 메시지를
    감지해서 명확한 한국어 안내로 바꿔줌. */
 function _isPythonMissing(exitCode: number, output: string): boolean {
     if (exitCode === 9009) return true;
     if (/Python was not found/i.test(output)) return true;
-    if (process.platform !== 'win32' && /command not found.*python/i.test(output)) return true;
+    if (/command not found.*python/i.test(output)) return true;
+    if (/No such file or directory.*python/i.test(output)) return true;
+    if (/ENOENT/i.test(output) && /python/i.test(output)) return true;
     return false;
 }
 function _pythonMissingHint(): string {
-    return process.platform === 'win32'
-        ? '⚠️ Python이 설치되어 있지 않습니다. https://www.python.org/downloads/ 에서 Python 3을 설치하고 설치 시 "Add Python to PATH" 체크박스를 꼭 켜주세요. 설치 후 안티그래비티(또는 VS Code) 완전 종료 → 재실행 필요.'
-        : '⚠️ python3 명령을 찾을 수 없습니다. 맥은 `brew install python3`, 우분투는 `sudo apt install python3` 로 설치 후 안티그래비티(또는 VS Code) 재시작.';
+    const detected = _pythonCmd();
+    const platformHint = process.platform === 'win32'
+        ? 'https://www.python.org/downloads/ 에서 Python 3 설치 (Add Python to PATH 체크박스 필수!)'
+        : (process.platform === 'darwin' ? '`brew install python3`' : '`sudo apt install python3`');
+    return `⚠️ Python 3 명령 실행 실패 (시도한 명령: \`${detected}\`).\n` +
+           `🔧 해결:\n` +
+           `  1. ${platformHint}\n` +
+           `  2. 설치 후 안티그래비티/VS Code 완전 종료 → 재실행 (PATH 새로고침 필요)\n` +
+           `  3. 또는 명령 팔레트 → "⚙️ 설정 열기" → \`connectAiLab.pythonPath\` 에 절대 경로 입력 (예: \`/usr/local/bin/python3\` 또는 \`C:\\\\Python311\\\\python.exe\`)\n` +
+           `🔍 본인 PC 의 Python 경로 확인:\n` +
+           (process.platform === 'win32' ? '  - PowerShell: \`Get-Command python, python3, py\`' : '  - 터미널: \`which python3 python py\`');
 }
 
 /**
@@ -6771,7 +6839,7 @@ function _seedDeveloperPackApply(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v5');
+  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v6');
   _mergeSchemaIntoJson(path.join(toolsDir, 'pack_apply.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.md'), md, 'pack_apply_v1');
 }
@@ -7753,6 +7821,16 @@ export function activate(context: vscode.ExtensionContext) {
        헤더만 보이고 카드·차트 텅 빈 사고. activate 시점에 박아두면 모든
        webview 가 즉시 asset 사용 가능. */
     _dashboardExtensionUri = context.extensionUri;
+    /* v2.89.152 — pythonPath 설정 변경 시 캐시 무효화. 사용자가 외부 연결 패널이나
+       설정에서 Python 경로 바꾸면 다음 도구 실행부터 새 경로 사용. */
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('connectAiLab.pythonPath')) {
+                _invalidatePythonCmdCache();
+                vscode.window.setStatusBarMessage('🐍 Python 경로 설정 변경 — 다음 도구 실행 시 적용', 4000);
+            }
+        })
+    );
     _migrateCompanyToBrain();
     /* v2.58: nest all company files under _company/ for visual clarity.
        Runs once for users coming from the unified-root layout. */
@@ -8655,6 +8733,60 @@ export function activate(context: vscode.ExtensionContext) {
                 info('해결: 터미널에서 \`ollama pull qwen2.5:7b\` 또는 \`ollama pull gemma2:2b\` 실행.');
             } else {
                 ok('LLM 연결 가능. 채팅 시도해보세요.');
+            }
+
+            /* v2.89.152 — Python 환경 진단. paypal_revenue·my_videos_check 같은 .py 도구
+               실행이 exit 1 로 떨어질 때 어디서 막혔는지 사용자가 직접 진단. */
+            out.push('');
+            out.push('## 🐍 Python 환경');
+            try {
+                const _invalidate = require('child_process');
+                _invalidatePythonCmdCache();
+                const pyCmd = _pythonCmd();
+                info(`자동 감지 결과: \`${pyCmd}\``);
+                try {
+                    const parts = pyCmd.split(' ');
+                    const r = _invalidate.spawnSync(parts[0], parts.slice(1).concat(['--version']), { encoding: 'utf-8', timeout: 4000 });
+                    const ver = ((r.stdout || '') + (r.stderr || '')).trim();
+                    if (r.status === 0 && /python\s+3/i.test(ver)) {
+                        ok(`Python 3 확인: ${ver}`);
+                    } else if (/python\s+3\.\d/i.test(ver)) {
+                        ok(`Python 3 (status ${r.status}): ${ver}`);
+                    } else {
+                        err(`Python 3 미감지. status=${r.status}, output=${ver.slice(0, 100)}`);
+                        info(_pythonMissingHint());
+                    }
+                } catch (pe: any) {
+                    err(`Python 호출 실패: ${pe?.message || pe}`);
+                    info(_pythonMissingHint());
+                }
+                /* 사용자 override 표시 */
+                try {
+                    const cfgPy = (vscode.workspace.getConfiguration('connectAiLab').get<string>('pythonPath') || '').trim();
+                    if (cfgPy) info(`사용자 설정 (\`connectAiLab.pythonPath\`): \`${cfgPy}\``);
+                    else info(`사용자 설정 없음 (자동 감지 사용). 직접 지정하려면 명령 팔레트 → "설정 열기" → \`connectAiLab.pythonPath\``);
+                } catch { /* ignore */ }
+                /* 평행 진단 — 다른 후보 명령들 작동 여부 */
+                const altCmds = process.platform === 'win32'
+                    ? ['py', 'py -3', 'python', 'python3']
+                    : ['python3', 'python', '/usr/bin/python3', '/opt/homebrew/bin/python3'];
+                const altResults: string[] = [];
+                for (const c of altCmds) {
+                    try {
+                        const parts = c.split(' ');
+                        const r = _invalidate.spawnSync(parts[0], parts.slice(1).concat(['--version']), { encoding: 'utf-8', timeout: 2500 });
+                        const ver = ((r.stdout || '') + (r.stderr || '')).trim().slice(0, 50);
+                        if (/python\s+3\.\d/i.test(ver)) altResults.push(`  ✅ \`${c}\` → ${ver}`);
+                        else if (r.status === 0) altResults.push(`  ⚠️ \`${c}\` → ${ver || '(no version output)'}`);
+                        else altResults.push(`  ❌ \`${c}\` → 실패 (status ${r.status})`);
+                    } catch (e: any) {
+                        altResults.push(`  ❌ \`${c}\` → 호출 실패: ${(e?.message || '').slice(0, 50)}`);
+                    }
+                }
+                info('후보 명령 평행 테스트:');
+                altResults.forEach(r => out.push(r));
+            } catch (pyErr: any) {
+                err(`Python 진단 자체 실패: ${pyErr?.message || pyErr}`);
             }
 
             /* 결과 패널 표시 */
@@ -20732,15 +20864,23 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
            이 있을 가능성에 베팅 (대부분의 vanilla 키트). */
         const openTarget = best.manifest?.apply?.open_in_browser || 'index.html';
 
+        /* v2.89.152 — 크로스플랫폼. 윈도우 cmd 는 `mkdir -p`·inline env vars 미지원.
+           Python 자체로 mkdir + CLI 인자로 모든 값 전달 → 모든 OS 동일 동작.
+           pack_apply 는 v4 부터 CLI 인자 지원 (`--kit X --user-intent Y --project Z`). */
+        const isWin = process.platform === 'win32';
+        const pyCmd = _pythonCmd();
+        const openCmd = isWin ? `start "" "${projectDirShell}\\${openTarget}"`.replace(/\//g, '\\')
+            : (process.platform === 'darwin' ? `open "${projectDirShell}/${openTarget}"` : `xdg-open "${projectDirShell}/${openTarget}"`);
+
         const fakeOutput = `${a.emoji} ${a.name}: 명시적 호출 + 매칭 키트 발견. LLM 우회 — 시스템이 직접 \`${best.kit}\` 적용합니다.
 
 > 📋 매칭 점수: **${best.score}점** (\`${best.manifest.name || best.kit}\`)
 > 📁 대상 프로젝트: \`${projectDir.replace(os.homedir(), '~')}\`
 > 💡 \`pack_apply.py\` 즉시 실행 → 키트 파일 복사·설정 자동화.
 
-<run_command>mkdir -p "${projectDirShell}" && cd "${toolsDir}" && BRAIN_ROOT="${brainRootShell}" KIT_NAME="${best.kit}" USER_INTENT="${escapedIntent}" PROJECT_PATH="${projectDirShell}" python3 pack_apply.py</run_command>
+<run_command>${pyCmd} -c "import os; os.makedirs(r'${projectDirShell}', exist_ok=True)" && cd "${toolsDir}" && ${pyCmd} pack_apply.py --kit "${best.kit}" --user-intent "${escapedIntent}" --project "${projectDirShell}" --brain-root "${brainRootShell}"</run_command>
 
-<run_command>open "${projectDirShell}/${openTarget}"</run_command>
+<run_command>${openCmd}</run_command>
 
 📊 평가: 완료 — 키트 적용 + 결과 파일 자동 오픈까지 시스템이 처리.
 📝 다음 단계: 브라우저에 결과 보임. 코드 커스터마이즈는 \`${projectDir.replace(os.homedir(), '~')}/\` 폴더에서.

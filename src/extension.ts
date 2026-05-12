@@ -238,9 +238,9 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
     return results;
 }
 
-/* v2.89.145 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
+/* v2.89.146 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.145';
+const _CONNECT_AI_VERSION = '2.89.146';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -10529,15 +10529,15 @@ class CompanyDashboardPanel {
                     /* v2.89.142 — 매출 카드 버튼 → 풀 대시보드 패널 띄움 */
                     RevenueDashboardPanel.createOrShow();
                 } else if (msg?.type === 'askHyunbinRevenue') {
-                    /* v2.89.142 — 현빈에게 매출 분석 의뢰. 사이드바 채팅창에 명령 주입 +
-                       focus. 가상 사무실 → 채팅창으로 자연스러운 이동. */
+                    /* v2.89.146 — corporate dispatch 직접 호출. injectPrompt 는
+                       bypassCorporate=true 라 shortcut 건너뛰는 버그 회피. */
                     try {
-                        await vscode.commands.executeCommand('connect-ai-lab.focusChat');
                         if (_activeChatProvider) {
-                            (_activeChatProvider as any)._view?.webview?.postMessage?.({
-                                type: 'injectPrompt',
-                                value: '현빈아, 이번 달 PayPal 매출 실데이터 가져와서 분석하고 다음 액션 1개 추천해줘.'
-                            });
+                            const model = _activeChatProvider.getDefaultModel();
+                            _activeChatProvider.runCorporatePromptExternal(
+                                '현빈아, 이번 달 PayPal 매출 실데이터 가져와서 분석하고 다음 액션 1개 추천해줘.',
+                                model
+                            ).catch(() => { /* ignore */ });
                         }
                     } catch { /* ignore */ }
                 } else if (msg?.type === 'requestRevenueMini') {
@@ -12359,18 +12359,22 @@ class OfficePanel {
                     /* v2.89.143 — 가상 사무실 HUD 클릭 → 풀스크린 매출 대시보드 */
                     RevenueDashboardPanel.createOrShow();
                     break;
-                case 'askHyunbinRevenue':
-                    /* v2.89.143 — 현빈에게 매출 분석 명령 자동 주입 */
+                case 'askHyunbinRevenue': {
+                    /* v2.89.146 — 매출 shortcut 발동 위해 corporate dispatch 직접 호출
+                       (injectPrompt 는 bypassCorporate=true 라 명시적 호출 라우팅·shortcut
+                       건너뛰는 버그). runCorporatePromptExternal 로 specialist dispatch
+                       진입 → "현빈아" explicit detection → _tryRevenueShortcut 발동. */
                     try {
-                        await vscode.commands.executeCommand('connect-ai-lab.focusChat');
-                        if (_activeChatProvider) {
-                            (_activeChatProvider as any)._view?.webview?.postMessage?.({
-                                type: 'injectPrompt',
-                                value: '현빈아, 이번 달 PayPal 매출 실데이터 가져와서 분석하고 다음 액션 1개 추천해줘.'
-                            });
-                        }
+                        const model = provider.getDefaultModel();
+                        provider.runCorporatePromptExternal(
+                            '현빈아, 이번 달 PayPal 매출 실데이터 가져와서 분석하고 다음 액션 1개 추천해줘.',
+                            model
+                        ).catch((e) => {
+                            try { panel.webview.postMessage({ type: 'error', value: `⚠️ ${e?.message || e}` }); } catch { /* ignore */ }
+                        });
                     } catch { /* ignore */ }
                     break;
+                }
                 case 'requestRevenueMini': {
                     /* v2.89.143 — 사무실 우상단 HUD 데이터 요청. paypal_revenue.py OUTPUT=json. */
                     try {
@@ -16320,14 +16324,20 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
                     }
                     break;
                 }
-                case 'prompt':
-                    if (msg.corporate) {
+                case 'prompt': {
+                    /* v2.89.146 — 명시적 호출 감지("현빈아", "코다리야" 등) 시 corporate
+                       모드 force. 사용자가 사이드바 toggle 안 해도 명시적 호출은 항상
+                       specialist dispatch 흐름으로 → 매출/키트 shortcut 발동. */
+                    const txt = String(msg.value || '');
+                    const hasExplicit = !!this._detectExplicitMention(txt);
+                    if (msg.corporate || hasExplicit) {
                         this._sidebarCorpModeOn = true;
-                        await this._handleCorporatePrompt(msg.value, msg.model);
+                        await this._handleCorporatePrompt(txt, msg.model);
                     } else {
-                        await this._handlePrompt(msg.value, msg.model, msg.internet);
+                        await this._handlePrompt(txt, msg.model, msg.internet);
                     }
                     break;
+                }
                 case 'corpModeToggle':
                     this._sidebarCorpModeOn = !!msg.on;
                     break;

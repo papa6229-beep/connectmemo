@@ -240,7 +240,7 @@ function _grepFiles(pattern: string, root: string, fileGlob?: string): { file: s
 
 /* v2.89.154 — 현재 익스텐션 버전. /ping 응답에 포함시켜서 다른 인스턴스가 우리 거인지
    식별 + 옛 버전인지 판단. package.json 의 version 과 동기 유지. */
-const _CONNECT_AI_VERSION = '2.89.154';
+const _CONNECT_AI_VERSION = '2.89.156';
 
 /* v2.89.127 — semver 비교. true 이면 a < b (a 가 옛 버전). */
 function _versionLessThan(a: string, b: string): boolean {
@@ -1123,7 +1123,10 @@ const LOCKED_AGENTS_DEFAULT: Record<string, boolean> = { editor: true };
    v2.89.109가 너무 보수적이어서 (CEO만 ON) 새 사용자가 회사 모드 켜고 "유튜브 분석해줘"
    하면 빈 plan 나오는 사고. 핵심 4명을 기본 ON으로 되돌려 첫 경험 회복. */
 const ALWAYS_ON_AGENTS: Set<string> = new Set(['ceo']);
-const DEFAULT_ON_AGENTS: Set<string> = new Set(['secretary', 'youtube', 'writer', 'designer']);
+/* v2.89.156 — 데모용·신규 사용자 첫 경험 회복. "유튜브 + 매출 종합 보고서" 같은 합성 명령에서
+   현빈(business) 가 비활성이라 조용히 drop 되던 사고 차단. 옵션 전체를 기본 ON 으로. Luna 만 LOCKED 유지.
+   사용자는 언제든 직원 패널에서 개별 OFF 가능. */
+const DEFAULT_ON_AGENTS: Set<string> = new Set(['secretary', 'youtube', 'writer', 'designer', 'instagram', 'business', 'developer', 'researcher']);
 const OPTIONAL_AGENTS_DEFAULT: Set<string> = new Set(['secretary', 'youtube', 'writer', 'designer', 'instagram', 'business', 'developer', 'researcher']);
 
 function _hiredJsonPath(): string {
@@ -1221,6 +1224,23 @@ function readActiveAgents(): Record<string, { activatedAt: string }> {
       }
       data._migrated_v2 = true;
       if (touched) {
+        try { fs.writeFileSync(p, JSON.stringify(data, null, 2)); } catch { /* ignore */ }
+      }
+    }
+    /* v2.89.156 — 모든 OPTIONAL agents 기본 ON. 종합 보고서 (유튜브+매출) 같은 합성 명령
+       에서 옵션 에이전트가 silently drop 되던 문제 해결. 한 번만 실행: _migrated_v3 플래그. */
+    if (data._migrated && !data._migrated_v3) {
+      let touched = false;
+      for (const id of OPTIONAL_AGENTS_DEFAULT) {
+        if (!data[id]) {
+          data[id] = { activatedAt: new Date().toISOString(), seeded_v3: true };
+          touched = true;
+        }
+      }
+      data._migrated_v3 = true;
+      if (touched) {
+        try { fs.writeFileSync(p, JSON.stringify(data, null, 2)); } catch { /* ignore */ }
+      } else {
         try { fs.writeFileSync(p, JSON.stringify(data, null, 2)); } catch { /* ignore */ }
       }
     }
@@ -1605,6 +1625,23 @@ function readTelegramConfig(): { token: string; chatId: string } {
   return { token, chatId };
 }
 
+/* v2.89.157 — Telegram legacy Markdown 은 ## / ### 헤더·- 리스트·표를 지원 안 함.
+   원본 마크다운을 Telegram 이 렌더 가능한 *bold* + 깔끔한 indent 로 변환. */
+function _markdownToTelegram(src: string): string {
+  let s = src || '';
+  s = s.replace(/^#{4,6}\s+(.+)$/gm, '*$1*');
+  s = s.replace(/^###\s+(.+)$/gm, '*$1*');
+  s = s.replace(/^##\s+(.+)$/gm, '\n*━━ $1 ━━*');
+  s = s.replace(/^#\s+(.+)$/gm, '\n*『$1』*');
+  s = s.replace(/^\s*\|.*\|\s*$/gm, line => {
+    const cells = line.split('|').map(c => c.trim()).filter(c => c.length > 0);
+    if (cells.every(c => /^[-:\s]+$/.test(c))) return '';
+    return '• ' + cells.join(' · ');
+  });
+  s = s.replace(/\n\n+/g, '\n\n');
+  return s.trim();
+}
+
 async function sendTelegramReport(text: string): Promise<boolean> {
   const { token, chatId } = readTelegramConfig();
   if (!token || !chatId) return false;
@@ -1612,7 +1649,7 @@ async function sendTelegramReport(text: string): Promise<boolean> {
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
     await axios.post(url, {
       chat_id: chatId,
-      text: text.slice(0, 4000),
+      text: _markdownToTelegram(text).slice(0, 4000),
       parse_mode: 'Markdown',
       disable_web_page_preview: true
     }, { timeout: 8000 });
@@ -1630,7 +1667,7 @@ async function sendTelegramReport(text: string): Promise<boolean> {
 async function sendTelegramLong(text: string): Promise<boolean> {
   const { token, chatId } = readTelegramConfig();
   if (!token || !chatId) return false;
-  const clean = (text || '').trim();
+  const clean = _markdownToTelegram((text || '').trim());
   if (!clean) return false;
   const MAX = 3800; // safety margin under Telegram's 4096 cap
   const chunks: string[] = [];
@@ -6839,7 +6876,7 @@ function _seedDeveloperPackApply(toolsDir: string) {
       },
     },
   }, null, 2);
-  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v7');
+  _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.py'), py, 'pack_apply_v7_1');
   _mergeSchemaIntoJson(path.join(toolsDir, 'pack_apply.json'), json);
   _seedFileForceUpgrade(path.join(toolsDir, 'pack_apply.md'), md, 'pack_apply_v1');
 }
@@ -13466,6 +13503,26 @@ textarea.amd-input{resize:vertical;min-height:50px;line-height:1.45}
 .character::before{content:'';position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);width:36px;height:6px;border-radius:50%;background:radial-gradient(ellipse,var(--ag-color-glow,rgba(0,0,0,.4)) 0%,transparent 70%);opacity:0;transition:opacity .3s;pointer-events:none;z-index:-1}
 .agent.working .character::before,.agent.thinking .character::before{opacity:1}
 
+/* v2.89.157 — 게임처럼 살아있는 "작업 중" 시각화. 작업 시 캐릭터 주변 펄싱 링·강한 바운스·바닥 그림자 확장. */
+.agent.working .character,.agent.thinking .character{animation:charBob 0.9s ease-in-out infinite,charBuzz 3.2s ease-in-out infinite}
+@keyframes charBuzz{0%,90%,100%{filter:drop-shadow(0 6px 8px rgba(0,0,0,.65)) drop-shadow(0 0 0 transparent)}45%{filter:drop-shadow(0 6px 8px rgba(0,0,0,.65)) drop-shadow(0 0 6px var(--ag-color-glow,rgba(255,255,255,.6)))}}
+/* 펄싱 후광 링 — 작업 중인 에이전트 주변 컬러 링이 부풀었다 줄어듦 */
+.agent.working::after,.agent.thinking::after{content:'';position:absolute;left:50%;top:62px;transform:translate(-50%,-50%);width:62px;height:62px;border-radius:50%;border:2px solid var(--ag-color,var(--accent));opacity:0;animation:agentRing 1.6s ease-out infinite;pointer-events:none;z-index:-1}
+@keyframes agentRing{0%{transform:translate(-50%,-50%) scale(.6);opacity:.7;border-width:2px}100%{transform:translate(-50%,-50%) scale(1.5);opacity:0;border-width:0.5px}}
+.agent.thinking::after{animation-duration:2.2s;border-color:#ffab40}
+/* 작업 중 LED 양옆에 깜빡이는 두 번째 LED — "신호 보내는 중" 느낌 */
+.agent.working .ag-led::after,.agent.thinking .ag-led::after{content:'';position:absolute;top:-2px;right:-9px;width:3px;height:3px;border-radius:50%;background:var(--ag-color,var(--accent));animation:ledBlink .55s infinite reverse;box-shadow:0 0 5px var(--ag-color-glow,var(--accent-glow))}
+
+/* 게임식 sparkle 입자 — JS 가 agentBusy 마다 .spark 노드 spawn */
+.spark{position:absolute;width:6px;height:6px;border-radius:50%;background:var(--spark-c,var(--accent));box-shadow:0 0 8px var(--spark-c,var(--accent-glow)),0 0 14px var(--spark-c,var(--accent-glow));pointer-events:none;z-index:10;animation:sparkFly 1.4s ease-out forwards}
+@keyframes sparkFly{0%{opacity:1;transform:translate(0,0) scale(1)}80%{opacity:.8}100%{opacity:0;transform:translate(var(--sx,0),var(--sy,-46px)) scale(.2)}}
+
+/* 작업 진행 막대 — 캐릭터 머리 위 작은 progress bar. 길이가 점점 차오름 (CSS 만으로) */
+.work-bar{position:absolute;left:50%;top:-12px;transform:translateX(-50%);width:48px;height:4px;background:rgba(0,0,0,.6);border:1px solid var(--ag-color,var(--accent));border-radius:3px;overflow:hidden;opacity:0;transition:opacity .25s;z-index:9}
+.agent.working .work-bar,.agent.thinking .work-bar{opacity:1}
+.work-bar-fill{height:100%;width:0;background:linear-gradient(90deg,var(--ag-color,var(--accent)),var(--ag-color-glow,#fff));box-shadow:0 0 8px var(--ag-color-glow,var(--accent-glow));animation:workBarFill 18s linear infinite}
+@keyframes workBarFill{0%{width:0}90%{width:96%}100%{width:100%}}
+
 .ag-plate{font-family:'SF Mono','JetBrains Mono',monospace;font-size:8.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-bright);padding:2px 7px;background:rgba(0,0,0,.85);border:1px solid var(--ag-color,var(--border));border-radius:5px;text-shadow:0 0 4px var(--ag-color-glow,transparent);white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.5)}
 .agent.idle .ag-plate{opacity:.7}
 .agent.working .ag-plate{color:var(--ag-color,var(--accent));box-shadow:0 0 10px var(--ag-color-glow,var(--accent-glow)),0 2px 6px rgba(0,0,0,.5)}
@@ -14014,6 +14071,10 @@ function makeAgent(a){
   
   const led = document.createElement('span'); led.className = 'ag-led'; d.appendChild(led);
   d.appendChild(character);
+  /* v2.89.157 — 머리 위 작업 진행 바 + sparkle 컨테이너 */
+  const wbar = document.createElement('div'); wbar.className = 'work-bar';
+  const wfill = document.createElement('div'); wfill.className = 'work-bar-fill';
+  wbar.appendChild(wfill); d.appendChild(wbar);
   const nm = document.createElement('div'); nm.className = 'ag-plate'; nm.textContent = a.emoji + ' ' + a.name; d.appendChild(nm);
   d.title = a.role + ' — ' + a.specialty;
   d.addEventListener('click', () => {
@@ -15361,7 +15422,8 @@ window.addEventListener('message', e => {
     }
     case 'agentBusy': {
       /* v2.89.131 — LLM 호출 대기 중 5초마다 들어오는 신호. 작업 중인 에이전트의
-         책상을 'working' 상태로 유지 + 페르소나 thought·status 반복 노출. */
+         책상을 'working' 상태로 유지 + 페르소나 thought·status 반복 노출.
+         v2.89.157 — 게임식 효과: 매 tick 마다 sparkle 입자 5개 spawn + 작업 막대 진행 + 풍부한 thought. */
       try {
         const a = agentMap[m.agent];
         if (!a) break;
@@ -15369,16 +15431,44 @@ window.addEventListener('message', e => {
         const p = (typeof PERSONALITY !== 'undefined') ? PERSONALITY[m.agent] : null;
         const elapsed = Number(m.elapsedSec || 0);
         if (p) {
-          /* 10초마다 새 thought, 5초마다 status icon. 작업의 리듬감 표현 */
-          if (elapsed % 10 < 5 && Array.isArray(p.thoughts) && p.thoughts.length > 0) {
+          /* thought 노출 빈도 ↑ — 매 tick 마다 (5초마다) 새로운 페르소나 멘트 */
+          if (Array.isArray(p.thoughts) && p.thoughts.length > 0) {
             const t = p.thoughts[Math.floor(Math.random() * p.thoughts.length)];
-            try { showThought(m.agent, t, 4500); } catch {}
+            try { showThought(m.agent, t, 5500); } catch {}
           }
           if (Array.isArray(p.status) && p.status.length > 0) {
             const s = p.status[Math.floor(Math.random() * p.status.length)];
-            try { showStatusIcon(m.agent, s, 3500); } catch {}
+            try { showStatusIcon(m.agent, s, 4500); } catch {}
           }
         }
+        /* v2.89.157 — sparkle 입자 5개 spawn. 머리 위에서 무작위 방향으로 흩날림.
+           "백엔드에서 일하고 있다"는 visual heartbeat — 정지처럼 보이지 않게. */
+        try {
+          const desk = deskEls[m.agent];
+          if (desk) {
+            const color = a.color || '#00ff88';
+            for (let k = 0; k < 5; k++) {
+              const sp = document.createElement('div');
+              sp.className = 'spark';
+              sp.style.setProperty('--spark-c', color);
+              /* 머리 위 ~(top:5px) 부근에서 발생, 위로 ±18px 좌우, 위로 -42 ~ -64px */
+              sp.style.left = (24 + (Math.random() - 0.5) * 8) + 'px';
+              sp.style.top = (4 + Math.random() * 6) + 'px';
+              sp.style.setProperty('--sx', ((Math.random() - 0.5) * 36).toFixed(0) + 'px');
+              sp.style.setProperty('--sy', (-42 - Math.random() * 22).toFixed(0) + 'px');
+              sp.style.animationDelay = (k * 60) + 'ms';
+              desk.appendChild(sp);
+              setTimeout(() => { try { sp.remove(); } catch {} }, 1500 + k * 60);
+            }
+          }
+        } catch {}
+        /* 5초마다 elapsed 이모지 status — 사용자가 "지금 N초째 작업 중" 한눈에 인식 */
+        try {
+          if (elapsed > 0 && elapsed % 5 === 0) {
+            const icon = elapsed >= 60 ? '⏰' : (elapsed >= 30 ? '⏳' : '🔄');
+            showStatusIcon(m.agent, icon, 2500);
+          }
+        } catch {}
       } catch { /* office view 안 떠있어도 ignore */ }
       break;
     }
@@ -19072,6 +19162,17 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
         const p = (prompt || '').trim();
         if (!p) return false;
 
+        /* v2.89.156 — 다중 도메인 종합 명령은 multi-agent 로 보냄.
+           "유튜브 + 매출 + 종합 보고서" 같이 두 영역 동시 요청이면 단일 도구 shortcut 이
+           무시하고 multi-agent dispatch (현빈 + 레오 둘 다) 가 잡도록 여기서 바로 false. */
+        const lpEarly = p.toLowerCase();
+        const hasYoutube = /유튜브|youtube|채널|구독|조회/.test(lpEarly);
+        const hasRevenue = /매출|페이팔|paypal|수익|결제|매상/.test(lpEarly);
+        const hasSummary = /종합|전체|현황|보고서|통합|요약/.test(lpEarly);
+        if ((hasYoutube && hasRevenue) || (hasSummary && (hasYoutube || hasRevenue))) {
+            return false;
+        }
+
         /* 도구 카탈로그 (활성화된 것만, 두 단계가 공유) */
         const _BUILTIN_TOOLS = new Set(['google_calendar_write', 'google_calendar']);
         type CatalogEntry = { agentId: string; tool: string; description: string; scriptPath: string };
@@ -19918,16 +20019,25 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                             elapsedSec
                         });
                     } catch { /* ignore */ }
-                    /* 채팅창 — 30초마다 한 줄만 (시끄럽지 않게) */
-                    const tick = Math.floor(elapsedSec / 30);
-                    if (tick > heartbeatChatTick && elapsedSec >= 30) {
+                    /* v2.89.157 — 채팅창 진행 표시 10초마다. "정지처럼 보인다" 사용자 피드백 반영.
+                       매 10초 이모지·문구가 바뀌어 backend 가 살아있다는 signal 강화. */
+                    const tick = Math.floor(elapsedSec / 10);
+                    if (tick > heartbeatChatTick && elapsedSec >= 10) {
                         heartbeatChatTick = tick;
+                        const phases = [
+                            `🔄 ${a.emoji} ${a.name} 분석 중 — ${timeStr} 경과`,
+                            `🧠 ${a.emoji} ${a.name} 데이터 처리 중 — ${timeStr} 경과`,
+                            `⚙️ ${a.emoji} ${a.name} 추론 중 — ${timeStr} 경과`,
+                            `💭 ${a.emoji} ${a.name} 결과 정리 중 — ${timeStr} 경과`,
+                            `✨ ${a.emoji} ${a.name} 거의 다 됐어요 — ${timeStr} 경과`,
+                            `⏳ ${a.emoji} ${a.name} 무거운 모델 처리 중 — ${timeStr} 경과 _(정상)_`,
+                        ];
                         post({
                             type: 'response',
-                            value: `⏳ ${a.emoji} ${a.name} 코드 작성 중 — ${timeStr} 경과 _(모델이 무거운 작업 처리 중. 정상)_`
+                            value: phases[(tick - 1) % phases.length]
                         });
                     }
-                }, 5000);
+                }, 2500); /* v2.89.157 — 2.5초로 단축. 사무실 시각 효과 (sparkle·thought·status) 더 자주 갱신 → 정지처럼 안 보임. */
                 try {
                     out = await this._callAgentLLM(sysPrompt, userMsg, modelName, t.agent, true, {
                         onFirstToken: () => {

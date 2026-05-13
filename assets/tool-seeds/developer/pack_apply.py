@@ -117,11 +117,13 @@ def _inject_credentials(file_path, creds):
 def _copy_tree(src_dir, dst_dir, creds=None):
     """v2: 기존 파일이 있으면 .backup 자동 생성 (사용자 코드 보호).
     백업이 이미 있으면 덮어쓰지 않음 (멱등성).
-    v7: creds 가 주어지면 복사 후 각 파일에서 placeholder 교체."""
+    v7: creds 가 주어지면 복사 후 각 파일에서 placeholder 교체.
+    v7.1: 자격증명 누락 placeholder 가 남으면 경고 (운영자 입력 유도)."""
     os.makedirs(dst_dir, exist_ok=True)
     copied = 0
     backed_up = []
     injected = 0
+    missing_placeholders = {}  # placeholder -> count
     for root, _dirs, files in os.walk(src_dir):
         rel = os.path.relpath(root, src_dir)
         target = os.path.join(dst_dir, rel) if rel != "." else dst_dir
@@ -142,10 +144,29 @@ def _copy_tree(src_dir, dst_dir, creds=None):
             if creds and any(creds.values()):
                 if _inject_credentials(dst_path, creds):
                     injected += 1
+            # v7.1: 남은 placeholder 스캔 (빈 자격증명 감지)
+            if creds:
+                try:
+                    with open(dst_path, "r", encoding="utf-8") as fh:
+                        body = fh.read()
+                    for ph, val in creds.items():
+                        if not val and ph in body:
+                            missing_placeholders[ph] = missing_placeholders.get(ph, 0) + 1
+                except Exception:
+                    pass
     if backed_up:
         _log(f"기존 파일 {len(backed_up)}개 .backup 보존: {', '.join(backed_up[:3])}{' …' if len(backed_up) > 3 else ''}", "info")
     if injected:
         _log(f"🔐 운영자 자격증명 {injected}개 파일에 자동 inline (Gemini/PayPal placeholder 교체)", "ok")
+    if missing_placeholders:
+        guide = {
+            "__GEMINI_API_KEY__": "Connect AI → 외부 연결 → ✨ Google Gemini → API Key 입력",
+            "__PAYPAL_CLIENT_ID__": "Connect AI → 외부 연결 → 💰 PayPal → Client ID 입력",
+        }
+        _log("⚠️  운영자 자격증명 누락 — 키트는 복사됐지만 실제 호출은 안 됨:", "warn")
+        for ph in sorted(missing_placeholders):
+            _log(f"   • {ph} → {guide.get(ph, '외부 연결 패널에서 입력 필요')}", "warn")
+        _log("   ↳ 키 입력 후 키트 다시 적용하면 자동 inline 됩니다.", "warn")
     return copied
 
 

@@ -1,0 +1,135 @@
+<!-- Neon Survivor Kit Template - PayPal Integrated -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Survivor Kit</title>
+    <style>
+        :root {
+            --neon-blue: #00ffff;
+            --neon-pink: #ff00ff;
+            --bg-dark: #1a1a2e;
+            --text-light: #ffffff;
+        }
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-light);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        h1 {
+            color: var(--neon-blue);
+            text-shadow: 0 0 5px var(--neon-blue), 0 0 10px var(--neon-pink);
+            margin-bottom: 30px;
+        }
+        .game-container {
+            border: 3px solid var(--neon-pink);
+            padding: 20px;
+            border-radius: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--neon-blue);
+        }
+        .stat-box h3 {
+            color: var(--neon-pink);
+            text-shadow: 0 0 5px var(--neon-pink);
+        }
+        .shop-section {
+            margin-top: 20px;
+            border-top: 1px dashed var(--neon-blue);
+            padding-top: 15px;
+        }
+        .shop-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            background-color: rgba(0, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        button {
+            background-color: var(--neon-pink);
+            color: var(--bg-dark);
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            border-radius: 5px;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #ff66ff;
+        }
+    </style>
+</head>
+<body>
+    <h1>Neon Survivor Kit</h1>
+
+    <div class="game-container">
+        <h2>Game Status</h2>
+        <div class="stats">
+            <div class="stat-box">
+                <h3>Gold: <span id="gold">100</span></h3>
+            </div>
+            <div class="stat-box">
+                <h3>Health: <span id="health">100</span></h3>
+            </div>
+        </div>
+
+        <div class="shop-section">
+            <h2>Shop</h2>
+            <div class="shop-item">
+                <span>Revive (Cost: $0.99)</span>
+                <button onclick="buyRevive()">Buy Revive</button>
+            </div>
+            <div class="shop-item">
+                <span>Premium (Cost: $2.99)</span>
+                <button onclick="buyPremium()">Buy Premium</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let gold = 100;
+        let health = 100;
+
+        function buyRevive() {
+            if (gold >= 0.99) {
+                gold -= 0.99;
+                health = 100; // Full heal on revive
+                document.getElementById('gold').textContent = gold.toFixed(2);
+                document.getElementById('health').textContent = health;
+                alert("Revive purchased! Health restored.");
+            } else {
+                alert("Not enough gold to buy Revive!");
+            }
+        }
+
+        function buyPremium() {
+            if (gold >= 2.99) {
+                gold -= 2.99;
+                // Premium feature logic would go here (e.g., unlocking new skins/upgrades)
+                alert("Premium purchased! Unlocking premium features.");
+            } else {
+                alert("Not enough gold to buy Premium!");
+            }
+        }
+    </script>
+</body>
+</html>

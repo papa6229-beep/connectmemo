@@ -54,5 +54,5 @@ Beep AI Studio는 **100% 로컬 환경**에서 작동하는 자율 지식 및 �
 
 <p align="center">
   <strong>Built for [User Name] × Beep AI Studio</strong><br/>
-  Powered by Connect AI v2
+  Powered by Antigravity v2
 </p>

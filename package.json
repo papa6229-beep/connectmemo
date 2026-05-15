@@ -1,6 +1,6 @@
 {
   "name": "connect-ai-lab",
-  "displayName": "Connect AI — AI 1인 기업 · 나만의 에이전트 팀 · 제2의 두뇌",
+  "displayName": "Antigravity — AI 1인 기업 · 나만의 에이전트 팀 · 제2의 두뇌",
   "description": "AI 1인 기업가를 위한 워크스페이스. 나만의 AI 에이전트 팀과 제2의 두뇌가 한 곳에서 — CEO + 전문 에이전트들이 내 지식·결정 로그·메모리를 컨텍스트로 24시간 미션 향해 자동으로 일합니다. 100% 로컬·오프라인·무료.",
   "version": "2.89.157",
   "publisher": "connectailab",
@@ -44,123 +44,123 @@
     "commands": [
       {
         "command": "connect-ai-lab.newChat",
-        "title": "Connect AI: New Chat",
+        "title": "Antigravity: New Chat",
         "icon": "$(add)"
       },
       {
         "command": "connect-ai-lab.openSettings",
-        "title": "Connect AI: ⚙️ 설정 열기"
+        "title": "Antigravity: ⚙️ 설정 열기"
       },
       {
         "command": "connect-ai-lab.exportChat",
-        "title": "Connect AI: Export Chat as Markdown"
+        "title": "Antigravity: Export Chat as Markdown"
       },
       {
         "command": "connect-ai-lab.explainSelection",
-        "title": "Connect AI: Explain Selected Code"
+        "title": "Antigravity: Explain Selected Code"
       },
       {
         "command": "connect-ai-lab.focusChat",
-        "title": "Connect AI: Focus Chat Input"
+        "title": "Antigravity: Focus Chat Input"
       },
       {
         "command": "connect-ai-lab.showBrainNetwork",
-        "title": "Connect AI: Show Brain Topology 🧠"
+        "title": "Antigravity: Show Brain Topology 🧠"
       },
       {
         "command": "connect-ai-lab.changeCompanyDir",
-        "title": "Connect AI: 회사 폴더 변경 🏢"
+        "title": "Antigravity: 회사 폴더 변경 🏢"
       },
       {
         "command": "connect-ai-lab.connectCompanyRepo",
-        "title": "Connect AI: 회사 GitHub 연결 ☁️"
+        "title": "Antigravity: 회사 GitHub 연결 ☁️"
       },
       {
         "command": "connect-ai-lab.connectGoogleCalendarWrite",
-        "title": "Connect AI: Google Calendar 자동 일정 연결 📅"
+        "title": "Antigravity: Google Calendar 자동 일정 연결 📅"
       },
       {
         "command": "connectAiLab.tasks.refresh",
         "title": "할 일 새로고침",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(refresh)"
       },
       {
         "command": "connectAiLab.tasks.markDone",
         "title": "완료 처리",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(check)"
       },
       {
         "command": "connectAiLab.tasks.cancel",
         "title": "취소",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(close)"
       },
       {
         "command": "connectAiLab.tasks.setPriority",
         "title": "우선순위 변경",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(arrow-up)"
       },
       {
         "command": "connectAiLab.tasks.openTrackerJson",
         "title": "tracker.json 열기",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(file-code)"
       },
       {
         "command": "connectAiLab.dailyBriefing.fireNow",
         "title": "지금 데일리 브리핑 발사",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(megaphone)"
       },
       {
         "command": "connectAiLab.diagnoseConnection",
         "title": "🔍 LLM 연결 진단 (Ollama / LM Studio)",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(pulse)"
       },
       {
         "command": "connectAiLab.youtube.refreshCommentQueue",
         "title": "YouTube 댓글 답장 큐 갱신",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "connectAiLab.developer.scaffoldProject",
         "title": "Developer: 새 프로젝트 만들기",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(file-directory-create)"
       },
       {
         "command": "connectAiLab.skill.saveLast",
         "title": "방금 산출물 → 스킬로 저장 💎",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(star)"
       },
       {
         "command": "connectAiLab.youtube.connectOAuth",
         "title": "YouTube OAuth 연결 (Analytics)",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(plug)"
       },
       {
         "command": "connectAiLab.dashboard.open",
         "title": "우리 회사 (팀 + 오늘 + 채널)",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(organization)"
       },
       {
         "command": "connectAiLab.apiConnections.open",
         "title": "외부 연결 (API 키 한 곳에서)",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(plug)"
       },
       {
         "command": "connectAiLab.revenueDashboard.open",
         "title": "💰 매출 대시보드 (PayPal 실시간)",
-        "category": "Connect AI",
+        "category": "Antigravity",
         "icon": "$(graph-line)"
       }
     ],
@@ -213,7 +213,7 @@
       "activitybar": [
         {
           "id": "connect-ai-lab-sidebar",
-          "title": "Connect AI",
+          "title": "Antigravity",
           "icon": "$(hubot)"
         }
       ]
@@ -228,7 +228,7 @@
       ]
     },
     "configuration": {
-      "title": "Connect AI",
+      "title": "Antigravity",
       "properties": {
         "connectAiLab.ollamaUrl": {
           "type": "string",
@@ -273,12 +273,12 @@
         "connectAiLab.companyRepo": {
           "type": "string",
           "default": "",
-          "description": "🔗 회사 깃허브 저장소 URL — 회사 폴더를 두뇌와 별도 저장소로 백업할 때 사용. 회사 폴더가 두뇌 안 nested면(기본) 비워두세요(이미 두뇌 repo에 같이 들어감). 회사를 별도 위치(detached)로 분리한 경우에만 의미 있음. 명령 팔레트의 'Connect AI: 회사 GitHub 연결'로도 설정."
+          "description": "🔗 회사 깃허브 저장소 URL — 회사 폴더를 두뇌와 별도 저장소로 백업할 때 사용. 회사 폴더가 두뇌 안 nested면(기본) 비워두세요(이미 두뇌 repo에 같이 들어감). 회사를 별도 위치(detached)로 분리한 경우에만 의미 있음. 명령 팔레트의 'Antigravity: 회사 GitHub 연결'로도 설정."
         },
         "connectAiLab.companyDir": {
           "type": "string",
           "default": "",
-          "description": "👔 회사 폴더 경로 — 비워두면 두뇌 폴더 안 _company/에 자동 생성됩니다(시각적으로 분리·한 git repo). 절대 경로 또는 ~/로 시작하는 경로를 입력하면 두뇌와 완전히 분리된 별도 위치에 회사 폴더가 만들어집니다(예: 외주 공유용·다른 git repo). 명령 팔레트의 'Connect AI: 회사 폴더 변경'으로도 설정 가능."
+          "description": "👔 회사 폴더 경로 — 비워두면 두뇌 폴더 안 _company/에 자동 생성됩니다(시각적으로 분리·한 git repo). 절대 경로 또는 ~/로 시작하는 경로를 입력하면 두뇌와 완전히 분리된 별도 위치에 회사 폴더가 만들어집니다(예: 외주 공유용·다른 git repo). 명령 팔레트의 'Antigravity: 회사 폴더 변경'으로도 설정 가능."
         },
         "connectAiLab.assetsPath": {
           "type": "string",

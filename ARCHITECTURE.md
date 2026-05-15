@@ -1,4 +1,4 @@
-# 🧠 Connect AI — Brain-GitHub 동기화 아키텍처 레퍼런스
+# 🧠 Antigravity — Brain-GitHub 동기화 아키텍처 레퍼런스
 
 > **이 문서는 어떤 AI든 이 코드베이스의 깃허브 동기화 구조를 즉시 파악할 수 있도록 만든 레퍼런스입니다.**
 

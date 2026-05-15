@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Connect AI</title>
+<title>Antigravity</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -17,11 +17,10 @@
    other CSS rules (agent-board layout, corporate-mode chrome) still bind
    to it; we just stop overriding the palette. */
 body.corp-on { /* color overrides removed — see :root above */ }
-/* v2.89.90 — 항상 다크 강제. 이전엔 body.vscode-light에서 색 변수 swap했는데,
-   3700줄 CSS의 컴포넌트 절반 이상이 var() 안 쓰고 #c9d1d9, #7c7f8a 같은
-   다크 전용 회색을 하드코딩 → 라이트 모드에선 텍스트가 유령처럼 안 보였음.
-   1000+ 군데 마이그레이션 대신 Connect AI는 안티그래비티 라이트 모드에서도
-   자기 정체성(매트릭스 블랙+그린) 유지. Cursor Chat·Copilot Chat·Warp 방식.
+/* v2.89.90 — 항상 다크 강제. 3700줄 CSS의 컴포넌트 절반 이상이 var() 안 쓰고 
+   하드코딩된 색상을 사용함에 따라 라이트 모드 전환 시 가독성이 무너짐.
+   1000+ 군데 마이그레이션 대신 Antigravity는 라이트 모드에서도 자체적인 
+   매트릭스 블랙+그린 정체성을 고수. (Cursor, Copilot, Warp와 유사한 방식)
    color-scheme: dark는 스크롤바·기본 폼 위젯·autofill까지 다크로 렌더. */
 html { color-scheme: dark; }
 html,body{height:100%;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:13px;background:var(--bg);color:var(--text);display:flex;flex-direction:column;overflow:hidden;min-height:0}
@@ -1347,7 +1346,7 @@ body.corp-on .agent-dock::before{
 }
 
 </style></head><body class="init">
-<div class="header"><div class="header-left"><div class="logo">✦</div><span class="brand">Connect AI</span><span class="brand-suffix" id="brandSuffix"></span></div><div class="header-right"><select id="modelSel"></select><button class="ad-chip" id="adChip" type="button" data-expanded="false" title="specialist 모델 매핑 — 클릭해서 펼치기"><span class="adc-model" id="adcModel">…</span><span class="adc-caret">▾</span></button><button class="btn-icon" id="corporateBtn" title="AI 1인 기업 모드 (Solo Mode) — 나만의 에이전트 팀이 자동으로 일합니다 (현재: OFF)" style="opacity:0.5">👔</button><button class="btn-icon" id="brainBtn" title="내 지식 관리">🧠</button><button class="btn-icon" id="historyBtn" title="이전 대화 보기 — 새 대화를 시작해도 이전 대화는 자동 보관됩니다">📂</button><button class="btn-icon" id="newChatBtn" title="새 대화 시작 (이전 대화는 자동 보관)">+</button><div class="more-wrap"><button class="btn-icon" id="moreBtn" title="더보기">…</button><div class="more-menu" id="moreMenu" hidden><button class="more-item" id="internetBtn" title="DuckDuckGo로 웹 검색 — AI가 결과를 읽어와 답변에 반영">🌐 인터넷 검색</button><button class="more-item" id="thinkingBtn" title="AI의 사고 흐름을 별도 패널에 그래프로 시각화 (지식 노드 연결 표시)">🎬 Thinking 시각화</button><button class="more-item" id="skillLibBtn" title="에이전트 스킬·도구 카탈로그 — 내가 만든 것 + 기본 제공 모두 한 곳에서">🛠 내 스킬 라이브러리</button><button class="more-item" id="settingsBtn" title="모델·서버 주소·시스템 프롬프트·키 등 모든 설정">⚙️ 설정</button></div></div></div></div>
+<div class="header"><div class="header-left"><div class="logo">✦</div><span class="brand">Antigravity</span><span class="brand-suffix" id="brandSuffix"></span></div><div class="header-right"><select id="modelSel"></select><button class="ad-chip" id="adChip" type="button" data-expanded="false" title="specialist 모델 매핑 — 클릭해서 펼치기"><span class="adc-model" id="adcModel">…</span><span class="adc-caret">▾</span></button><button class="btn-icon" id="corporateBtn" title="AI 1인 기업 모드 (Solo Mode) — 나만의 에이전트 팀이 자동으로 일합니다 (현재: OFF)" style="opacity:0.5">👔</button><button class="btn-icon" id="brainBtn" title="내 지식 관리">🧠</button><button class="btn-icon" id="historyBtn" title="이전 대화 보기 — 새 대화를 시작해도 이전 대화는 자동 보관됩니다">📂</button><button class="btn-icon" id="newChatBtn" title="새 대화 시작 (이전 대화는 자동 보관)">+</button><div class="more-wrap"><button class="btn-icon" id="moreBtn" title="더보기">…</button><div class="more-menu" id="moreMenu" hidden><button class="more-item" id="internetBtn" title="DuckDuckGo로 웹 검색 — AI가 결과를 읽어와 답변에 반영">🌐 인터넷 검색</button><button class="more-item" id="thinkingBtn" title="AI의 사고 흐름을 별도 패널에 그래프로 시각화 (지식 노드 연결 표시)">🎬 Thinking 시각화</button><button class="more-item" id="skillLibBtn" title="에이전트 스킬·도구 카탈로그 — 내가 만든 것 + 기본 제공 모두 한 곳에서">🛠 내 스킬 라이브러리</button><button class="more-item" id="settingsBtn" title="모델·서버 주소·시스템 프롬프트·키 등 모든 설정">⚙️ 설정</button></div></div></div></div>
 <!-- v2.89.116 — 1인 기업 모드 specialist 모델 dock. 일반 모드에선 숨김.
      body.corp-on이 들어오면 헤더의 #modelSel 자리에서 9명 specialist의
      모델 매핑이 한 줄로 보이고, 클릭하면 인라인 popover로 변경. -->
@@ -1499,7 +1498,7 @@ function renderOnboarding(){
     +   '• <code>오늘 일과 텔레그램으로 보고 (👔 기업 모드)</code>'
     + '</div>'
     + '<div class="onboard-actions">'
-    +   '<button class="onboard-btn" id="ob-finish" title="설정 완료, Connect AI 사용 시작">시작하기 ✦</button>'
+    +   '<button class="onboard-btn" id="ob-finish" title="설정 완료, Antigravity 사용 시작">시작하기 ✦</button>'
     + '</div>';
   }
   root.innerHTML =
@@ -1803,7 +1802,7 @@ function addMsg(text,role){
   const isUser=role==='user',isErr=role==='error';
   const el=document.createElement('div');el.className='msg'+(isUser?' msg-user':'')+(isErr?' msg-error':'');
   const head=document.createElement('div');head.className='msg-head';
-  head.innerHTML=(isUser?'<div class="av av-user">👤</div><span>You</span>':'<div class="av av-ai">✦</div><span>Connect AI</span>')+'<span class="msg-time">'+getTime()+'</span>';
+  head.innerHTML=(isUser?'<div class="av av-user">👤</div><span>You</span>':'<div class="av av-ai">✦</div><span>Antigravity</span>')+'<span class="msg-time">'+getTime()+'</span>';
   const body=document.createElement('div');body.className='msg-body';
   if(isUser){body.innerText=text}else{body.innerHTML=fmt(text)}
   el.appendChild(head);el.appendChild(body);chat.appendChild(el);scrollChatToBottomIfNear();
@@ -1877,7 +1876,7 @@ function showLoader(){
     '</div>'
   )).join('');
   loader.innerHTML=
-    '<div class="msg-head"><div class="av av-ai">✦</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span></div>'+
+    '<div class="msg-head"><div class="av av-ai">✦</div><span>Antigravity</span><span class="msg-time">'+getTime()+'</span></div>'+
     '<div class="ml-loader">'+
       '<div class="ml-head"><span class="ml-head-dot"></span><span>NEURAL CORE · ACTIVE</span><span class="ml-head-bar"></span><span class="ml-head-spinner"></span></div>'+
       '<div class="ml-steps" id="mlSteps">'+stepsHtml+'</div>'+
@@ -4417,7 +4416,7 @@ function openHirePin(agent){
   overlay.className = 'pin-overlay';
   overlay.innerHTML =
     '<div class="pin-card">'+
-      '<div class="pin-brand">CONNECT · AI HR</div>'+
+      '<div class="pin-brand">ANTIGRAVITY · AI HR</div>'+
       '<div class="pin-icon">'+(agent.emoji||'🎵')+'</div>'+
       '<div class="pin-title">'+(agent.name||'에이전트')+' 채용</div>'+
       '<div class="pin-sub">입사 승인 코드를 입력하세요.</div>'+
@@ -4656,16 +4655,16 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
     /* Diagnostic: tell user what host-IDE models are reachable via vscode.lm.
        Logged to console + a one-time inline notice if any external model exists. */
     try {
-      console.log('[Connect AI] vscode.lm probe — models:', msg.models, 'error:', msg.error);
+      console.log('[Antigravity] vscode.lm probe — models:', msg.models, 'error:', msg.error);
       if (msg.error) {
-        console.log('[Connect AI] IDE 모델 probe 실패:', msg.error);
+        console.log('[Antigravity] IDE 모델 probe 실패:', msg.error);
       } else if (Array.isArray(msg.models) && msg.models.length > 0) {
         const summary = msg.models.map(m => '• ' + (m.vendor||'?') + ' / ' + (m.family||'?') + ' (' + m.id + ')').join('\n');
         const el = document.createElement('div'); el.className='msg';
         el.innerHTML = '<div class="msg-body" style="color:#22D3EE;font-size:12px;line-height:1.6;background:rgba(34,211,238,.05);border:1px solid rgba(34,211,238,.3);padding:10px 12px;border-radius:8px"><strong>🌐 IDE가 익스텐션에 노출하는 모델 ' + msg.models.length + '개:</strong><br>' + summary.replace(/\n/g, '<br>') + '<br><br><span style="color:var(--text-dim);font-size:11px">→ 통합하면 Gemini/Claude 등 호스트 모델을 모델 드롭다운에 추가할 수 있습니다 (개발자에게 요청 필요)</span></div>';
         chat.appendChild(el); scrollChatToBottomIfNear();
       } else {
-        console.log('[Connect AI] IDE 모델 probe — 노출되는 모델 없음. Antigravity가 vscode.lm으로 모델을 안 열어주는 것으로 추정.');
+        console.log('[Antigravity] IDE 모델 probe — 노출되는 모델 없음. Antigravity가 vscode.lm으로 모델을 안 열어주는 것으로 추정.');
       }
     } catch {}
     break;
@@ -4731,7 +4730,7 @@ window.addEventListener('message',e=>{const msg=e.data;switch(msg.type){
        reasoning)은 첫 토큰까지 — 그래서 첫 토큰 도착할 때까지 로더 유지. */
     streamEl=document.createElement('div');streamEl.className='msg';
     const h=document.createElement('div');h.className='msg-head';
-    h.innerHTML='<div class="av av-ai">✦</div><span>Connect AI</span><span class="msg-time">'+getTime()+'</span>';
+    h.innerHTML='<div class="av av-ai">✦</div><span>Antigravity</span><span class="msg-time">'+getTime()+'</span>';
     streamBody=document.createElement('div');streamBody.className='msg-body stream-active';
     streamEl.appendChild(h);streamEl.appendChild(streamBody);chat.appendChild(streamEl);
     /* streamEl을 미리 만들어두지만 첫 청크 전엔 숨겨둠 — 빈 메시지 박스가 로더 위/아래에

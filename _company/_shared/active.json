@@ -33,5 +33,8 @@
     "activatedAt": "2026-05-15T07:05:48.777Z",
     "seeded": true
   },
-  "_migrated_v3": true
+  "_migrated_v3": true,
+  "editor": {
+    "activatedAt": "2026-05-15T07:47:02.627Z"
+  }
 }
